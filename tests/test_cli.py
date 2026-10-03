@@ -1167,3 +1167,61 @@ class TestExitCodes:
     def test_skills_unknown_id_exits_user_error(self):
         result = CliRunner().invoke(cli, ["skills", "no-such-skill"])
         assert result.exit_code == EXIT_USER_ERROR
+
+
+
+class TestBackupRemoteOutcomes:
+    def test_failed_remote_upload_is_partial_and_nonzero(self, mock_docker_client, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            f"""
+backup:
+  staging_dir: {tmp_path / "staging"}
+  local_staging: {tmp_path / "staging"}
+remotes:
+  local:
+    enabled: true
+    type: local
+    path: {tmp_path / "remote"}
+encryption:
+  enabled: false
+"""
+        )
+
+        with patch("bbackup.cli.BackupRunner") as MockRunner:
+            runner = MagicMock()
+            runner.run_backup.return_value = {
+                "containers": {},
+                "volumes": {},
+                "networks": {},
+                "filesystems": {},
+                "errors": [],
+            }
+
+            def failed_upload(*args, **kwargs):
+                status = MockRunner.call_args.args[1]
+                status.set_item_status("remote", "local", "failed")
+                return False
+
+            runner.upload_to_remotes.side_effect = failed_upload
+            MockRunner.return_value = runner
+            result = CliRunner().invoke(
+                cli,
+                [
+                    "--config",
+                    str(config_path),
+                    "backup",
+                    "--containers",
+                    "app",
+                    "--remote",
+                    "local",
+                    "--no-interactive",
+                    "--output",
+                    "json",
+                ],
+            )
+
+        assert result.exit_code == EXIT_PARTIAL
+        data = json.loads(result.output)
+        assert data["success"] is False
+        assert data["data"]["remotes"]["local"] == "failed"

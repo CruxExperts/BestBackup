@@ -503,6 +503,140 @@ class TestRestoreFilesystemPath:
 
         assert result is False
 
+    def test_restore_backup_returns_structured_failure_when_destination_mkdir_fails(
+        self, tmp_path, mock_docker_client
+    ):
+        dr = make_restore(mock_docker_client)
+        backup = tmp_path / "backup"
+        (backup / "filesystems" / "docs").mkdir(parents=True)
+
+        with patch.object(Path, "mkdir", side_effect=PermissionError("protected")):
+            result = dr.restore_backup(
+                backup_path=backup,
+                filesystems=["docs"],
+                filesystem_destination=tmp_path / "restore",
+            )
+
+        assert result["filesystems"] == {"docs": "failed"}
+        assert result["errors"] == ["Failed to restore filesystem: docs"]
+
+    def test_restore_backup_returns_structured_failure_when_rsync_launch_fails(
+        self, tmp_path, mock_docker_client
+    ):
+        dr = make_restore(mock_docker_client)
+        backup = tmp_path / "backup"
+        (backup / "filesystems" / "docs").mkdir(parents=True)
+
+        with patch("bbackup.restore.subprocess.run", side_effect=OSError("rsync unavailable")):
+            result = dr.restore_backup(
+                backup_path=backup,
+                filesystems=["docs"],
+                filesystem_destination=tmp_path / "restore",
+            )
+
+        assert result["filesystems"] == {"docs": "failed"}
+        assert result["errors"] == ["Failed to restore filesystem: docs"]
+
+    def test_restore_backup_rejects_target_path_escape_before_mutation(
+        self, tmp_path, mock_docker_client
+    ):
+        dr = make_restore(mock_docker_client)
+        backup = tmp_path / "backup"
+        (backup / "filesystems").mkdir(parents=True)
+        outside = backup / "outside"
+        outside.mkdir()
+        sentinel = outside / "sentinel.txt"
+        sentinel.write_text("keep")
+        destination = tmp_path / "restore"
+
+        with patch("bbackup.restore.subprocess.run") as mock_run:
+            result = dr.restore_backup(
+                backup_path=backup,
+                filesystems=["../outside"],
+                filesystem_destination=destination,
+            )
+
+        assert result["filesystems"] == {"../outside": "failed"}
+        assert result["errors"] == ["Failed to restore filesystem: ../outside"]
+        assert sentinel.read_text() == "keep"
+        assert not destination.exists()
+        mock_run.assert_not_called()
+
+    def test_restore_backup_rejects_absolute_target_before_mutation(
+        self, tmp_path, mock_docker_client
+    ):
+        dr = make_restore(mock_docker_client)
+        backup = tmp_path / "backup"
+        source = backup / "filesystems" / "docs"
+        source.mkdir(parents=True)
+        sentinel = source / "sentinel.txt"
+        sentinel.write_text("keep")
+        destination = tmp_path / "restore"
+        absolute_target = str(source)
+
+        with patch("bbackup.restore.subprocess.run") as mock_run:
+            result = dr.restore_backup(
+                backup_path=backup,
+                filesystems=[absolute_target],
+                filesystem_destination=destination,
+            )
+
+        assert result["filesystems"] == {absolute_target: "failed"}
+        assert result["errors"] == [f"Failed to restore filesystem: {absolute_target}"]
+        assert sentinel.read_text() == "keep"
+        assert not destination.exists()
+        mock_run.assert_not_called()
+
+
+    def test_restore_backup_rejects_symlinked_source_escape(self, tmp_path, mock_docker_client):
+        dr = make_restore(mock_docker_client)
+        backup = tmp_path / "backup"
+        filesystems = backup / "filesystems"
+        filesystems.mkdir(parents=True)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        sentinel = outside / "sentinel.txt"
+        sentinel.write_text("keep")
+        (filesystems / "docs").symlink_to(outside, target_is_directory=True)
+        destination = tmp_path / "restore"
+
+        with patch("bbackup.restore.subprocess.run") as mock_run:
+            result = dr.restore_backup(
+                backup_path=backup,
+                filesystems=["docs"],
+                filesystem_destination=destination,
+            )
+
+        assert result["filesystems"] == {"docs": "failed"}
+        assert result["errors"] == ["Failed to restore filesystem: docs"]
+        assert sentinel.read_text() == "keep"
+        assert not destination.exists()
+        mock_run.assert_not_called()
+
+    def test_restore_backup_rejects_symlinked_filesystems_root(
+        self, tmp_path, mock_docker_client
+    ):
+        dr = make_restore(mock_docker_client)
+        backup = tmp_path / "backup"
+        backup.mkdir()
+        outside = tmp_path / "outside"
+        (outside / "docs").mkdir(parents=True)
+        (backup / "filesystems").symlink_to(outside, target_is_directory=True)
+        destination = tmp_path / "restore"
+
+        with patch("bbackup.restore.subprocess.run") as mock_run:
+            result = dr.restore_backup(
+                backup_path=backup,
+                filesystems=["docs"],
+                filesystem_destination=destination,
+            )
+
+        assert result["filesystems"] == {"docs": "failed"}
+        assert result["errors"] == ["Failed to restore filesystem: docs"]
+        assert not destination.exists()
+        mock_run.assert_not_called()
+
+
     def test_rsync_command_uses_trailing_slash(self, tmp_path, mock_docker_client):
         dr = make_restore(mock_docker_client)
         src = tmp_path / "backup" / "filesystems" / "docs"

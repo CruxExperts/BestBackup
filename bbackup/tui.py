@@ -21,6 +21,7 @@ from rich import box
 
 from . import __version__
 from .config import Config, BackupSet
+TUI_OPERATION_JOIN_TIMEOUT = 5.0
 
 
 class BackupStatus:
@@ -109,10 +110,36 @@ class BackupStatus:
                     self.eta = timedelta(seconds=int(remaining_seconds))
     
     def start(self):
-        """Start timing."""
+        """Start timing without reviving a cancelled operation."""
         with self.lock:
             self.start_time = time.time()
-            self.status = "running"
+            if self.status != "cancelled":
+                self.status = "running"
+
+    def get_status(self) -> str:
+        """Return the current operation state."""
+        with self.lock:
+            return self.status
+
+    def set_status(self, status: str, *, preserve_cancelled: bool = True) -> bool:
+        """Set operation state, optionally preserving cancellation."""
+        with self.lock:
+            if preserve_cancelled and self.status == "cancelled" and status != "cancelled":
+                return False
+            self.status = status
+            return True
+
+    def consume_skip(self) -> bool:
+        """Consume and clear a pending skip request atomically."""
+        with self.lock:
+            if not self.skip_current:
+                return False
+            self.skip_current = False
+            return True
+    def request_skip(self) -> None:
+        """Request skipping the current item."""
+        with self.lock:
+            self.skip_current = True
     
     def cancel(self):
         """Cancel operation."""
@@ -128,6 +155,29 @@ class BackupStatus:
         """Add warning message."""
         with self.lock:
             self.warnings.append(warning)
+    def set_item_status(self, category: str, name: str, value: Any):
+        """Update one item status while holding the status lock."""
+        if category not in {"containers", "volumes", "networks", "filesystems", "remote"}:
+            raise ValueError(f"Unknown status category: {category}")
+        with self.lock:
+            getattr(self, f"{category}_status")[name] = value
+
+    def item_statuses(self, category: str) -> Dict[str, Any]:
+        """Return a consistent copy of one item-status map."""
+        if category not in {"containers", "volumes", "networks", "filesystems", "remote"}:
+            raise ValueError(f"Unknown status category: {category}")
+        with self.lock:
+            return dict(getattr(self, f"{category}_status"))
+
+    def messages(self) -> tuple[list[str], list[str]]:
+        """Return copies of errors and warnings for rendering."""
+        with self.lock:
+            return list(self.errors), list(self.warnings)
+
+    def set_encryption_status(self, status: str):
+        """Set encryption state while holding the status lock."""
+        with self.lock:
+            self.encryption_status = status
 
 
 class BackupTUI:
@@ -167,6 +217,7 @@ class BackupTUI:
         )
         
         # Header
+        current_status = self.status.get_status()
         elapsed = ""
         if self.status.start_time:
             elapsed_seconds = int(time.time() - self.status.start_time)
@@ -182,8 +233,8 @@ class BackupTUI:
             "paused": "yellow",
             "cancelled": "red",
             "completed": "green",
-            "error": "red",
-        }.get(self.status.status, "white")
+            "finalizing": "cyan",
+        }.get(current_status, "white")
         
         # Transfer speed display
         speed_str = ""
@@ -213,7 +264,7 @@ class BackupTUI:
         
         header_content = f"""
 [bold cyan]bbackup[/bold cyan] - Docker Backup Tool  [dim]v{__version__}[/dim]
-Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{eta_str}{speed_str}{bytes_str}{files_str}
+Status: [{status_color}]{current_status.upper()}[/{status_color}]{elapsed}{eta_str}{speed_str}{bytes_str}{files_str}
 
 [bold]Current:[/bold] {self.status.current_action}
 [bold]Item:[/bold] {self.status.current_item if self.status.current_item else 'N/A'}
@@ -280,13 +331,18 @@ Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{e
             Panel(progress_bar, title="Progress", border_style="blue", box=box.ROUNDED)
         )
         
+        containers_status = self.status.item_statuses("containers")
+        volumes_status = self.status.item_statuses("volumes")
+        filesystems_status = self.status.item_statuses("filesystems")
+        errors, warnings = self.status.messages()
+
         # Containers panel with enhanced info
         containers_table = Table(show_header=True, box=box.SIMPLE, show_edge=False)
         containers_table.add_column("Container", style="cyan", width=22)
         containers_table.add_column("Status", width=10)
         containers_table.add_column("Progress", style="dim", width=12)
         
-        for name, status_info in list(self.status.containers_status.items())[:10]:
+        for name, status_info in list(containers_status.items())[:10]:
             # Handle both dict and string status
             if isinstance(status_info, dict):
                 status = status_info.get("status", "unknown")
@@ -305,7 +361,7 @@ Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{e
                 progress_display[:12],
             )
         
-        if len(self.status.containers_status) == 0:
+        if len(containers_status) == 0:
             containers_table.add_row("[dim]No containers backed up yet[/dim]", "", "")
         
         layout["containers"].update(
@@ -318,7 +374,7 @@ Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{e
         volumes_table.add_column("Status", width=10)
         volumes_table.add_column("Progress", style="dim", width=12)
         
-        for name, status_info in list(self.status.volumes_status.items())[:10]:
+        for name, status_info in list(volumes_status.items())[:10]:
             # Handle both dict and string status
             if isinstance(status_info, dict):
                 status = status_info.get("status", "unknown")
@@ -337,7 +393,7 @@ Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{e
                 progress_display[:12],
             )
         
-        if len(self.status.volumes_status) == 0:
+        if len(volumes_status) == 0:
             volumes_table.add_row("[dim]No volumes backed up yet[/dim]", "", "")
         
         layout["volumes"].update(
@@ -350,7 +406,7 @@ Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{e
         filesystems_table.add_column("Status", width=10)
         filesystems_table.add_column("Progress", style="dim", width=12)
 
-        for name, status_info in list(self.status.filesystems_status.items())[:10]:
+        for name, status_info in list(filesystems_status.items())[:10]:
             if isinstance(status_info, dict):
                 fs_status = status_info.get("status", "unknown")
                 size = status_info.get("size", "-")
@@ -367,7 +423,7 @@ Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{e
                 progress_display[:12],
             )
 
-        if not self.status.filesystems_status:
+        if not filesystems_status:
             filesystems_table.add_row("[dim]No paths backed up yet[/dim]", "", "")
 
         layout["filesystems"].update(
@@ -408,13 +464,13 @@ Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{e
             elif self.status.encryption_status == "failed":
                 status_lines.append("[red]🔒 Encryption failed[/red]")
         
-        if self.status.errors:
-            status_lines.append(f"[red]Errors: {len(self.status.errors)}[/red]")
-            for error in self.status.errors[-2:]:  # Show last 2 errors
+        if errors:
+            status_lines.append(f"[red]Errors: {len(errors)}[/red]")
+            for error in errors[-2:]:  # Show last 2 errors
                 status_lines.append(f"  [red]•[/red] {error[:55]}")
-        if self.status.warnings:
-            status_lines.append(f"[yellow]Warnings: {len(self.status.warnings)}[/yellow]")
-            for warning in self.status.warnings[-2:]:  # Show last 2 warnings
+        if warnings:
+            status_lines.append(f"[yellow]Warnings: {len(warnings)}[/yellow]")
+            for warning in warnings[-2:]:  # Show last 2 warnings
                 status_lines.append(f"  [yellow]•[/yellow] {warning[:55]}")
         if not status_lines:
             status_lines.append("[green]No errors or warnings[/green]")
@@ -433,68 +489,122 @@ Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{e
         
         return layout
     
-    def run_with_live_dashboard(self, operation: Callable, *args, **kwargs):
-        """Run operation with live dashboard."""
-        import sys
-        import select
-        
-        # Check if we have a TTY for screen mode
-        use_screen = sys.stdout.isatty() and sys.stdin.isatty()
-        
-        # Run operation in background
-        operation_thread = threading.Thread(target=operation, args=args, kwargs=kwargs, daemon=True)
-        operation_thread.start()
-        
-        # Update dashboard with keyboard handling
+    @staticmethod
+    def _set_terminal_cbreak(stream: Any) -> Any:
+        """Put a terminal into cbreak mode and return its prior settings."""
+        import termios
+        import tty
+
+        old_settings = termios.tcgetattr(stream)
+        tty.setcbreak(stream.fileno())
+        return old_settings
+
+    @staticmethod
+    def _restore_terminal(stream: Any, old_settings: Any) -> None:
+        """Restore terminal settings captured by _set_terminal_cbreak."""
+        import termios
+
+        termios.tcsetattr(stream, termios.TCSADRAIN, old_settings)
+
+    @staticmethod
+    def _read_key(stream: Any) -> str:
+        """Read one key while always restoring the terminal mode."""
+        old_settings = BackupTUI._set_terminal_cbreak(stream)
         try:
-            # Start with initial dashboard
-            # Use screen=True only if we have a TTY, otherwise use regular Live updates
-            with Live(self.create_live_dashboard(), refresh_per_second=4, screen=use_screen) as live:
-                while operation_thread.is_alive() and self.status.status not in ["cancelled", "completed", "error"]:
-                    # Check for keyboard input (non-blocking)
-                    if sys.stdin.isatty():
-                        if select.select([sys.stdin], [], [], 0.1)[0]:
-                            try:
-                                import termios
-                                import tty
-                                old_settings = termios.tcgetattr(sys.stdin)
-                                tty.setcbreak(sys.stdin.fileno())
+            return stream.read(1)
+        finally:
+            BackupTUI._restore_terminal(stream, old_settings)
+
+    def run_with_live_dashboard(self, operation: Callable, *args, **kwargs):
+        """Run an operation while rendering a cancellable live dashboard."""
+        import select
+        import sys
+
+        use_screen = sys.stdout.isatty() and sys.stdin.isatty()
+        self.cancelled = False
+        terminal_settings = None
+        if sys.stdin.isatty():
+            try:
+                terminal_settings = self._set_terminal_cbreak(sys.stdin)
+            except (ImportError, OSError, AttributeError, ValueError):
+                terminal_settings = None
+
+        def run_operation():
+            try:
+                operation(*args, **kwargs)
+            except Exception as exc:
+                self.status.add_error(str(exc))
+                self.status.set_status("error")
+
+        operation_thread = threading.Thread(
+            target=run_operation,
+            daemon=True,
+        )
+        operation_thread.start()
+
+        try:
+            with Live(
+                self.create_live_dashboard(),
+                refresh_per_second=4,
+                screen=use_screen,
+                console=self.console,
+            ) as live:
+                while operation_thread.is_alive() and self.status.get_status() not in {
+                    "cancelled",
+                    "error",
+                }:
+                    if terminal_settings is not None:
+                        try:
+                            if select.select([sys.stdin], [], [], 0.1)[0]:
                                 key = sys.stdin.read(1)
-                                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-                                
-                                if key.lower() == 'q':
+                                if key.lower() == "q":
                                     self.status.cancel()
                                     self.cancelled = True
                                     break
-                                elif key.lower() == 'p':
-                                    if self.status.status == "running":
-                                        self.status.status = "paused"
-                                    elif self.status.status == "paused":
-                                        self.status.status = "running"
-                                elif key.lower() == 's':
-                                    # Skip current item
-                                    self.status.skip_current = True
-                                elif key.lower() == 'h':
-                                    # Show help screen
+                                if key.lower() == "p":
+                                    current_status = self.status.get_status()
+                                    if current_status == "running":
+                                        self.status.set_status("paused")
+                                    elif current_status == "paused":
+                                        self.status.set_status("running")
+                                elif key.lower() == "s":
+                                    self.status.request_skip()
+                                elif key.lower() == "h":
                                     self._show_help_screen()
-                            except (ImportError, OSError, AttributeError):
-                                # Fallback if termios not available (Windows, etc.)
-                                pass
-                    
-                    # Update dashboard with latest status
+                        except (ImportError, OSError, AttributeError, ValueError):
+                            pass
+
                     live.update(self.create_live_dashboard())
                     time.sleep(0.25)
-                
-                # Final update
+
                 live.update(self.create_live_dashboard())
         except KeyboardInterrupt:
             self.status.cancel()
             self.cancelled = True
-        
-        # Wait for operation to complete
-        operation_thread.join(timeout=2)
-        
-        return self.status.status == "completed"
+        except Exception:
+            if operation_thread.is_alive():
+                self.status.cancel()
+            raise
+        finally:
+            if terminal_settings is not None:
+                try:
+                    self._restore_terminal(sys.stdin, terminal_settings)
+                except (OSError, ValueError):
+                    self.status.add_error("Failed to restore terminal settings.")
+
+            if operation_thread.is_alive() and self.status.get_status() not in {
+                "cancelled",
+                "error",
+            }:
+                self.status.cancel()
+            operation_thread.join(timeout=TUI_OPERATION_JOIN_TIMEOUT)
+            if operation_thread.is_alive():
+                message = "Backup operation did not stop after cancellation."
+                self.status.add_error(message)
+                if self.status.get_status() != "cancelled":
+                    self.status.set_status("error")
+
+        return self.status.get_status() == "completed"
     
     def select_containers(self, containers: List[Dict]) -> Set[str]:
         """Interactive container selection."""
@@ -520,7 +630,7 @@ Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{e
         
         # Get selection
         self.console.print("\n[dim]Enter container numbers (comma-separated) or 'all' for all containers:[/dim]")
-        selection = Prompt.ask("Selection", default="all")
+        selection = Prompt.ask("Selection", default="all", console=self.console)
         
         if selection.lower() == "all":
             return {c["name"] for c in containers}
@@ -559,7 +669,7 @@ Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{e
         self.console.print(table)
         
         self.console.print("\n[dim]Select backup set number, or press Enter to skip:[/dim]")
-        selection = Prompt.ask("Selection", default="")
+        selection = Prompt.ask("Selection", default="", console=self.console)
         
         if not selection:
             return None
@@ -578,10 +688,18 @@ Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{e
         self.console.print("\n[bold]Select Backup Scope:[/bold]\n")
         
         scope = {
-            "containers": Confirm.ask("Backup container configurations?", default=True),
-            "volumes": Confirm.ask("Backup data volumes?", default=True),
-            "networks": Confirm.ask("Backup network configurations?", default=True),
-            "configs": Confirm.ask("Backup container configs/metadata?", default=True),
+            "containers": Confirm.ask(
+                "Backup container configurations?", default=True, console=self.console
+            ),
+            "volumes": Confirm.ask(
+                "Backup data volumes?", default=True, console=self.console
+            ),
+            "networks": Confirm.ask(
+                "Backup network configurations?", default=True, console=self.console
+            ),
+            "configs": Confirm.ask(
+                "Backup container configs/metadata?", default=True, console=self.console
+            ),
         }
         
         return scope
@@ -603,7 +721,7 @@ Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{e
 [bold]H[/bold] - Help (this screen)
   Shows this help screen
 
-[dim]Press any key to close help...[/dim]
+ [dim]Help is shown while the backup continues.[/dim]
 """
         from rich.panel import Panel
         self.console.print(Panel(help_content.strip(), title="Help", border_style="cyan", box=box.ROUNDED))
@@ -619,21 +737,26 @@ Status: [{status_color}]{self.status.status.upper()}[/{status_color}]{elapsed}{e
         table.add_column("Type", style="cyan", width=15)
         table.add_column("Success", style="green", width=10)
         table.add_column("Failed", style="red", width=10)
-        
-        containers_success = sum(1 for v in results.get("containers", {}).values() if v == "success")
-        containers_failed = sum(1 for v in results.get("containers", {}).values() if v == "failed")
-        volumes_success = sum(1 for v in results.get("volumes", {}).values() if v == "success")
-        volumes_failed = sum(1 for v in results.get("volumes", {}).values() if v == "failed")
-        networks_success = sum(1 for v in results.get("networks", {}).values() if v == "success")
-        networks_failed = sum(1 for v in results.get("networks", {}).values() if v == "failed")
-        
-        fs_success = sum(1 for v in results.get("filesystems", {}).values() if v == "success")
-        fs_failed = sum(1 for v in results.get("filesystems", {}).values() if v == "failed")
+        table.add_column("Skipped", style="yellow", width=10)
 
-        table.add_row("Containers", str(containers_success), str(containers_failed))
-        table.add_row("Volumes", str(volumes_success), str(volumes_failed))
-        table.add_row("Networks", str(networks_success), str(networks_failed))
-        table.add_row("Filesystems", str(fs_success), str(fs_failed))
+        def counts(values: Dict[str, Any]) -> tuple[int, int, int]:
+            return (
+                sum(1 for value in values.values() if value == "success"),
+                sum(1 for value in values.values() if value == "failed"),
+                sum(1 for value in values.values() if value == "skipped"),
+            )
+
+        for label, key in (
+            ("Containers", "containers"),
+            ("Volumes", "volumes"),
+            ("Networks", "networks"),
+            ("Filesystems", "filesystems"),
+            ("Remotes", "remotes"),
+        ):
+            values = results.get(key, {})
+            if key == "remotes" and not values:
+                continue
+            table.add_row(label, *(str(value) for value in counts(values)))
         
         self.console.print(table)
         

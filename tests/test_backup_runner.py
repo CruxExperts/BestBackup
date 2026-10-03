@@ -72,6 +72,13 @@ class TestRunBackupLifecycle:
         scope = BackupScope(containers=False, volumes=False, networks=False, configs=False)
         runner.run_backup(tmp_path, scope=scope)
         assert runner.status.status == "completed"
+    def test_deferred_run_leaves_finalization_to_caller(self, mock_docker_client, tmp_path):
+        runner = make_runner(mock_docker_client, tmp_path)
+        scope = BackupScope(containers=False, volumes=False, networks=False, configs=False)
+
+        runner.run_backup(tmp_path, scope=scope, defer_completion=True)
+
+        assert runner.status.status == "finalizing"
 
     def test_item_failure_sets_partial_status(self, mock_docker_client, tmp_path):
         runner = make_runner(mock_docker_client, tmp_path)
@@ -469,9 +476,9 @@ class TestEncryptBackupDirectory:
 
 
 class TestUploadToRemotes:
-    def test_no_remotes_returns_immediately(self, mock_docker_client, tmp_path):
+    def test_no_remotes_returns_success(self, mock_docker_client, tmp_path):
         runner = make_runner(mock_docker_client, tmp_path)
-        runner.upload_to_remotes(tmp_path, "backup_name", [])
+        assert runner.upload_to_remotes(tmp_path, "backup_name", []) is True
         runner._mock_rm.upload_backup.assert_not_called()
 
     def test_success_sets_remote_status(self, mock_docker_client, tmp_path):
@@ -524,6 +531,28 @@ class TestUploadToRemotes:
         runner.upload_to_remotes(tmp_path, "backup_20240101", [remote])
         assert len(runner.status.warnings) >= 1
         runner._mock_rot.cleanup_old_backups.assert_not_called()
+
+    def test_mixed_remote_results_return_failure(self, mock_docker_client, tmp_path):
+        runner = make_runner(mock_docker_client, tmp_path)
+        remotes = []
+        for name in ("remote1", "remote2"):
+            remote = MagicMock()
+            remote.name = name
+            remote.type = "local"
+            remote.path = str(tmp_path)
+            remotes.append(remote)
+
+        runner._mock_rm.upload_backup.side_effect = [True, False]
+        runner._mock_rot.check_storage_quota.return_value = {
+            "enabled": False, "warning": False, "cleanup_needed": False,
+        }
+
+        assert runner.upload_to_remotes(tmp_path, "backup_name", remotes) is False
+        assert runner.status.remote_status == {
+            "remote1": "success",
+            "remote2": "failed",
+        }
+        assert len(runner.status.errors) == 1
 
     def test_cancel_mid_upload_skips_second_remote(self, mock_docker_client, tmp_path):
         runner = make_runner(mock_docker_client, tmp_path)

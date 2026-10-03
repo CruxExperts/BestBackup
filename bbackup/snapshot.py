@@ -427,10 +427,6 @@ def _retention_policy(profile: SnapshotProfile, scope: str) -> Optional[Dict[str
     if prefixes is None:
         raise SnapshotError(f"Unsupported snapshot retention scope: {scope}")
 
-    scoped_keys_present = any(
-        isinstance(key, str) and any(key.startswith(f"{prefix}_") for prefix in prefixes)
-        for key in retention
-    ) or isinstance(nested, dict)
     policy: Dict[str, int] = {}
     for period in ("daily", "weekly", "monthly"):
         raw_value = nested.get(period) if isinstance(nested, dict) else None
@@ -439,8 +435,6 @@ def _retention_policy(profile: SnapshotProfile, scope: str) -> Optional[Dict[str
                 raw_value = retention.get(f"{prefix}_{period}")
                 if raw_value is not None:
                     break
-        if raw_value is None and not scoped_keys_present:
-            raw_value = retention.get(period)
         if raw_value is None:
             continue
         if isinstance(raw_value, bool) or (

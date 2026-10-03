@@ -4,7 +4,9 @@ thread safety, and BackupTUI initialization.
 Created: 2026-02-26
 Last Updated: 2026-02-26
 """
-
+import os
+import sys
+import termios
 import threading
 import time
 from datetime import timedelta
@@ -71,7 +73,6 @@ class TestBackupStatusLifecycle:
         s = BackupStatus()
         s.start()
         assert s.status == "running"
-
     def test_start_sets_start_time(self):
         s = BackupStatus()
         before = time.time()
@@ -79,6 +80,12 @@ class TestBackupStatusLifecycle:
         assert s.start_time is not None
         assert s.start_time >= before
 
+    def test_start_does_not_revive_cancelled_status(self):
+        s = BackupStatus()
+        s.cancel()
+        s.start()
+        assert s.status == "cancelled"
+        assert s.set_status("completed") is False
     def test_cancel_sets_cancelled(self):
         s = BackupStatus()
         s.start()
@@ -282,3 +289,35 @@ class TestBackupTUI:
         console.print(tui.create_live_dashboard())
 
         assert f"v{bbackup.__version__}" in output.getvalue()
+
+    def test_live_dashboard_single_key_cancel_restores_terminal(self, monkeypatch):
+        """A raw Q cancels the operation and restores the PTY settings."""
+        from rich.console import Console
+
+        master_fd, slave_fd = os.openpty()
+        stdin = os.fdopen(slave_fd, "r", buffering=1)
+        try:
+            before = termios.tcgetattr(stdin)
+            cfg = Config(config_path=None)
+            tui = BackupTUI(cfg)
+            tui.console = Console(file=StringIO(), force_terminal=False, width=100)
+            monkeypatch.setattr(sys, "stdin", stdin)
+            monkeypatch.setattr(sys, "stdout", StringIO())
+
+            def operation():
+                tui.status.start()
+                while tui.status.get_status() != "cancelled":
+                    time.sleep(0.01)
+
+            writer = threading.Timer(0.2, lambda: os.write(master_fd, b"q"))
+            writer.daemon = True
+            writer.start()
+            try:
+                assert tui.run_with_live_dashboard(operation) is False
+            finally:
+                writer.cancel()
+            assert tui.status.get_status() == "cancelled"
+            assert termios.tcgetattr(stdin) == before
+        finally:
+            stdin.close()
+            os.close(master_fd)

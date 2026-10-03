@@ -105,6 +105,44 @@ jobs:
       - name: Verify CLI skills docs are up to date
         run: uv run python scripts/generate_cli_skills.py --check
 
+  restore-boundary-test:
+    name: Restore boundary and failure tests
+    needs: lint-and-check
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        env:
+          UV_VERSION: "0.11.21"
+          UV_SHA256: "b9ecdefa81db7e966d1655988cad6f840316228381dd69131ebc4ae9362bbccd"
+        run: |
+          set -euo pipefail
+          printf 'uv==%s --hash=sha256:%s\n' "$UV_VERSION" "$UV_SHA256" \
+            > "$RUNNER_TEMP/uv-requirements.txt"
+          python -m pip install \
+            --disable-pip-version-check \
+            --no-deps \
+            --only-binary=:all: \
+            --require-hashes \
+            -r "$RUNNER_TEMP/uv-requirements.txt"
+          test "$(uv --version | cut -d' ' -f2)" = "$UV_VERSION"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run restore boundary tests
+        run: >-
+          uv run pytest tests/test_filesystem_backup.py
+          -k "restore_backup_returns_structured_failure or restore_backup_rejects_ or rsync_failure"
+          -v --tb=short
+
   integration-test:
     name: Integration tests
     needs: test

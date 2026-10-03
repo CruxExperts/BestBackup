@@ -391,7 +391,32 @@ class DockerRestore:
         Returns:
             True on success, False on any failure.
         """
-        src = backup_path / "filesystems" / target_name
+        filesystems_root = backup_path / "filesystems"
+        target_path = Path(target_name)
+        if target_path.is_absolute():
+            logger.error(f"Invalid absolute filesystem restore target: {target_name}")
+            return False
+        try:
+            if filesystems_root.is_symlink():
+                logger.error(f"Filesystem restore root is a symlink: {filesystems_root}")
+                return False
+            resolved_backup_root = Path(backup_path).resolve()
+            resolved_root = filesystems_root.resolve()
+            src = (filesystems_root / target_path).resolve()
+        except (OSError, RuntimeError) as exc:
+            logger.error(f"Failed to resolve filesystem restore target '{target_name}': {exc}")
+            return False
+
+        if (
+            resolved_root == resolved_backup_root
+            or not resolved_root.is_relative_to(resolved_backup_root)
+        ):
+            logger.error(f"Filesystem restore root escapes backup root: {filesystems_root}")
+            return False
+
+        if src == resolved_root or not src.is_relative_to(resolved_root):
+            logger.error(f"Filesystem restore target escapes backup root: {target_name}")
+            return False
         if not src.exists():
             logger.error(f"Filesystem backup not found: {src}")
             return False
@@ -401,10 +426,14 @@ class DockerRestore:
             return False
 
         destination = Path(destination)
-        destination.mkdir(parents=True, exist_ok=True)
+        try:
+            destination.mkdir(parents=True, exist_ok=True)
+            cmd = ["rsync", "-av", "--delete", str(src) + "/", str(destination) + "/"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.error(f"Filesystem restore failed for '{target_name}': {exc}")
+            return False
 
-        cmd = ["rsync", "-av", "--delete", str(src) + "/", str(destination) + "/"]
-        result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             logger.error(f"rsync restore failed for '{target_name}': {result.stderr.strip()}")
         return result.returncode == 0

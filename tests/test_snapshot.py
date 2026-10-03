@@ -153,6 +153,16 @@ def test_snapshot_retention_rejects_fractional_counts(tmp_path):
     else:
         raise AssertionError("fractional retention count should be rejected")
 
+def test_snapshot_retention_ignores_unscoped_counts(tmp_path):
+    cfg = Config(config_path=str(write_snapshot_config(tmp_path)))
+    profile = cfg.snapshot_profiles["essentials-daily"]
+    profile.retention = {"daily": 7, "weekly": 4, "monthly": 12}
+    init_git_repo(tmp_path / "repos" / "repo-a")
+
+    plan = snapshot_plan(profile)
+
+    assert plan["retention"] == []
+
 
 def test_snapshot_plan_retention_only_targets_active_repos_and_paths(tmp_path):
     cfg = Config(config_path=str(write_snapshot_config(tmp_path)))

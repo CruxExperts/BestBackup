@@ -41,6 +41,7 @@ class BackupRunner:
         scope: Optional[BackupScope] = None,
         incremental: bool = False,
         filesystem_targets: Optional[List[FilesystemTarget]] = None,
+        defer_completion: bool = False,
     ) -> dict:
         """Run backup with status updates."""
         if scope is None:
@@ -83,29 +84,28 @@ class BackupRunner:
         completed = 0
         
         # Backup containers
-        if (scope.containers or scope.configs) and not self.status.status == "cancelled":
+        if (scope.containers or scope.configs) and not self.status.get_status() == "cancelled":
             containers_to_backup = containers or [c["name"] for c in self.docker_backup.get_all_containers()]
             
             configs_dir = backup_dir / "configs"
             configs_dir.mkdir(parents=True, exist_ok=True)
             
             for container_name in containers_to_backup:
-                if self.status.status == "cancelled":
+                if self.status.get_status() == "cancelled":
                     break
                 
                 # Wait if paused
-                while self.status.status == "paused" and not self.status.status == "cancelled":
+                while self.status.get_status() == "paused" and not self.status.get_status() == "cancelled":
                     time.sleep(0.5)
                 
-                if self.status.status == "cancelled":
+                if self.status.get_status() == "cancelled":
                     break
                 
                 # Check if skip requested
-                if self.status.skip_current:
+                if self.status.consume_skip():
                     logger.info(f"Skipping container: {container_name}")
-                    self.status.skip_current = False
                     results["containers"][container_name] = "skipped"
-                    self.status.containers_status[container_name] = "skipped"
+                    self.status.set_item_status("containers", container_name, "skipped")
                     completed += 1
                     self.status.update(completed=completed)
                     continue
@@ -120,7 +120,11 @@ class BackupRunner:
                     logger.info(f"Backing up container config: {container_name}")
                     success = self.docker_backup.backup_container_config(container_name, configs_dir)
                     results["containers"][container_name] = "success" if success else "failed"
-                    self.status.containers_status[container_name] = "success" if success else "failed"
+                    self.status.set_item_status(
+                        "containers",
+                        container_name,
+                        "success" if success else "failed",
+                    )
                     if not success:
                         error_msg = f"Failed to backup container config: {container_name}"
                         logger.error(error_msg)
@@ -131,7 +135,7 @@ class BackupRunner:
                 self.status.update(completed=completed)
         
         # Backup volumes
-        if scope.volumes and not self.status.status == "cancelled":
+        if scope.volumes and not self.status.get_status() == "cancelled":
             volumes_dir = backup_dir / "volumes"
             volumes_dir.mkdir(parents=True, exist_ok=True)
             
@@ -142,22 +146,21 @@ class BackupRunner:
                 container_volumes = [v["name"] for v in self.docker_backup.get_all_volumes()]
             
             for volume_name in container_volumes:
-                if self.status.status == "cancelled":
+                if self.status.get_status() == "cancelled":
                     break
                 
                 # Wait if paused
-                while self.status.status == "paused" and not self.status.status == "cancelled":
+                while self.status.get_status() == "paused" and not self.status.get_status() == "cancelled":
                     time.sleep(0.5)
                 
-                if self.status.status == "cancelled":
+                if self.status.get_status() == "cancelled":
                     break
                 
                 # Check if skip requested
-                if self.status.skip_current:
+                if self.status.consume_skip():
                     logger.info(f"Skipping volume: {volume_name}")
-                    self.status.skip_current = False
                     results["volumes"][volume_name] = "skipped"
-                    self.status.volumes_status[volume_name] = "skipped"
+                    self.status.set_item_status("volumes", volume_name, "skipped")
                     completed += 1
                     self.status.update(completed=completed)
                     continue
@@ -175,7 +178,11 @@ class BackupRunner:
                     progress_callback=self._parse_rsync_progress
                 )
                 results["volumes"][volume_name] = "success" if success else "failed"
-                self.status.volumes_status[volume_name] = "success" if success else "failed"
+                self.status.set_item_status(
+                    "volumes",
+                    volume_name,
+                    "success" if success else "failed",
+                )
                 if not success:
                     error_msg = f"Failed to backup volume: {volume_name}"
                     logger.error(error_msg)
@@ -186,25 +193,24 @@ class BackupRunner:
                 self.status.update(completed=completed)
         
         # Backup networks
-        if scope.networks and not self.status.status == "cancelled":
+        if scope.networks and not self.status.get_status() == "cancelled":
             networks = self.docker_backup.get_all_networks()
             for network in networks:
-                if self.status.status == "cancelled":
+                if self.status.get_status() == "cancelled":
                     break
                 
                 # Wait if paused
-                while self.status.status == "paused" and not self.status.status == "cancelled":
+                while self.status.get_status() == "paused" and not self.status.get_status() == "cancelled":
                     time.sleep(0.5)
                 
-                if self.status.status == "cancelled":
+                if self.status.get_status() == "cancelled":
                     break
                 
                 # Check if skip requested
-                if self.status.skip_current:
+                if self.status.consume_skip():
                     logger.info(f"Skipping network: {network['name']}")
-                    self.status.skip_current = False
                     results["networks"][network["name"]] = "skipped"
-                    self.status.networks_status[network["name"]] = "skipped"
+                    self.status.set_item_status("networks", network["name"], "skipped")
                     completed += 1
                     self.status.update(completed=completed)
                     continue
@@ -218,7 +224,11 @@ class BackupRunner:
                 logger.info(f"Backing up network: {network['name']}")
                 success = self.docker_backup.backup_network(network["name"], backup_dir)
                 results["networks"][network["name"]] = "success" if success else "failed"
-                self.status.networks_status[network["name"]] = "success" if success else "failed"
+                self.status.set_item_status(
+                    "networks",
+                    network["name"],
+                    "success" if success else "failed",
+                )
                 if not success:
                     error_msg = f"Failed to backup network: {network['name']}"
                     logger.error(error_msg)
@@ -230,22 +240,21 @@ class BackupRunner:
         
         # Backup filesystem paths
         fs_backup = FilesystemBackup(self.config)
-        if scope.filesystems and fs_targets and not self.status.status == "cancelled":
+        if scope.filesystems and fs_targets and not self.status.get_status() == "cancelled":
             for target in fs_targets:
-                if self.status.status == "cancelled":
+                if self.status.get_status() == "cancelled":
                     break
 
-                while self.status.status == "paused" and not self.status.status == "cancelled":
+                while self.status.get_status() == "paused" and not self.status.get_status() == "cancelled":
                     time.sleep(0.5)
 
-                if self.status.status == "cancelled":
+                if self.status.get_status() == "cancelled":
                     break
 
-                if self.status.skip_current:
+                if self.status.consume_skip():
                     logger.info(f"Skipping filesystem path: {target.name}")
-                    self.status.skip_current = False
                     results["filesystems"][target.name] = "skipped"
-                    self.status.filesystems_status[target.name] = "skipped"
+                    self.status.set_item_status("filesystems", target.name, "skipped")
                     completed += 1
                     self.status.update(completed=completed)
                     continue
@@ -262,7 +271,11 @@ class BackupRunner:
                     progress_callback=self._parse_rsync_progress,
                 )
                 results["filesystems"][target.name] = "success" if success else "failed"
-                self.status.filesystems_status[target.name] = "success" if success else "failed"
+                self.status.set_item_status(
+                    "filesystems",
+                    target.name,
+                    "success" if success else "failed",
+                )
                 if not success:
                     error_msg = f"Failed to backup path: {target.path}"
                     logger.error(error_msg)
@@ -272,9 +285,10 @@ class BackupRunner:
                 completed += 1
                 self.status.update(completed=completed)
 
-        if self.status.status == "cancelled":
-            self.status.status = "cancelled"
+        if self.status.get_status() == "cancelled":
+            self.status.set_status("cancelled", preserve_cancelled=False)
         else:
+            self.status.set_status("finalizing")
             metadata_inputs_exist = any(
                 (backup_dir / name).exists()
                 for name in ("configs", "networks")
@@ -287,15 +301,17 @@ class BackupRunner:
                     logger.error(error_msg)
                     results["errors"].append(error_msg)
                     self.status.add_error(error_msg)
-
-        if self.status.status == "cancelled":
-            self.status.status = "cancelled"
+        if self.status.get_status() == "cancelled":
+            self.status.set_status("cancelled", preserve_cancelled=False)
         elif results["errors"]:
-            self.status.status = "partial"
+            self.status.set_status("partial")
         else:
-            self.status.status = "completed"
+            if defer_completion:
+                self.status.set_status("finalizing")
+            else:
+                self.status.set_status("completed")
 
-        if self.status.status != "cancelled":
+        if self.status.get_status() != "cancelled":
             encryption_mode = self.config.encryption.method if self.config.encryption.enabled else "disabled"
             generate_backup_manifest(
                 backup_dir,
@@ -376,7 +392,7 @@ class BackupRunner:
         try:
             logger.info("Encrypting backup directory...")
             self.status.update(action="Encrypting backup...", item="")
-            self.status.encryption_status = "encrypting"
+            self.status.set_encryption_status("encrypting")
             
             encryption_mgr = EncryptionManager(self.config.encryption)
             encrypted_dir = encryption_mgr.encrypt_backup(backup_dir)
@@ -384,10 +400,10 @@ class BackupRunner:
             if encrypted_dir != backup_dir:
                 logger.info(f"Backup encrypted: {encrypted_dir}")
                 self.status.update(action="Backup encrypted successfully", item="")
-                self.status.encryption_status = "encrypted"
+                self.status.set_encryption_status("encrypted")
                 return encrypted_dir
             else:
-                self.status.encryption_status = "failed"
+                self.status.set_encryption_status("failed")
                 message = "Encryption failed"
                 self.status.add_error(message)
                 raise RuntimeError(message)
@@ -396,7 +412,7 @@ class BackupRunner:
             message = f"Encryption failed: {e}"
             if message not in self.status.errors:
                 self.status.add_error(message)
-            self.status.encryption_status = "failed"
+            self.status.set_encryption_status("failed")
             raise RuntimeError(message) from e
     
     def upload_to_remotes(
@@ -404,19 +420,20 @@ class BackupRunner:
         backup_path: Path,
         backup_name: str,
         remotes: List,
-    ):
+    ) -> bool:
         """Upload backup to remote destinations."""
         if not remotes:
-            return
+            return True
         
-        logger.info(f"Starting upload to {len(remotes)} remote destination(s)")
+        all_succeeded = True
         self.status.update(
             action=f"Uploading to {len(remotes)} remote destination(s)",
             item="",
         )
         
         for remote in remotes:
-            if self.status.status == "cancelled":
+            if self.status.get_status() == "cancelled":
+                all_succeeded = False
                 break
             
             logger.info(f"Uploading to remote: {remote.name} ({remote.type})")
@@ -425,7 +442,7 @@ class BackupRunner:
                 item=remote.name,
             )
             
-            self.status.remote_status[remote.name] = "uploading"
+            self.status.set_item_status("remote", remote.name, "uploading")
             
             # Create progress callback for TUI updates
             def progress_callback(line: str):
@@ -438,7 +455,7 @@ class BackupRunner:
             
             if success:
                 logger.info(f"Successfully uploaded to {remote.name}")
-                self.status.remote_status[remote.name] = "success"
+                self.status.set_item_status("remote", remote.name, "success")
                 
                 # Check storage quota and cleanup if needed
                 try:
@@ -458,7 +475,6 @@ class BackupRunner:
                             # filter_backups_by_retention expects a Path but only uses it for local remotes
                             rotation_path = Path(remote.path).expanduser() if remote.type == "local" else Path("/tmp")
                             to_keep, to_delete = self.rotation.filter_backups_by_retention(backups, rotation_path)
-                            
                             if to_delete:
                                 # For cleanup, use the actual remote path
                                 cleanup_path = Path(remote.path).expanduser() if remote.type == "local" else Path("/tmp")
@@ -473,5 +489,7 @@ class BackupRunner:
                     # Don't fail the upload if rotation check fails
             else:
                 logger.error(f"Failed to upload to {remote.name}")
-                self.status.remote_status[remote.name] = "failed"
+                all_succeeded = False
+                self.status.set_item_status("remote", remote.name, "failed")
                 self.status.add_error(f"Failed to upload to {remote.name}")
+        return all_succeeded

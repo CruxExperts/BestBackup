@@ -57,6 +57,7 @@ from .cli_utils import (
     BBACKUP_NO_INTERACTIVE_ENV,
 )
 from .skills import get_skill
+from .production_cli import cli as production_cli
 
 
 SKILLS_DOC_RESOURCE = "cli-skills.md"
@@ -240,8 +241,8 @@ def backup(
 
     # Gap 1: honour env var for non-interactive mode
     _no_interactive = no_interactive or os.environ.get(BBACKUP_NO_INTERACTIVE_ENV) == "1"
-    # When --output json is active, TUI must be off
-    use_tui = not _no_interactive and output != "json"
+    _has_tty = sys.stdin.isatty() and sys.stdout.isatty()
+    use_tui = not _no_interactive and output != "json" and _has_tty
 
     # Determine backup scope
     scope = BackupScope()
@@ -371,22 +372,24 @@ def backup(
         upload_path = backup_dir
         original_backup_dir = backup_dir
         try:
-            status.status = "running"
+            status.set_status("running")
             run_results = runner.run_backup(
                 backup_dir=backup_dir,
                 containers=containers_to_backup,
                 scope=scope,
                 incremental=incremental or config.incremental.enabled,
                 filesystem_targets=filesystem_targets,
+                defer_completion=True,
             ) or {}
 
             run_errors = run_results.get("errors") if isinstance(run_results, dict) else []
-            if status.status in ("partial", "error") or run_errors:
-                if status.status != "error":
-                    status.status = "partial"
+            current_status = status.get_status()
+            if current_status in ("partial", "error") or run_errors:
+                if current_status != "error":
+                    status.set_status("partial")
                 return
 
-            if use_solid_archive and status.status != "cancelled":
+            if use_solid_archive and status.get_status() != "cancelled":
                 status.update(action="Creating archive...", item="")
                 compression_cfg = config.get_backup_compression()
                 enc_cfg = config.encryption if config.encryption.enabled else None
@@ -398,18 +401,31 @@ def backup(
                 if original_backup_dir.exists():
                     shutil.rmtree(original_backup_dir)
                 if enc_cfg and str(upload_path).endswith(".enc"):
-                    status.encryption_status = "encrypted"
-                if remotes_to_use:
-                    runner.upload_to_remotes(upload_path, backup_name, remotes_to_use)
-                any_ok = any(st == "success" for st in (status.remote_status or {}).values())
-                if any_ok:
+                    status.set_encryption_status("encrypted")
+                if remotes_to_use and status.get_status() != "cancelled":
+                    uploads_succeeded = runner.upload_to_remotes(
+                        upload_path, backup_name, remotes_to_use
+                    )
+                    if not uploads_succeeded:
+                        status.set_status("partial")
+                else:
+                    uploads_succeeded = False
+                any_ok = any(
+                    st == "success"
+                    for st in status.item_statuses("remote").values()
+                )
+                if uploads_succeeded and any_ok:
                     try:
                         if upload_path.exists():
                             upload_path.unlink(missing_ok=True)
                     except OSError:
                         pass
             else:
-                if config.encryption.enabled and status.status != "cancelled" and not use_solid_archive:
+                if (
+                    config.encryption.enabled
+                    and status.get_status() != "cancelled"
+                    and not use_solid_archive
+                ):
                     original_backup_dir = backup_dir
                     encrypted_backup_dir = runner.encrypt_backup_directory(backup_dir)
                     if encrypted_backup_dir != original_backup_dir:
@@ -418,14 +434,18 @@ def backup(
                         if original_backup_dir.exists():
                             shutil.rmtree(original_backup_dir)
 
-                if remotes_to_use and status.status != "cancelled":
-                    runner.upload_to_remotes(backup_dir, backup_name, remotes_to_use)
+                if remotes_to_use and status.get_status() != "cancelled":
+                    uploads_succeeded = runner.upload_to_remotes(
+                        backup_dir, backup_name, remotes_to_use
+                    )
+                    if not uploads_succeeded:
+                        status.set_status("partial")
 
-            if status.status not in ("cancelled", "partial", "error"):
-                status.status = "completed"
+            if status.get_status() not in ("cancelled", "partial", "error"):
+                status.set_status("completed")
         except Exception as e:
-            if status.status != "partial":
-                status.status = "error"
+            if status.get_status() != "partial":
+                status.set_status("error")
             if str(e) not in status.errors:
                 status.add_error(str(e))
 
@@ -442,43 +462,50 @@ def backup(
             console.print("\n[yellow]Backup cancelled by user[/yellow]")
         sys.exit(EXIT_CANCELLED)
 
-    # Build JSON-friendly results dict
+    # Build JSON-friendly results dict from one consistent status snapshot.
+    final_status = status.get_status()
+    containers_status = status.item_statuses("containers")
+    volumes_status = status.item_statuses("volumes")
+    networks_status = status.item_statuses("networks")
+    filesystems_status = status.item_statuses("filesystems")
+    remotes_status = status.item_statuses("remote")
+    errors, _warnings = status.messages()
     backup_result = {
         "backup_dir": str(backup_dir),
-        "containers": status.containers_status or {},
-        "volumes": status.volumes_status or {},
-        "networks": status.networks_status or {},
-        "filesystems": status.filesystems_status or {},
-        "remotes": status.remote_status or {},
+        "containers": containers_status,
+        "volumes": volumes_status,
+        "networks": networks_status,
+        "filesystems": filesystems_status,
+        "remotes": remotes_status,
         "encryption": _backup_encryption_result(status, backup_dir),
-        "errors": status.errors or [],
+        "errors": errors,
     }
 
-    if status.status == "completed":
+    if final_status == "completed":
         render_output(backup_result, output, "backup", success=True)
         if output != "json":
             console.print(f"\n[green]Backup completed: {backup_dir}[/green]")
             tui_inst = BackupTUI(config)
             tui_inst.show_backup_status(
                 {
-                    "containers": status.containers_status,
-                    "volumes": status.volumes_status,
-                    "networks": status.networks_status,
-                    "filesystems": status.filesystems_status,
+                    "containers": containers_status,
+                    "volumes": volumes_status,
+                    "networks": networks_status,
+                    "filesystems": filesystems_status,
                 },
-                status.errors,
+                errors,
             )
         sys.exit(EXIT_SUCCESS)
-    elif status.status == "cancelled":
+    elif final_status == "cancelled":
         render_output(backup_result, output, "backup", success=False, errors=["Backup cancelled"])
         if output != "json":
             console.print("\n[yellow]Backup was cancelled[/yellow]")
         sys.exit(EXIT_CANCELLED)
     else:
-        render_output(backup_result, output, "backup", success=False, errors=status.errors or ["Backup failed"])
+        render_output(backup_result, output, "backup", success=False, errors=errors or ["Backup failed"])
         if output != "json":
             console.print("\n[red]Backup failed or was interrupted[/red]")
-            for err in status.errors or []:
+            for err in errors:
                 console.print(f"  [red]x[/red] {err}")
         sys.exit(EXIT_PARTIAL if run_results else EXIT_SYSTEM_ERROR)
 
@@ -1341,8 +1368,6 @@ def _print_skills_markdown() -> None:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-
-from .production_cli import cli as production_cli
 
 cli.add_command(production_cli, name="production")
 

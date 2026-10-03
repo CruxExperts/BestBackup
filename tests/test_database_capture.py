@@ -29,6 +29,13 @@ def _source(kind: str, *, database="app_db") -> Source:
 
 
 def _postgres_binding(tmp_path: Path) -> DatabaseBinding:
+    clients = tmp_path / "clients"
+    clients.mkdir(exist_ok=True)
+    _script(
+        clients,
+        "psql",
+        'printf \'%s\' \'{"encoding":"UTF8","collate":"C","ctype":"C","provider":"c"}\'\n',
+    )
     service = _private_file(tmp_path / "pg_service.conf", "[prod]\nhost=db.example\n")
     password = _private_file(
         tmp_path / "pgpass", "db.example:5432:app_db:user:secret-token\n"
@@ -263,3 +270,20 @@ def test_database_client_files_must_be_private_regular_files(tmp_path, monkeypat
             pytest.fail("insecure client file unexpectedly yielded")
 
     assert not list(tmp_path.glob("capture-*"))
+
+
+def test_postgresql_refuses_unsupported_locale_before_export(tmp_path, monkeypatch):
+    binding = _postgres_binding(tmp_path)
+    clients = tmp_path / "clients"
+    _script(
+        clients,
+        "psql",
+        'printf \'%s\' \'{"encoding":"UTF8","collate":"C","ctype":"C","provider":"i"}\'\n',
+    )
+    marker = tmp_path / "unexpected-dump"
+    _script(clients, "pg_dump", f"printf 'bad' > '{marker}'\n")
+    monkeypatch.setenv("PATH", str(clients))
+    with pytest.raises(CaptureError, match="locale metadata"):
+        with _capture(_source("postgresql"), binding, tmp_path):
+            pytest.fail("unsupported locale unexpectedly yielded")
+    assert not marker.exists()

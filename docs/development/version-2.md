@@ -150,11 +150,38 @@ runs. This explicit policy prevents concurrent schema changes from invalidating
 the export. It requires the database account's corresponding lock privileges;
 it is not a zero-interruption capture mode. MySQL login-path overrides are disabled.
 
-Native database clients must be installed separately on the capture host.
-No automatic database restore is exposed yet. Do not replay a SQL dump into
+Native database clients must be installed separately on the capture and restore
+hosts. New database captures include a versioned manifest inside the snapshot.
+PostgreSQL restore uses that snapshot-time manifest, so the original source
+configuration and ledger are not required. Select a destination connection from
+private host bindings and a new database name:
+
+```bash
+bbackup production --config config.json --bindings bindings.json databases restore \
+  --repository replica --snapshot FULL_DESTINATION_SNAPSHOT_ID \
+  --source DATABASE_SOURCE_NAME --connection RECOVERY_CONNECTION \
+  --target-database recovered_app --trusted-archive
+```
+
+This preview requires PostgreSQL 15 or newer and libc locale databases. Capture
+records the source encoding, collation, and character classification; restore
+creates the destination from the pristine `template0` with those exact settings.
+The matching locales must be installed on the destination server. ICU and other
+locale providers are refused until their version-specific metadata is supported.
+
+The archive must come from a trusted source: database restores execute archived
+SQL. The command refuses existing databases, stops on restore errors, and checks
+read-only connectivity afterward. It never drops a database, and an interrupted
+restore retains the partial destination for inspection. Use `databases reconcile`
+only after inspecting that destination. Coordinate all writers through one state
+directory and one destination binding; differently named service aliases are not
+proof of different servers. Connectivity success does not establish application
+startup or application-specific data correctness.
+
+MySQL/MariaDB native restore is not exposed yet. Do not replay a SQL dump into
 an existing production database. Native capture and restore qualification under
 concurrent source writes remains a release gate; executable fixtures validate
-command orchestration, failure cleanup, and credential isolation only.
+command orchestration, failure handling, and credential isolation only.
 
 ## Independent recovery artifacts
 
@@ -189,9 +216,9 @@ creating a kit on that host does not establish independent custody.
 
 ## Qualification and remaining work
 
-On October 3, 2026, the combined checkout passed 725 tests with eight workers.
-The final PostgreSQL archive regressions subsequently passed with the database
-capture suite (10 tests). The built wheel passed an isolated installation smoke
+On October 3, 2026, the combined checkout passed 745 tests with eight workers,
+including native-client fixtures and a real restic snapshot-manifest round trip
+without the original source configuration or ledger. The built wheel passed an isolated installation smoke
 test using hash-locked dependencies, including version-2 schema discovery.
 Source compilation, focused lint, generated CLI/schema checks, version alignment,
 Markdown standards, and diff whitespace checks also passed. These checks include
@@ -210,8 +237,8 @@ tests exercise bounded output, cancellation, timeout and process-group cleanup;
 ledger tests exercise contention, interruption, privacy and pagination. Headless
 Textual tests exercise mouse tabs, keyboard selection, search and terminal resize.
 
-The release still requires live PostgreSQL and MySQL/MariaDB capture qualification
-and safe native restore, Docker quiescence/restart recovery, application validation,
+The release still requires live PostgreSQL capture/restore and MySQL/MariaDB capture
+qualification, safe MySQL/MariaDB native restore, Docker quiescence/restart recovery, application validation,
 independent recovery kit qualification, protected cloud retention and historical-version
 recovery qualification, complete setup/restore/settings interfaces, live progress,
 and versioned Ubuntu packaging with installed upgrade/rollback tests.

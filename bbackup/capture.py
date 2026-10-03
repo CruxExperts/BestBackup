@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from collections.abc import Mapping
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -11,7 +12,7 @@ import stat
 import tempfile
 import time
 
-from .models import DatabaseBinding, Source
+from .models import DatabaseBinding, Source, strict_json
 from .operations import OperationPlan, OperationRunner, OperationStatus
 
 
@@ -94,11 +95,52 @@ def _run_native(
 
 def _capture_postgresql(source, binding, target, runner, deadline, cancel):
     assert binding.service_file is not None and binding.service_name is not None
-    env_values = {"PGSERVICEFILE": str(binding.service_file)}
+    env_values = {"PGSERVICEFILE": str(binding.service_file), "PGPASSFILE": "/dev/null"}
     if binding.password_file is not None:
         env_values["PGPASSFILE"] = str(binding.password_file)
     env = _native_environment(**env_values)
     connection = f"service={binding.service_name} dbname={source.database}"
+    inspected = _run_native(
+        runner,
+        source,
+        [
+            "psql",
+            "--no-psqlrc",
+            "--no-password",
+            "--quiet",
+            "--tuples-only",
+            "--no-align",
+            "--set=ON_ERROR_STOP=1",
+            f"--dbname={connection}",
+            "--command=SELECT json_build_object('encoding', pg_encoding_to_char(encoding), "
+            "'collate', datcollate, 'ctype', datctype, 'provider', datlocprovider) "
+            "FROM pg_catalog.pg_database WHERE datname=current_database();",
+        ],
+        env=env,
+        timeout=max(0.001, deadline - time.monotonic()),
+        cancel=cancel,
+    )
+    try:
+        if inspected.stdout_bytes != len(inspected.stdout_tail):
+            raise ValueError()
+        options = strict_json(inspected.stdout_tail.decode())
+        if (
+            not isinstance(options, dict)
+            or set(options) != {"encoding", "collate", "ctype", "provider"}
+            or options["provider"] != "c"
+            or any(
+                not isinstance(value, str)
+                or not value
+                or len(value) > 128
+                or "\0" in value
+                for value in options.values()
+            )
+        ):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise CaptureError(
+            "PostgreSQL encoding and libc locale metadata could not be captured"
+        ) from None
     descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(descriptor, "wb") as output:
@@ -127,6 +169,7 @@ def _capture_postgresql(source, binding, target, runner, deadline, cancel):
         raise
     except OSError:
         raise CaptureError("Could not write the private PostgreSQL export") from None
+    return options
 
 
 def _capture_mysql(source, binding, target, runner, deadline, cancel):
@@ -234,6 +277,7 @@ def capture_sources(
     runner = runner or OperationRunner()
     with tempfile.TemporaryDirectory(prefix="capture-", dir=state_dir) as temporary:
         paths = []
+        exports = []
         for source in sources:
             if cancel is not None and cancel.is_set():
                 raise CaptureError("Capture cancelled")
@@ -269,17 +313,43 @@ def capture_sources(
                 except sqlite3.Error as exc:
                     raise CaptureError("SQLite capture failed") from exc
                 paths.append(str(target))
+                exports.append(
+                    {
+                        "source": source.name,
+                        "kind": source.kind,
+                        "format": "sqlite",
+                        "path": str(target),
+                    }
+                )
             elif source.kind in ("postgresql", "mysql", "mariadb"):
                 binding = _database_binding(source, database_bindings)
                 suffix = ".dump" if source.kind == "postgresql" else ".sql"
                 target = Path(temporary) / f"{source.name}{suffix}"
                 if source.kind == "postgresql":
-                    _capture_postgresql(
+                    database_options = _capture_postgresql(
                         source, binding, target, runner, deadline, cancel
                     )
                 else:
                     _capture_mysql(source, binding, target, runner, deadline, cancel)
                 paths.append(str(target))
+                exports.append(
+                    {
+                        "source": source.name,
+                        "kind": source.kind,
+                        "format": "postgresql-custom"
+                        if source.kind == "postgresql"
+                        else "sql",
+                        "path": str(target),
+                    }
+                )
+                if source.kind == "postgresql":
+                    exports[-1]["database_options"] = database_options
             else:
                 raise CaptureError("Source adapter is not implemented")
+        if exports:
+            manifest = Path(temporary) / "bbackup-capture.json"
+            with manifest.open("x", encoding="utf-8") as output:
+                manifest.chmod(0o600)
+                json.dump({"schema_version": 2, "exports": exports}, output)
+            paths.append(str(manifest))
         yield paths

@@ -1,4 +1,5 @@
 import sqlite3
+import json
 from pathlib import Path
 from threading import Event
 
@@ -25,6 +26,10 @@ def test_sqlite_transactional_export_and_cleanup(tmp_path):
                 ("committed",)
             ]
         assert exported.stat().st_mode & 0o777 == 0o600
+        manifest = json.loads(Path(paths[-1]).read_text())
+        assert manifest == {"schema_version": 2, "exports": [
+            {"source": "db", "kind": "sqlite", "format": "sqlite", "path": str(exported)}
+        ]}
     assert not exported.exists()
     writer.rollback()
     writer.close()

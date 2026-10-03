@@ -79,6 +79,17 @@ def dispatch(service, command, values, ctx, cancel):
         return service.copy(**values, cancel=cancel)
     if command == "restore":
         return service.restore(values["repository"], values["snapshot"], Path(values["target"]), cancel=cancel)
+    if command == "databases restore":
+        return service.restore_database(**values, cancel=cancel)
+    if command == "databases reconcile":
+        if values["database_reviewed"] is not True:
+            raise ConfigurationError("Database inspection must be explicitly acknowledged")
+        try:
+            outcome = ReconciliationOutcome(values["outcome"])
+        except ValueError:
+            raise ConfigurationError("Invalid reconciliation outcome") from None
+        service.ledger.reconcile(repository_key(service.database_identity(values["connection"], values["target_database"])), values["operation_id"], outcome)
+        return {"operation_id": values["operation_id"], "reviewed_outcome": outcome.value, "replayed": False}
     if command == "runs reconcile":
         if values["repository_reviewed"] is not True:
             raise ConfigurationError("Repository inspection must be explicitly acknowledged")
@@ -185,7 +196,7 @@ def _register(command, definition):
         except UncertainOperationError as exc:
             _emit(command, error={"code": "requires_reconciliation", "message": "Review repository state before resolving this operation", "operation_id": exc.operation_id})
             ctx.exit(3)
-        except (ServiceError, OperationError, CaptureError, CloudError, RecoveryError, tarfile.TarError, sqlite3.Error, OSError, ValueError):
+        except (ServiceError, OperationError, CaptureError, CloudError, RecoveryError, tarfile.TarError, sqlite3.Error, OSError, ValueError, KeyError):
             _emit(command, error={"code": "operation_failed", "message": "Operation failed; inspect sanitized run state before retrying"})
             ctx.exit(3)
     params = [click.Option(["--input-json"], type=str), click.Option(["--schema"], is_flag=True)]

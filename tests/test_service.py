@@ -49,6 +49,52 @@ def _run(plan, *, status=OperationStatus.SUCCEEDED, exit_code=0, stdout=b""):
     )
 
 
+@pytest.mark.skipif(shutil.which("restic") is None, reason="restic is required")
+def test_database_restore_uses_snapshot_manifest_without_original_sources(service, tmp_path, monkeypatch):
+    import os
+    from pathlib import Path
+    from bbackup.models import DatabaseBinding
+
+    clients = tmp_path / "clients"
+    clients.mkdir()
+    dump = clients / "pg_dump"
+    dump.write_text("#!/bin/sh\nprintf 'PGDMP-restorable-database'\n")
+    dump.chmod(0o700)
+    psql = clients / "psql"
+    psql.write_text("#!/bin/sh\nprintf '%s' '{\"encoding\":\"UTF8\",\"collate\":\"C\",\"ctype\":\"C\",\"provider\":\"c\"}'\n")
+    psql.chmod(0o700)
+    monkeypatch.setenv("PATH", str(clients) + os.pathsep + os.environ["PATH"])
+    private = tmp_path / "postgres.conf"
+    private.write_text("[capture]\nhost=unused\n")
+    private.chmod(0o600)
+    db_binding = DatabaseBinding("postgresql", private, "capture")
+    config = Configuration.parse({"schema_version": 2,
+        "repositories": [{"name": "local"}, {"name": "copy", "role": "replica"}],
+        "sources": [{"name": "old-source", "kind": "postgresql", "database": "old_database", "connection": "pg"}],
+        "jobs": [{"name": "daily", "repository": "local", "sources": ["old-source"]}]})
+    captured = BackupService(config, HostBindings(service.state, service.bindings.repositories, {"pg": db_binding}))
+    captured.initialize("local")
+    snapshot = captured.capture("daily")["snapshot_id"]
+    empty_config = Configuration.parse({"schema_version": 2,
+        "repositories": [{"name": "local"}, {"name": "copy", "role": "replica"}], "sources": [], "jobs": []})
+    fresh = BackupService(empty_config, HostBindings(tmp_path / "fresh-state", service.bindings.repositories, {"destination": db_binding}))
+
+    def restore(archive, binding, target_database, **kwargs):
+        assert Path(archive).read_bytes() == b"PGDMP-restorable-database"
+        assert binding == db_binding
+        assert kwargs["database_options"] == {"encoding": "UTF8", "collate": "C", "ctype": "C", "provider": "c"}
+        return target_database
+
+    monkeypatch.setattr("bbackup.database_restore.restore_postgresql", restore)
+    with pytest.raises(ServiceError, match="explicitly trusted"):
+        fresh.restore_database("local", snapshot, "old-source", "destination", "recovered")
+    result = fresh.restore_database("local", snapshot, "old-source", "destination", "recovered", trusted_archive=True)
+    assert result["target_database"] == "recovered"
+    assert result["database_validated"] is True
+    assert result["application_validated"] is False
+    assert not list(fresh.state.glob("database-restore-*"))
+
+
 def test_restore_refuses_existing_and_overlapping(service, tmp_path):
     for target in (tmp_path / "data", tmp_path / "data" / "restored", tmp_path / "state" / "restored"):
         with pytest.raises(ServiceError):

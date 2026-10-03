@@ -149,3 +149,24 @@ Record an administrator-reviewed outcome for an uncertain operation without repl
 - `--operation-id`: string.
 - `--outcome`: string.
 - `--repository-reviewed`: boolean.
+
+## `databases restore`
+
+Restore a trusted PostgreSQL snapshot export into a new database and validate connectivity.
+
+- `--repository`: string.
+- `--snapshot`: string.
+- `--source`: string.
+- `--connection`: string.
+- `--target-database`: string.
+- `--trusted-archive`: boolean.
+
+## `databases reconcile`
+
+Record an administrator-reviewed database restore outcome without replaying it.
+
+- `--connection`: string.
+- `--target-database`: string.
+- `--operation-id`: string.
+- `--outcome`: string.
+- `--database-reviewed`: boolean.

@@ -1,4 +1,75 @@
 {
+  "databases reconcile": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connection": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "database_reviewed": {
+        "default": false,
+        "type": "boolean"
+      },
+      "operation_id": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "outcome": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "target_database": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "connection",
+      "target_database",
+      "operation_id",
+      "outcome"
+    ],
+    "type": "object"
+  },
+  "databases restore": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connection": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "snapshot": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "source": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "target_database": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "trusted_archive": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "repository",
+      "snapshot",
+      "source",
+      "connection",
+      "target_database"
+    ],
+    "type": "object"
+  },
   "doctor": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,

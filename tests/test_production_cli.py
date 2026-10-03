@@ -64,3 +64,7 @@ def test_reconciliation_requires_explicit_review_and_does_not_run_command(servic
     result = invoke(service, [*args, "--repository-reviewed"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["data"]["replayed"] is False
+    missing = invoke(service, ["runs", "reconcile", "--repository", "local", "--operation-id", "missing",
+                               "--outcome", "abandoned", "--repository-reviewed"])
+    assert missing.exit_code == 3
+    assert json.loads(missing.output)["success"] is False

@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import tempfile
 import uuid
 
 from .capture import capture_sources
@@ -119,6 +120,7 @@ class BackupService:
         operation_id=None,
         mutating=False,
         finalize: Callable[[OperationPlan, OperationRun], object] | None = None,
+        on_stdout=None,
     ):
         if cancel is not None and cancel.is_set():
             raise ServiceError("Operation cancelled before dispatch")
@@ -147,7 +149,10 @@ class BackupService:
                     lease.finish(OperationStatus.FAILED, None)
                 raise
             plan = plans[name]
-            result = self.runner.run(plan, cancel_event=cancel)
+            run_options = {"cancel_event": cancel}
+            if on_stdout is not None:
+                run_options["on_stdout"] = on_stdout
+            result = self.runner.run(plan, **run_options)
             if mutating and result.status is not OperationStatus.SUCCEEDED:
                 # These outcomes can leave repository state partially changed.
                 # Exiting with unfinished leases records UNCERTAIN for explicit
@@ -365,6 +370,77 @@ class BackupService:
         with self._receipts() as db:
             rows = db.execute("SELECT repository,snapshot,job,operation FROM snapshots ORDER BY rowid LIMIT ? OFFSET ?", (limit, offset)).fetchall()
         return [dict(zip(("repository", "snapshot_id", "job", "operation_id"), row)) for row in rows]
+
+    def database_identity(self, connection, target_database):
+        binding = self.bindings.database_bindings.get(connection)
+        if binding is None or binding.kind != "postgresql" or binding.service_file is None or not binding.service_name:
+            raise ServiceError("A PostgreSQL destination binding is required")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", target_database):
+            raise ServiceError("Invalid destination database name")
+        return f"database:{binding.service_file.resolve()}:{binding.service_name}:{target_database}"
+
+    def restore_database(self, repository, snapshot, source, connection, target_database, *, trusted_archive=False, cancel=None):
+        """Restore a snapshot-time PostgreSQL export into a newly created database."""
+        from .database_restore import DatabaseRestoreError, DatabaseRestoreUncertainError, restore_postgresql
+        from .models import strict_json
+
+        if trusted_archive is not True:
+            raise ServiceError("Database archives must be explicitly trusted before execution")
+        snapshot = _snapshot_id(snapshot)
+        identity = self.database_identity(connection, target_database)
+        engine = self._engine(repository)
+        _, inspected = self._execute(repository, [*engine.base_args(), "cat", "snapshot", snapshot], label="inspect", cancel=cancel)
+        if inspected.stdout_bytes != len(inspected.stdout_tail):
+            raise ServiceError("Snapshot metadata exceeds the supported bound")
+        try:
+            metadata = strict_json(inspected.stdout_tail.decode())
+            manifests = [p for p in metadata["paths"] if Path(p).name == "bbackup-capture.json"]
+            if len(manifests) != 1:
+                raise ValueError()
+            manifest_path = Path(manifests[0])
+        except (ValueError, TypeError, KeyError):
+            raise ServiceError("Snapshot has no unambiguous database capture manifest") from None
+        _, exported = self._execute(repository, [*engine.base_args(), "dump", snapshot, str(manifest_path)], label="inspect", cancel=cancel)
+        if exported.stdout_bytes != len(exported.stdout_tail):
+            raise ServiceError("Capture manifest exceeds the supported bound")
+        try:
+            manifest = strict_json(exported.stdout_tail.decode())
+            if manifest["schema_version"] != 2:
+                raise ValueError()
+            entries = [item for item in manifest["exports"] if item["source"] == source]
+            if len(entries) != 1:
+                raise ValueError()
+            entry = entries[0]
+            archive_path = Path(entry["path"])
+            if (entry["kind"] != "postgresql" or entry["format"] != "postgresql-custom"
+                    or not archive_path.is_absolute() or ".." in archive_path.parts
+                    or archive_path.parent != manifest_path.parent
+                    or str(archive_path) not in metadata["paths"]):
+                raise ValueError()
+        except (ValueError, TypeError, KeyError):
+            raise ServiceError("Snapshot does not contain a valid selected PostgreSQL export") from None
+        # The bounded runner streams the archive directly to private temporary
+        # storage. No original-host source configuration or ledger is required.
+        with tempfile.TemporaryDirectory(prefix="database-restore-", dir=self.state) as staging:
+            archive = Path(staging) / "archive.dump"
+            with archive.open("xb") as output:
+                archive.chmod(0o600)
+                self._execute(repository, [*engine.base_args(), "dump", snapshot, str(archive_path)],
+                              label="database-export", cancel=cancel, on_stdout=output.write)
+            plan = OperationPlan.create(identity, "database-restore", ["pg_restore"])
+            with self.ledger.begin(plan) as lease:
+                try:
+                    result = restore_postgresql(archive, self.bindings.database_bindings[connection],
+                                                target_database, database_options=entry.get("database_options"),
+                                                runner=self.runner, cancel=cancel)
+                except DatabaseRestoreUncertainError:
+                    raise ServiceError("Database restore is uncertain; review the target before reconciliation") from None
+                except DatabaseRestoreError:
+                    lease.finish(OperationStatus.FAILED, None)
+                    raise ServiceError("Database restore refused before mutation") from None
+                lease.finish(OperationStatus.SUCCEEDED, 0)
+        return {"operation_id": plan.operation_id, "snapshot_id": snapshot,
+                "database_validated": True, "application_validated": False, "target_database": result}
 
     def run_job(self, job_name, *, cancel=None):
         result = self.capture(job_name, cancel=cancel)

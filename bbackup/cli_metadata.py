@@ -1993,3 +1993,12 @@ PRODUCTION_COMMANDS["runs reconcile"] = {
     "summary": "Record an administrator-reviewed outcome for an uncertain operation without replaying it.",
     "fields": {"repository": "string", "operation_id": "string", "outcome": "string", "repository_reviewed": "boolean"},
 }
+
+PRODUCTION_COMMANDS["databases restore"] = {
+    "summary": "Restore a trusted PostgreSQL snapshot export into a new database and validate connectivity.",
+    "fields": {"repository": "string", "snapshot": "string", "source": "string", "connection": "string", "target_database": "string", "trusted_archive": "boolean"},
+}
+PRODUCTION_COMMANDS["databases reconcile"] = {
+    "summary": "Record an administrator-reviewed database restore outcome without replaying it.",
+    "fields": {"connection": "string", "target_database": "string", "operation_id": "string", "outcome": "string", "database_reviewed": "boolean"},
+}

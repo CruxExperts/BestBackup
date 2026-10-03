@@ -50,6 +50,8 @@ sources; provider-specific recovery-protection qualification is still underway.
 - S3 inventory and recovery use bounded standard SDK retries with five total
   attempts per request. Native B2 inspection delegates protocol retries to b2sdk.
 - Dependencies are locked; urllib3 is updated to 2.8.0 for the maintainer's fixes.
+- The optional Google Drive OAuth client requires oauthlib 4.0.0 or newer,
+  incorporating the upstream fixes for CVE-2026-49264 and CVE-2026-49265.
 - Preview features remain under `bbackup production`. Existing 1.x commands and
   configuration remain available while their replacements are completed.
 

@@ -68,5 +68,74 @@
     "local_links_checked": true,
     "markdown_standards_checker": "scripts/check_markdown_standards.py",
     "license_handling": "The supplied files remain license-unspecified; adaptation does not relicense them."
+  },
+  "publication_refresh": {
+    "reviewed_at": "2026-10-03",
+    "release": "2.0.0-alpha.1",
+    "source_revision": "d9e6bc7409e5d83bf4f242977e0f17b51282f881",
+    "changes": [
+      "Replaced the long feature inventory with a customer-focused README and local-to-cloud recovery story.",
+      "Separated v2 setup, storage, agent integration, implementation status, and retained legacy management.",
+      "Added original editable artwork and preserved third-party notices and asset provenance."
+    ],
+    "validation": [
+      "GitHub Markdown API rendered the README successfully.",
+      "Local heading, link, fence, alert, version, and generated-artifact checks passed.",
+      "Banner inspected through a headless browser; no host data used."
+    ],
+    "outputs": [
+      {
+        "path": "README.md",
+        "sha256": "84640977a7628afb253c4d2bc01ca3af722ccf303d6b6a478b0c4293ed55fd07"
+      },
+      {
+        "path": "INSTALL.md",
+        "sha256": "5474b6a94068a941b060480d7cfaf2ad203763b4da8f3b55a424e7e4438d881d"
+      },
+      {
+        "path": "QUICKSTART.md",
+        "sha256": "9880a814add7c448df7c69a628ee2265ac5af0748b4c25e200dc8344bcaac779"
+      },
+      {
+        "path": "SECURITY.md",
+        "sha256": "2c58122aa2bedab2f7b0800eb125c77b7851a8749005ef0005f6abdbb1701cfa"
+      },
+      {
+        "path": "SUPPORT.md",
+        "sha256": "5d02e26f82d81c1d6b373d9ec83417e268ab59a95fff266a2b94c476d5b264f7"
+      },
+      {
+        "path": "CONTRIBUTING.md",
+        "sha256": "aedf521867b1b8565a8065fb97131094f91eb5411d132a11ed50d10130287094"
+      },
+      {
+        "path": "docs/README.md",
+        "sha256": "844cdefbbbd2fb74dcc5e862a39247c1c59c166d8c404c299d7076d824323924"
+      },
+      {
+        "path": "docs/AGENT_INTEGRATION.md",
+        "sha256": "b9be092485ecc53cc42729c97a3201bcb73522f2b2c144f99062aabd430e80df"
+      },
+      {
+        "path": "docs/cloud-storage.md",
+        "sha256": "3b4706a30e87eb9cf5ca79296084bc125c997ad503e0e01fe127bf1d7c79cefc"
+      },
+      {
+        "path": "docs/architecture.md",
+        "sha256": "2f66acfcb1d33661761c681c49c43024d7a4231e7c5affd82010154e90f88022"
+      },
+      {
+        "path": "docs/encryption.md",
+        "sha256": "840b73cd7907484ec25fb66a35564a7a534c24bd57a69e6604a6192a5a5c493a"
+      },
+      {
+        "path": "docs/management.md",
+        "sha256": "3c4b5fa8746dfe9b8b5a0fbbf447d8f57dfa8496e4e2a22eb1bf78c5b60d762c"
+      },
+      {
+        "path": "docs/assets/bbackup-banner.svg",
+        "sha256": "d7c33b217960d3736d40a9a212cf9a07a73cc843eaa58d0a454989051841779a"
+      }
+    ]
   }
 }

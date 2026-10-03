@@ -48,7 +48,7 @@ dependencies = [
 [project.optional-dependencies]
 gdrive-auth = [
   "google-auth-oauthlib>=1.4.0,<2",
-  "oauthlib>=3.2.1",
+  "oauthlib>=4.0.0",
   "requests-oauthlib>=2.0.0",
 ]
 

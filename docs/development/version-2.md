@@ -252,6 +252,13 @@ provider or platform claims. Restore deadlines must come from measured drills.
 
 ## Dependency evidence
 
+The optional Google Drive client uses oauthlib 4.0.0 to incorporate upstream
+fixes for CVE-2026-49264 and CVE-2026-49265. Exact-version OSV, GitHub advisory,
+deps.dev, and PyPI checks found no affecting advisories; neither CVE appeared in
+the CISA exploitation catalog at review time. Client compatibility was verified
+offline without authorizing an account. These findings concern optional legacy
+Google Drive support and do not change the B2/S3 storage workflow.
+
 Native B2 inspection uses Backblaze b2sdk 2.13.0, the latest stable SDK checked
 for the Python 3.12+ baseline on October 3, 2026. Its new dependencies are
 annotated-types 0.8.0 and logfury 1.0.1. Exact resolved SDK and HTTP dependency

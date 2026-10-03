@@ -216,6 +216,8 @@ creating a kit on that host does not establish independent custody.
 
 ## Qualification and remaining work
 
+The signed [2.0.0-alpha.1 prerelease](https://github.com/CruxExperts/BestBackup/releases/tag/v2.0.0-alpha.1) was published on October 3, 2026 from commit `b10ed84`. GitHub CI passed on Python 3.12, 3.13, and 3.14, and the release workflow built and smoke-tested its wheel and source archive. `SHA256SUMS` and its OpenPGP signature cover the exact downloadable artifacts. The release remains explicitly marked as a prerelease; it does not establish production qualification.
+
 On October 3, 2026, the combined checkout passed 753 tests with eight workers,
 including native-client fixtures and a real restic snapshot-manifest round trip
 without the original source configuration or ledger. The built wheel passed an isolated installation smoke

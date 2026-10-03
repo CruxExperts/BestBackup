@@ -191,7 +191,7 @@ def main() -> int:
                 errors.append(f"{path} has a best-backup GitHub URL but not {CANONICAL_REPO}")
 
     changelog = read("CHANGELOG.md")
-    if not re.search(r"https://github\.com/CruxExperts/best-backup/compare/v\d+\.\d+\.\d+\.\.\.HEAD", changelog):
+    if not re.search(r"https://github\.com/CruxExperts/best-backup/compare/v\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?\.\.\.HEAD", changelog):
         errors.append("CHANGELOG.md [Unreleased] compare link is not canonical")
 
     if errors:

@@ -1,32 +1,45 @@
 # Management CLI (bbman)
 
-> Reference for `bbman`, the companion command that handles setup, health, updates, and maintenance for bbackup.
+Reference for the retained version 1.x `bbman` command, which handles setup,
+health, updates, and maintenance for the Docker/filesystem workflow.
 
 ---
 
 ## Overview
 
-`bbman` is a separate entry point from `bbackup`. Where `bbackup` runs backups and restores, `bbman` handles everything around the application: first-time setup, dependency checks, update management, diagnostics, and cleanup. You can use it as a pre-flight wrapper for `bbackup` runs or independently for maintenance.
+`bbman` remains the management command for the 1.x YAML configuration and
+Docker/filesystem workflow. The version 2 preview uses `bbackup production`
+with separate strict JSON policy and private host bindings; `bbman setup` does
+not configure it. Start with the [v2 quick start](../QUICKSTART.md) or read the
+[version 2 architecture and limits](development/version-2.md).
+
+For existing 1.x deployments, `bbman` is separate from `bbackup`. It handles
+first-run setup, dependency checks, updates, diagnostics, and cleanup. The
+legacy command interface supports structured output and single-object JSON
+input where each command accepts those options; check that command's `--help`.
 
 Every `bbman` command supports `--output json` for machine-readable output and `--input-json '{...}'` for single-object parameter passing. Set `BBACKUP_OUTPUT=json` to apply JSON mode globally to all subprocesses.
 
 ---
 
-## Command reference
+## Legacy 1.x command reference
 
 ### `bbman setup`
 
-Interactive first-time setup wizard. Run this before anything else.
+Interactive first-time setup wizard. Run this before anything else:
 
 ```bash
 bbman setup
-bbman setup --no-interactive    # Skip wizard; return config state (agent mode)
-bbman setup --output json       # JSON output
+bbman setup --output json       # JSON result from the interactive wizard
 ```
 
-Checks Docker access, verifies `rsync` and `tar` are installed, installs any missing Python packages, and creates `~/.config/bbackup/config.yaml` if it does not exist. Optionally walks you through encryption key generation.
+Checks Docker access, verifies `rsync` and `tar` are installed, installs any
+missing Python packages, and creates `~/.config/bbackup/config.yaml` if it does
+not exist. The optional encryption-key step defaults to no.
 
-With `--no-interactive` (or `BBACKUP_NO_INTERACTIVE=1`), the wizard is skipped and the current config state is returned as JSON.
+`--no-interactive` is not a successful setup mode. It reports that interactive
+setup is required and exits with an error; use `bbman setup` for first-run
+configuration.
 
 ---
 
@@ -45,8 +58,15 @@ Checks:
 - Python dependencies match `pyproject.toml`
 - Config file parses without errors
 - Staging and log directories are writable
+- Every configured native `snapshot_profiles` profile passes its restic,
+  repository, password-file, cache/state, and remote checks
 
-JSON output uses named fields (`{"ok": true, "message": "..."}`) rather than positional tuples, making it straightforward for agents to check individual components.
+JSON output uses named fields (`{"ok": true, "message": "..."}`) rather than
+positional tuples, making it straightforward for agents to check individual
+components. An example snapshot profile in the starter template can make
+health report `unhealthy` until its restic repository, password file, and tools
+are configured; remove that unused example when native snapshots are not part
+of the deployment.
 
 ---
 
@@ -91,11 +111,25 @@ and writes the rclone remote configuration.
 The helper targets My Drive by default; shared-drive selection is not exposed
 by this command.
 
+For a checked-out project, select the optional project extra and run through
+that environment:
+
 ```bash
-uv sync --extra gdrive-auth
+uv sync --locked --extra gdrive-auth
+uv run bbman auth-gdrive --client-secrets client_secret.json --dry-run --output json
+uv run bbman auth-gdrive --client-secrets client_secret.json --remote bbackup-gdrive
+```
+
+For an isolated uv tool install, do not run `uv sync` from another directory;
+install the helper packages into the tool:
+
+```bash
+uv tool install --force \
+  --with google-auth-oauthlib \
+  --with oauthlib \
+  --with requests-oauthlib \
+  git+https://github.com/CruxExperts/best-backup.git
 bbman auth-gdrive --client-secrets client_secret.json --dry-run --output json
-bbman auth-gdrive --client-secrets client_secret.json --remote bbackup-gdrive
-bbman auth-gdrive --client-secrets client_secret.json --no-open-browser
 ```
 
 Required:
@@ -309,7 +343,7 @@ Every command returns the standard JSON envelope:
 }
 ```
 
-See [README.md](../README.md#agent-integration) for exit code reference and the full envelope specification.
+The separate version 2 interface uses strict input schemas and a different result envelope; see [agent integration](AGENT_INTEGRATION.md).
 
 ---
 
@@ -331,8 +365,11 @@ update_method: "git"           # git, download, or manual
 ## First-run detection
 
 Run `bbman setup` explicitly on first use to create the initial config and mark
-first-run setup complete. If config is missing, validation commands report the
-missing state and point back to `bbman setup`.
+first-run setup complete. The wizard is interactive; `bbman setup --no-interactive`
+returns an error stating that interactive setup is required. If config is
+missing, validation commands report the missing state and point back to
+`bbman setup`. `bbackup init-config` is a separate template writer and
+overwrites the config path without an overwrite prompt.
 
 ---
 
@@ -342,16 +379,17 @@ missing state and point back to `bbman setup`.
 
 ```bash
 bbman setup
-bbman health
-bbman check-deps --install
-bbman validate-config
+bbman health --output json
+bbman validate-config --output json
+bbackup backup --backup-set production --dry-run --output json
 ```
 
 ### Before a backup run
 
 ```bash
 bbman health
-bbman run backup --backup-set production --no-interactive
+bbackup backup --backup-set production --dry-run --output json
+bbackup backup --backup-set production --output json
 ```
 
 ### Maintenance
@@ -381,6 +419,36 @@ bbman status --output json
 bbman cleanup --yes --output json
 ```
 
+## Backup and restore safety boundaries
+
+The `bbman` checks are pre-flight checks; the backup worker creates the
+artifact. Every non-cancelled run writes `backup_manifest.json` beneath the
+local staging backup directory and reports the staging path plus per-item and
+per-remote status in JSON. Inspect local staging with:
+
+```bash
+bbackup list-backups --backup-dir /tmp/bbackup_staging --output json
+```
+
+Local, SFTP, and rclone uploads are independent. Each writes a `.partial`
+destination and promotes it only after a successful copy. One failed remote can
+therefore produce a partial overall result while another remote succeeds.
+A local path or endpoint on the same host is not off-host protection, and
+bbackup does not detect that topology.
+
+Before a restore, use:
+
+```bash
+bbackup restore --backup-path /tmp/bbackup_staging/backup_YYYYMMDD_HHMMSS \
+  --all --dry-run --output json
+```
+
+Restore dry-run reports selected targets only; it does not verify manifest
+hashes, Docker access, or destination permissions. A real restore verifies the
+manifest before mutation, but can stop/remove existing containers, replace
+volumes or networks, and use `rsync --delete` for filesystem destinations.
+Treat `--dry-run` as a plan, not as a non-destructive integrity proof.
+
 ---
 
 ## Troubleshooting
@@ -404,7 +472,11 @@ cat ~/.local/share/bbackup/bbackup.log      # Review recent log entries
 | Docker not accessible | `sudo usermod -aG docker $USER && newgrp docker` |
 | Missing Python packages | Activate the venv first, then `bbman check-deps --install` |
 | Config parse error | `bbman validate-config` for details |
-| rsync not found | `sudo apt-get install rsync` |
+| rsync not found | Install the `rsync` system package |
+| tar not found | Install the `tar` system package |
+
+The Docker group grants root-equivalent host control; use it only for an
+intentionally trusted account.
 
 ---
 

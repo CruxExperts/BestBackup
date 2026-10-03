@@ -86,4 +86,5 @@ jobs:
             dist/bbackup-*.tar.gz
             dist/bbackup-*.whl
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          make_latest: ${{ contains(steps.version.outputs.version, '-') && 'false' || 'true' }}

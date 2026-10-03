@@ -7,7 +7,7 @@ assignees: ''
 
 ## What happened
 
-<!-- Describe the problem clearly. What did you expect to happen, and what happened instead? -->
+<!-- Describe the expected and observed behavior. Identify legacy 1.x or the v2 production preview. -->
 
 ## Steps to reproduce
 
@@ -17,24 +17,26 @@ assignees: ''
 
 ## Command and output
 
-<!-- Paste the exact command you ran and the full output, including any error messages. -->
+<!-- Paste the command and a sanitized result. Remove passwords, tokens, private paths, customer data, and credentials. Never paste bindings.json or secret files. -->
 
 ```text
-$ bbackup ...
+bbackup ...
 
 ```
 
 ## Environment
 
-- OS and version:
+- Linux distribution and version:
 - Python version (`uv run python --version` or `python3 --version`):
-- Docker version (`docker --version`):
 - bbackup version (`bbackup --version`):
 - Installation method (uv tool / uv sync / symlink / PATH):
+- Workflow (legacy 1.x / `bbackup production` preview):
+- Storage type (local / Backblaze B2 / Amazon S3 / other):
+- Restic version, when using the production preview:
 
 ## Configuration
 
-<!-- Paste the relevant parts of your config file. Remove any sensitive values. -->
+<!-- Paste only relevant portable config fields. Remove passwords, access keys, sensitive paths, and all private host bindings. -->
 
 ```yaml
 
@@ -42,4 +44,4 @@ $ bbackup ...
 
 ## Additional context
 
-<!-- Anything else that might help: whether this worked before, whether it's intermittent, logs from ~/.local/share/bbackup/bbackup.log, etc. -->
+<!-- Say whether this worked previously. For uncertain mutations, state whether you inspected the destination; do not retry solely to produce a second error. -->

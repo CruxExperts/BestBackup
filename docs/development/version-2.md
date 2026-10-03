@@ -1,6 +1,6 @@
 # Version 2 development
 
-> Status: implementation preview. This is not a production-qualified 2.0 release.
+> Status: 2.0.0-alpha.1 prerelease. Production qualification is in progress.
 
 ## Direction and delivery order
 
@@ -216,7 +216,7 @@ creating a kit on that host does not establish independent custody.
 
 ## Qualification and remaining work
 
-On October 3, 2026, the combined checkout passed 745 tests with eight workers,
+On October 3, 2026, the combined checkout passed 753 tests with eight workers,
 including native-client fixtures and a real restic snapshot-manifest round trip
 without the original source configuration or ledger. The built wheel passed an isolated installation smoke
 test using hash-locked dependencies, including version-2 schema discovery.
@@ -251,6 +251,16 @@ Linux Mint local testing and Garage S3-compatible testing do not qualify these
 provider or platform claims. Restore deadlines must come from measured drills.
 
 ## Dependency evidence
+
+Native B2 inspection uses Backblaze b2sdk 2.13.0, the latest stable SDK checked
+for the Python 3.12+ baseline on October 3, 2026. Its new dependencies are
+annotated-types 0.8.0 and logfury 1.0.1. Exact resolved SDK and HTTP dependency
+versions were checked against OSV, GitHub advisories, deps.dev, and PyPI; no
+affecting advisories were returned. SDK retry behavior is bounded by the native
+inspection subprocess deadline and cancellation. Throttling and transient-error
+backoff tests passed. See [cloud storage](../cloud-storage.md) for the connection
+and recovery boundaries.
+
 
 Textual 8.2.8 and its newly resolved dependencies, and boto3 1.43.108 with its
 resolved dependency closure, were checked against OSV, GitHub advisories and

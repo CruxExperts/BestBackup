@@ -1,7 +1,10 @@
 # Versioning
 
-`VERSION` is the canonical release version for this repository. Release-facing
-references must match it before publishing:
+`VERSION` is the canonical release version. The current
+version is `2.0.0-alpha.1`, a preview release; the retained legacy line is
+`1.8.6`. The alpha is not production-qualified.
+
+Release-facing references must match it before publishing:
 
 - `bbackup/__init__.py` `__version__`
 - `pyproject.toml` `version`
@@ -10,6 +13,11 @@ references must match it before publishing:
 - `CHANGELOG.md` current release header and `[Unreleased]` compare target
 - generated CLI skills docs
 - GitHub-facing Markdown standards and provenance checks
+
+The release workflow accepts alpha, beta, and release-candidate suffixes. A
+tag such as `v2.0.0-alpha.1` creates a GitHub prerelease and does not mark it as
+the latest stable release. Release tags still have to match `VERSION`, and
+their changelog section and generated schemas must be present before publishing.
 
 Normal release batches use a patch bump by default, including commits with
 `feat:` subjects. Use a `Release-Type: major|minor|patch|none` trailer in the
@@ -71,7 +79,7 @@ git diff --check
 ```
 
 6. Commit with a conventional commit message.
-7. Tag the release as `vX.Y.Z` and push the tag after CI is green.
+7. Tag the release as `v<VERSION>` (for example, `v2.0.0-alpha.1`) and push the tag after CI is green.
 
 Pushing a tag that matches `v*` runs `.github/workflows/release-notes.yml`.
 The release job verifies that the tag matches `VERSION`, runs the version and

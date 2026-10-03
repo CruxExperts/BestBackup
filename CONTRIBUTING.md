@@ -1,6 +1,5 @@
 # Contributing
 
-Contribution guidance lives in [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)
-so GitHub can surface it automatically in issues and pull requests.
+Read the [contribution guide](.github/CONTRIBUTING.md) for development setup, focused checks, and pull-request expectations.
 
-For local release and hook setup, see [docs/VERSIONING.md](docs/VERSIONING.md).
+The version 2 operation service is a preview; keep changes within its validated boundaries and distinguish fixture coverage from live provider or database qualification. See [architecture](docs/architecture.md) and [versioning](docs/VERSIONING.md).

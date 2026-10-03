@@ -12,6 +12,56 @@ current uv-based install, development, and release instructions.
 
 ---
 
+## [2.0.0-alpha.1] - 2026-10-03
+
+**Keep a copy close. Keep a copy elsewhere.** This preview introduces the
+restic-centered bbackup 2.0 workflow for Linux administrators and small teams.
+Backblaze B2 and Amazon S3 are supported repository destinations and restore
+sources; provider-specific recovery-protection qualification is still underway.
+
+### Added
+
+- Encrypted local restic capture, explicit snapshot replication with independent
+  passwords, full-data repository checks, and verified restore into new directories.
+- Transactional SQLite capture, native PostgreSQL and locked MySQL/MariaDB
+  exports, and PostgreSQL restore into a new database using snapshot-time metadata.
+- A mouse and keyboard Textual dashboard sharing the same operations service
+  as the strict version-2 JSON CLI, with generated schemas and agent discovery.
+- Bounded subprocesses, real process-group cancellation, private operation state,
+  repository serialization, and explicit reconciliation of interrupted mutations.
+- Signed, GnuPG-encrypted recovery kits and exact historical S3 object-version
+  reconstruction that can operate without the original host ledger.
+- Native Backblaze B2 inspection using the pinned vendor Python SDK, with SDK
+  backoff inside a bounded cancellable process and no persisted credentials.
+- A shorter README, a fresh visual identity, a practical documentation hub,
+  local-to-cloud recipes, and clear recovery and release boundaries.
+
+### Fixed
+
+- Legacy uploads now report partial failures truthfully and preserve local
+  artifacts when all required remote uploads have not succeeded.
+- Legacy filesystem restore rejects escaping source paths and returns structured
+  failures for unavailable destinations or failed copies.
+- Legacy dashboard terminal restoration and operation finalization are more
+  reliable; unattended backups no longer assume an interactive terminal.
+
+### Changed
+
+- S3 inventory and recovery use bounded standard SDK retries with five total
+  attempts per request. Native B2 inspection delegates protocol retries to b2sdk.
+- Dependencies are locked; urllib3 is updated to 2.8.0 for the maintainer's fixes.
+- Preview features remain under `bbackup production`. Existing 1.x commands and
+  configuration remain available while their replacements are completed.
+
+### Release status
+
+This is an **alpha prerelease**, not the production-qualified 2.0 release.
+Local restic and Garage S3 capture → copy → check → restore cycles passed.
+Database-client fixtures, independent recovery drills, and headless dashboard
+checks passed; live B2/AWS and native database qualification remain outstanding.
+Docker recovery, retention enforcement, complete UI flows, and Ubuntu packages
+are still under development. See [implementation status](docs/development/version-2.md).
+
 ## [1.8.6] - 2026-08-04
 
 ### Added
@@ -324,7 +374,8 @@ current uv-based install, development, and release instructions.
 
 The `Unreleased` comparison is a live `HEAD` link for navigation, not an immutable historical citation.
 
-[Unreleased]: https://github.com/CruxExperts/best-backup/compare/v1.8.6...HEAD
+[Unreleased]: https://github.com/CruxExperts/best-backup/compare/v2.0.0-alpha.1...HEAD
+[2.0.0-alpha.1]: https://github.com/CruxExperts/best-backup/compare/v1.8.6...v2.0.0-alpha.1
 [1.8.6]: https://github.com/CruxExperts/best-backup/compare/v1.8.5...v1.8.6
 [1.8.5]: https://github.com/CruxExperts/best-backup/compare/v1.8.4...v1.8.5
 [1.8.4]: https://github.com/CruxExperts/best-backup/compare/v1.8.3...v1.8.4

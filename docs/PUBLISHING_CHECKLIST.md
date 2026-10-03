@@ -1,6 +1,6 @@
 # Publishing checklist
 
-Use this checklist before making the repository public or cutting a release.
+Use this checklist before changing public project metadata or publishing a release.
 
 ## Documentation and community files
 
@@ -14,6 +14,24 @@ Use this checklist before making the repository public or cutting a release.
 - [ ] `docs/VERSIONING.md` describes release/version checks and local hook setup.
 - [ ] The [GitHub Markdown Writing Standard](standards/github-markdown/github-markdown-writing-standard.md), review checklist,
       capabilities reference, and provenance register are current and linked from the documentation index.
+
+## Repository profile
+
+- [ ] GitHub's description tells visitors what the project backs up, how it works, and who it serves; it matches the current user-facing scope.
+- [ ] Search topics cover supported capabilities, not planned work or generic marketing terms.
+- [ ] The homepage links to a maintained standalone site; leave it unset when the README is the canonical landing page.
+- [ ] Each enabled community surface has a maintained purpose: keep Issues for support, enable Discussions only when it will be answered, and disable a blank Wiki rather than duplicate repository docs.
+
+## Version 2 preview claims
+
+- [ ] Identify `2.0.0-alpha.1` as a pre-release preview; do not call it production-ready.
+- [ ] Describe Ubuntu 24.04 and 26.04 on AMD64 and ARM64 as target platforms until packages and upgrade/rollback behavior are tested.
+- [ ] State that Backblaze B2 through S3 and Amazon S3 are configurable destinations and restore sources while provider-specific thirty-day protection and recovery remain unqualified.
+- [ ] Keep native B2 capability inspection distinct from backup transfer; inspection is read-only and always reports `protection_qualified: false`.
+- [ ] Describe the local Garage round trip as S3-compatible test evidence, not B2 or Amazon S3 qualification.
+- [ ] Keep the prior 745-test result identified as prior evidence; rerun the suite for this release payload.
+- [ ] Avoid unmeasured comparative performance, ransomware-proof, and unqualified production claims.
+- [ ] Preserve the explicit uncertain-mutation reconciliation and no-automatic-replay behavior in operator guidance.
 
 ## Automation
 
@@ -32,6 +50,7 @@ Use this checklist before making the repository public or cutting a release.
 ## Version and release state
 
 - [ ] `VERSION` contains the intended semantic version.
+- [ ] Prerelease versions and tags match the package metadata, release workflow, README badge, and matching changelog section.
 - [ ] `bbackup/__init__.py`, `pyproject.toml`, README badge, `CHANGELOG.md`, and generated CLI skills docs match `VERSION`.
 - [ ] `pyproject.toml` requires Python `>=3.12`.
 - [ ] `.python-version` pins the local baseline to `3.12`.

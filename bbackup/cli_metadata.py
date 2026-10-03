@@ -2002,3 +2002,8 @@ PRODUCTION_COMMANDS["databases reconcile"] = {
     "summary": "Record an administrator-reviewed database restore outcome without replaying it.",
     "fields": {"connection": "string", "target_database": "string", "operation_id": "string", "outcome": "string", "database_reviewed": "boolean"},
 }
+
+PRODUCTION_COMMANDS["recovery b2-inspect"] = {
+    "summary": "Inspect a Backblaze B2 bucket using its vendor SDK, bounded retries, and environment credentials.",
+    "fields": {"bucket": "string", "prefix": "optional-string", "key_id_env": "optional-string", "key_env": "optional-string"},
+}

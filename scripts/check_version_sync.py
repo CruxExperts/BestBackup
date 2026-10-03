@@ -18,8 +18,8 @@ VERSION_FILE = REPO_ROOT / "VERSION"
 
 def read_version() -> str:
     version = VERSION_FILE.read_text(encoding="utf-8").strip()
-    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-        raise ValueError(f"VERSION must be semantic MAJOR.MINOR.PATCH, got {version!r}")
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?", version):
+        raise ValueError(f"VERSION must be MAJOR.MINOR.PATCH with an optional alpha/beta/rc prerelease, got {version!r}")
     return version
 
 
@@ -66,9 +66,8 @@ def main(argv: list[str]) -> int:
     if requires_python != ">=3.12":
         errors.append(f"pyproject.toml project.requires-python is {requires_python!r}, expected '>=3.12'")
 
-    check_file_contains(REPO_ROOT / "README.md", f"version-{version}-", errors)
+    check_file_contains(REPO_ROOT / "README.md", f"version-{version.replace('-', '--')}-", errors)
     check_file_contains(REPO_ROOT / "README.md", "python-3.12%2B-", errors)
-    check_file_contains(REPO_ROOT / "README.md", f'"version": "{version}"', errors)
     check_file_contains(REPO_ROOT / "CHANGELOG.md", f"## [{version}]", errors)
     check_file_contains(REPO_ROOT / "CHANGELOG.md", f"v{version}...HEAD", errors)
     check_file_contains(REPO_ROOT / "docs" / "cli-skills.md", f"Version: {version}.", errors)

@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- What does this PR do? One or two sentences is enough. -->
+<!-- What changes for a user or operator? Identify legacy 1.x or the 2.0.0-alpha.1 preview, if relevant. -->
 
 ## Related issue
 
@@ -21,6 +21,8 @@
 - [ ] Documentation updated if behavior changed
 - [ ] No secrets, keys, or personal data included
 - [ ] Public Markdown follows the [GitHub Markdown Writing Standard](../docs/standards/github-markdown/github-markdown-writing-standard.md); run `uv run python scripts/check_markdown_standards.py` when docs change.
+- [ ] Test and platform claims distinguish local fixtures/Garage evidence from B2, Amazon S3, database, and Ubuntu package qualification.
+- [ ] Interrupted mutating operations are not automatically retried; uncertain outcomes are reported for reconciliation.
 
 ## Testing
 

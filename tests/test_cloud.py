@@ -601,3 +601,38 @@ def test_manifest_preparation_is_bounded_and_cancellable(tmp_path, monkeypatch):
     monkeypatch.setattr(cloud, "_MAX_MANIFEST_BYTES", 4)
     with pytest.raises(CloudError):
         S3CloudAdapter._pin_manifest(source, tmp_path / "oversized")
+
+
+def test_real_s3_sdk_retries_transient_service_failure(monkeypatch):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+    attempts = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            attempts.append(self.path)
+            failed = len(attempts) == 1
+            body = (b'<Error><Code>ServiceUnavailable</Code><Message>busy</Message></Error>' if failed
+                    else b'<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></VersioningConfiguration>')
+            self.send_response(503 if failed else 200)
+            self.send_header('Content-Type', 'application/xml')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *args):
+            pass
+    monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'fixture-key')
+    monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'fixture-secret')
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        adapter = S3CloudAdapter('fixture-bucket', endpoint_url=f'http://127.0.0.1:{server.server_port}', region_name='us-east-1')
+        result = adapter.client.get_bucket_versioning(Bucket='fixture-bucket')
+        assert result['Status'] == 'Enabled'
+        assert len(attempts) == 2
+        assert result['ResponseMetadata']['RetryAttempts'] == 1
+        assert adapter.client.meta.config.retries['total_max_attempts'] == 5
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

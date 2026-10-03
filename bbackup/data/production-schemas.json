@@ -98,6 +98,32 @@
     ],
     "type": "object"
   },
+  "recovery b2-inspect": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "bucket": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "key_env": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "key_id_env": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "prefix": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "bucket"
+    ],
+    "type": "object"
+  },
   "recovery checkpoint": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,

@@ -1,93 +1,48 @@
 # Contributing
 
-Thanks for taking the time to contribute. This document covers how to set up a development environment, the commit conventions the project uses, and what to expect from the review process.
-
----
+Thanks for helping improve bbackup. Keep changes focused and make behavior claims match the checked-in implementation and its evidence. Version 2.0.0-alpha.1 is a pre-release; `bbackup production` remains a preview while the legacy 1.x workflow is retained.
 
 ## Development setup
 
-For contributing you need a UV-managed editable environment so source changes take effect immediately:
+Use Python 3.12 or newer and the locked project environment:
 
 ```bash
 git clone https://github.com/CruxExperts/best-backup.git
 cd best-backup
-
 uv sync --locked
-
-# Verify
 uv run bbackup --version
-uv run bbman --version
+uv run bbackup production --help
 ```
 
-You will need Docker running locally to test backup and restore operations. `rsync` is required for volume backups; install it with your system package manager if it is not already present.
-
-Enable the repo-managed Git hooks once per checkout:
+Enable the repository hooks once per checkout:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-The hooks validate conventional commit subjects and run release-readiness checks before push. See [docs/VERSIONING.md](../docs/VERSIONING.md) for the full version and release checklist.
+The preview's ordinary tests use local repositories and executable fixtures. Live cloud accounts, production database credentials, and real recovery data are not required for unit tests. Never commit passwords, host bindings, customer data, or cloud tokens.
 
----
+## Validate a change
 
-## Making changes
-
-Keep changes focused. A pull request that fixes one bug or adds one feature is easier to review than one that combines several concerns.
-
-Run the syntax check before pushing:
+Run checks that cover the changed behavior. For a release-ready source change, use the repository's full validation sequence in [VERSIONING.md](../docs/VERSIONING.md). For documentation changes, run the Markdown standards checker.
 
 ```bash
+uv run ruff check bbackup/ scripts/ tests/
 uv run python -m py_compile bbackup.py bbman.py bbackup/*.py bbackup/data/*.py bbackup/management/*.py scripts/*.py
+uv run python scripts/check_markdown_standards.py
+uv run pytest
+git diff --check
 ```
 
----
+The production CLI and dashboard share an operations service. Do not add an alternate path that bypasses repository locks, the sanitized ledger, or uncertain-operation handling. Generated command docs come from `bbackup/cli_metadata.py`; update the owner and run `uv run python scripts/generate_cli_skills.py --check` rather than editing generated output.
 
-## Commit messages
+## Commits and pull requests
 
-This project uses [conventional commits](https://www.conventionalcommits.org/) for readable history. Normal development batches release as one patch increment unless a commit body includes an explicit `Release-Type: major|minor|patch|none` trailer.
+Use conventional commit subjects such as `fix: reject unsafe restore targets` or `docs: clarify replica setup`. Normal batches use a patch increment unless the commit body includes a deliberate `Release-Type: major|minor|patch|none` trailer. See [release versioning](../docs/VERSIONING.md).
 
-| Prefix | Bump | When to use |
-|---|---|---|
-| `feat:` | patch by default | New user-visible feature |
-| `fix:` | patch | Bug fix |
-| `docs:` | patch | Documentation only |
-| `refactor:` | patch | Code restructure, no behavior change |
-| `perf:` | patch | Performance improvement |
-| `test:` | patch | Test additions or changes |
-| `chore:` | patch | Build, tooling, dependency updates |
-| `feat!:` or `BREAKING CHANGE:` in body | requires explicit `Release-Type:` | Incompatible change |
+Open pull requests against `main`, complete the [pull-request template](pull_request_template.md), and describe the exact checks and platforms exercised. Do not describe fixture or Garage testing as B2/AWS or Ubuntu package qualification. A successful file restore verifies file data; it does not demonstrate application recovery.
 
-One subject line, imperative mood, no trailing period. Example:
-
-```text
-fix: handle missing Docker socket gracefully
-
-Closes #12
-```
-
----
-
-## Pull requests
-
-- Open a PR against `main`
-- Fill in the PR template
-- One feature or fix per PR
-- CI must be green before merge
-
-If you are fixing a reported issue, reference it in the PR description with `Closes #N` so it closes automatically on merge.
-
----
-
-## Reporting bugs
-
-Use the bug report issue template. The more detail you include (OS, Docker version, Python version, the exact command you ran, and the full error output), the faster it gets resolved.
-
----
-
-## Code of conduct
-
-This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). Treat everyone with respect.
+Report behavior issues through the [bug report template](ISSUE_TEMPLATE/bug_report.md). Use GitHub's private vulnerability reporting for security issues; see the repository [security policy](../SECURITY.md).
 
 <!-- project-footer:start -->
 

@@ -344,7 +344,7 @@ class S3CloudAdapter:
             options["config"] = Config(
                 connect_timeout=10,
                 read_timeout=30,
-                retries={"max_attempts": 2, "mode": "standard"},
+                retries={"total_max_attempts": 5, "mode": "standard"},
                 signature_version="s3v4",
             )
             client = boto3.client("s3", **options)

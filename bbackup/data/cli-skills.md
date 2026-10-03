@@ -1,6 +1,6 @@
 # CLI skills catalog
 
-> Generated from the bbackup/bbman CLI metadata. Version: 1.8.6. This catalog is authoritative for this version.
+> Generated from the bbackup/bbman CLI metadata. Version: 2.0.0-alpha.1. This catalog is authoritative for this version.
 > Source: `bbackup/cli_metadata.py` rendered by `scripts/generate_cli_skills.py`; run the generator's `--check` mode before publishing.
 
 ## bbackup

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="480" viewBox="0 0 1280 480" role="img" aria-labelledby="title desc">
+<title id="title">bbackup — Keep a copy close. Keep a copy elsewhere.</title>
+<desc id="desc">Linux backups with encrypted local restic snapshots, independent Backblaze B2 or Amazon S3 copies, and verified file restores. Version 2 preview.</desc>
+<metadata>Copyright © 2026 Crux Experts LLC. https://www.cruxexperts.com/ Private asset. Property of Crux Experts LLC. Use, reproduction, modification, distribution, or publication without prior written permission is prohibited. Original editable vector artwork created for bbackup.</metadata>
+<rect width="1280" height="480" fill="#eef6f0"/>
+<g font-family="Arial,Helvetica,sans-serif" fill="#153b2c">
+<g transform="translate(56 42)"><rect x="0" y="0" width="29" height="29" rx="5" fill="#153b2c"/><rect x="9" y="9" width="29" height="29" rx="5" fill="#39b77b"/><path d="M17 25l6 6 10-12" fill="none" stroke="#fff" stroke-width="3.5"/>
+<text x="54" y="32" font-size="34" font-weight="700">bbackup</text></g>
+<text x="56" y="176" font-size="58" font-weight="700" letter-spacing="-1.4">Keep a copy close.</text>
+<text x="56" y="243" font-size="58" font-weight="700" letter-spacing="-1.4">Keep a copy elsewhere.</text>
+<text x="59" y="298" font-size="22">Encrypted Linux backups. A clearer path to recovery.</text>
+<text x="59" y="409" font-size="17" font-weight="700">RESTIC CORE</text>
+<text x="207" y="409" font-size="17">·</text><text x="230" y="409" font-size="17" font-weight="700">VISUAL ADMINISTRATION</text>
+<text x="482" y="409" font-size="17">·</text><text x="505" y="409" font-size="17" font-weight="700">AGENT CLI</text>
+</g>
+<g transform="translate(828 96)" font-family="Arial,Helvetica,sans-serif">
+<rect width="396" height="87" rx="10" fill="#153b2c"/>
+<text x="24" y="34" fill="#a9edc8" font-size="15" font-weight="700">01 / LOCAL</text><text x="24" y="65" fill="#fff" font-size="23" font-weight="700">Encrypted restic snapshots</text>
+<path d="M198 90v25m-7-7 7 7 7-7" stroke="#22724d" stroke-width="2" fill="none"/>
+<rect y="121" width="396" height="87" rx="10" fill="#c6ebd7"/>
+<text x="24" y="155" fill="#153b2c" font-size="15" font-weight="700">02 / OFF HOST</text><text x="24" y="186" fill="#153b2c" font-size="23" font-weight="700">Backblaze B2 · Amazon S3</text>
+<path d="M198 211v25m-7-7 7 7 7-7" stroke="#22724d" stroke-width="2" fill="none"/>
+<rect y="242" width="396" height="87" rx="10" fill="#fff" stroke="#79b596"/>
+<text x="24" y="276" fill="#153b2c" font-size="15" font-weight="700">03 / RECOVER</text><text x="24" y="307" fill="#153b2c" font-size="23" font-weight="700">Restore. Verify. Carry on.</text>
+</g>
+</svg>

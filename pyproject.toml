@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bbackup"
-version = "1.8.6"
-description = "Docker Backup Tool with Rich TUI"
+version = "2.0.0-alpha.1"
+description = "Encrypted Linux backups with restic, cloud replication, and a visual dashboard"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
@@ -42,6 +42,7 @@ dependencies = [
   "textual==8.2.8",
   "boto3==1.43.108",
   "urllib3>=2.8.0",
+  "b2sdk==2.13.0",
 ]
 
 [project.optional-dependencies]

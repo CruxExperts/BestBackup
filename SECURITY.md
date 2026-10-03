@@ -1,49 +1,22 @@
 # Security policy
 
-> How to report vulnerabilities in bbackup.
+This policy covers security issues in bbackup's source code and the packaged commands.
 
----
+## Version status
 
-## Supported versions
+The current stable legacy package version is 1.8.6. Version 2.0.0-alpha.1 is a pre-release; the version 2 operations interface remains a preview and is not production-qualified. Security reports for preview code are still welcome through the private reporting process below.
 
-Security fixes are applied to the latest release only. Older versions are not backported.
+Security fixes are prepared for the latest published release. The project does not promise backports to older versions.
 
-| Version | Supported |
-|---|---|
-| Latest release | ✅ |
-| Older releases | ❌ |
+## Report a vulnerability
 
----
-
-## Reporting a vulnerability
-
-Please do not open a public GitHub issue for security vulnerabilities.
-
-Use GitHub's private vulnerability reporting instead:
-
-1. Go to the [Security tab](https://github.com/CruxExperts/best-backup/security) of this repository.
-2. Click "Report a vulnerability."
-3. Describe the issue, steps to reproduce, and potential impact.
-
-You can expect an acknowledgement within 5 business days. If the report is confirmed, a fix will be prepared and a new release cut as soon as reasonably possible. You will be credited in the release notes unless you prefer otherwise.
-
----
+Do not post security vulnerabilities in a public issue. Use [GitHub's private vulnerability reporting](https://github.com/CruxExperts/best-backup/security) and include the affected version or commit, impact, and a safe reproduction when available. Redact secrets and customer data. The maintainers will acknowledge reports within five business days and coordinate any public disclosure with the reporter.
 
 ## Scope
 
-This policy covers the bbackup source code in this repository. It does not cover third-party tools that bbackup optionally depends on (Docker, rsync, rclone, paramiko), or the host operating system.
+This policy covers bbackup's first-party code. It does not provide security support for the host operating system, restic, Docker, database servers, or third-party cloud providers and services.
 
----
-
-## General guidance
-
-- Never commit encryption keys, API tokens, or credentials to this repository.
-- The `.gitignore` already excludes `*.pem`, `*.key`, and `.env` files.
-- If you store keys at the paths bbackup defaults to (`~/.config/bbackup/`), ensure directory permissions are `700` and file permissions are `600`.
-
----
-
-Back to [README.md](README.md).
+Do not commit encryption keys, restic passwords, cloud credentials, tokens, host bindings, backup archives, or unredacted production configuration. Private files should have owner-only access. Keep independently recoverable copies of repository passwords and recovery-kit keys outside the host being protected.
 
 <!-- project-footer:start -->
 

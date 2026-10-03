@@ -170,3 +170,12 @@ Record an administrator-reviewed database restore outcome without replaying it.
 - `--operation-id`: string.
 - `--outcome`: string.
 - `--database-reviewed`: boolean.
+
+## `recovery b2-inspect`
+
+Inspect a Backblaze B2 bucket using its vendor SDK, bounded retries, and environment credentials.
+
+- `--bucket`: string.
+- `--prefix`: optional-string.
+- `--key-id-env`: optional-string.
+- `--key-env`: optional-string.

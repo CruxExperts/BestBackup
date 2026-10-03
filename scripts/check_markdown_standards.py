@@ -51,7 +51,7 @@ ALERT = re.compile(r"^> \[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$")
 FENCE = re.compile(r"^ {0,3}(`{3,})(.*)$")
 HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 CHANGELOG_VERSION_HEADING = re.compile(
-    r"^\[((?:Unreleased|\d+\.\d+\.\d+))\](?:\s+-\s+.+)?$"
+    r"^\[((?:Unreleased|\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?))\](?:\s+-\s+.+)?$"
 )
 INLINE_LINK = re.compile(r"!?\[[^\]]+\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 MARKDOWN_IMAGE = re.compile(r"!\[([^\]]*)\]\(")

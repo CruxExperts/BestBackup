@@ -12,6 +12,7 @@ import click
 from click.core import ParameterSource
 
 from .capture import CaptureError
+from .b2 import B2Error, inspect_b2
 from .cloud import CloudError, S3CloudAdapter
 from .recovery import RecoveryError, create_checked_kit, open_kit, verify_checkpoint, verify_reconstructed_repository
 from .cli_metadata import PRODUCTION_COMMANDS, production_schema
@@ -109,6 +110,8 @@ def dispatch(service, command, values, ctx, cancel):
 
 
 def _recovery_dispatch(ctx, command, values, cancel):
+    if command == "recovery b2-inspect":
+        return inspect_b2(**values, cancel=cancel)
     if command == "recovery open":
         return open_kit(Path(values["kit"]), Path(values["target"]), signer=values["signer"], cancel=cancel)
     adapter = S3CloudAdapter(values["bucket"], endpoint_url=values["endpoint"],
@@ -196,7 +199,7 @@ def _register(command, definition):
         except UncertainOperationError as exc:
             _emit(command, error={"code": "requires_reconciliation", "message": "Review repository state before resolving this operation", "operation_id": exc.operation_id})
             ctx.exit(3)
-        except (ServiceError, OperationError, CaptureError, CloudError, RecoveryError, tarfile.TarError, sqlite3.Error, OSError, ValueError, KeyError):
+        except (ServiceError, OperationError, CaptureError, CloudError, B2Error, RecoveryError, tarfile.TarError, sqlite3.Error, OSError, ValueError, KeyError):
             _emit(command, error={"code": "operation_failed", "message": "Operation failed; inspect sanitized run state before retrying"})
             ctx.exit(3)
     params = [click.Option(["--input-json"], type=str), click.Option(["--schema"], is_flag=True)]

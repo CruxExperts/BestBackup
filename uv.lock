@@ -7,10 +7,34 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "annotated-types"
+version = "0.8.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5f/56/a8120250d128bed162cd73c76d45f6ef9991f3e068f62a8ee060afa3104a/annotated_types-0.8.0.tar.gz", hash = "sha256:13b2beaad985e05e2d6407ee4c4f35590b11f8d693a258a561055cac8f64cab7", size = 15893, upload-time = "2026-07-23T20:16:13.995Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/91/8acff4f5e50511b911bbccb72b8628a49c68ce14148cd9f6431094859a90/annotated_types-0.8.0-py3-none-any.whl", hash = "sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0", size = 13427, upload-time = "2026-07-23T20:16:12.938Z" },
+]
+
+[[package]]
+name = "b2sdk"
+version = "2.13.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-types" },
+    { name = "logfury" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/87/9c/63c08bc3d737893689f62a1fb7a6a61cd60f73cb0e9ac07c62de65dbe9a1/b2sdk-2.13.0.tar.gz", hash = "sha256:edb586be7698b4b868194506cd81d594364e445817461c7e7b43df47378f6827", size = 210181, upload-time = "2026-09-14T19:05:18.636Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/f1/d0dec920f2af7fc8a67640a08c5ec6397d92922db51b91ff488520915f7b/b2sdk-2.13.0-py3-none-any.whl", hash = "sha256:2063cd1c1c202f2dbc0fc517e9ad0c50980939355f565704e0183c4817f18524", size = 301298, upload-time = "2026-09-14T19:05:17.381Z" },
+]
+
+[[package]]
 name = "bbackup"
-version = "1.8.6"
+version = "2.0.0a1"
 source = { editable = "." }
 dependencies = [
+    { name = "b2sdk" },
     { name = "boto3" },
     { name = "click" },
     { name = "cryptography" },
@@ -41,6 +65,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "b2sdk", specifier = "==2.13.0" },
     { name = "boto3", specifier = "==1.43.108" },
     { name = "click", specifier = ">=8.1.7" },
     { name = "cryptography", specifier = ">=50.0.0" },
@@ -546,6 +571,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/45/98/7a1a5f31fd5c7ba93e963b168e244b8e3dd705b3d2a718e3c3307583bf57/linkify_it_py-2.2.0.tar.gz", hash = "sha256:907acd2d17ac1fbb9ddb62c8957ccbd6158cac602231a15c3b0cd1e215f03cee", size = 32939, upload-time = "2026-08-29T07:07:08.305Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/13/d4/1152d1c7ab42d8b908be64fd200ddc870dc9d4925e951198702084aa1a7d/linkify_it_py-2.2.0-py3-none-any.whl", hash = "sha256:3adc40eb5af300b2605fcfdb968c24e1d780a90f1f2221af7c15e5111e94d443", size = 21971, upload-time = "2026-08-29T07:07:07.164Z" },
+]
+
+[[package]]
+name = "logfury"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/f2/24389d99f861dd65753fc5a56e2672339ec1b078da5e2f4b174d0767b132/logfury-1.0.1.tar.gz", hash = "sha256:130a5daceab9ad534924252ddf70482aa2c96662b3a3825a7d30981d03b76a26", size = 12826, upload-time = "2021-10-23T23:23:03.847Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/c7/8a2cfdf39f4cbbb307603aeb03ca89a4765b96be310a0848b20eb4d17e76/logfury-1.0.1-py3-none-any.whl", hash = "sha256:b4f04be1701a1df644afc3384d6167d64c899f8036b7eefc3b6c570c6a9b290b", size = 7512, upload-time = "2021-10-23T23:23:02.21Z" },
 ]
 
 [[package]]

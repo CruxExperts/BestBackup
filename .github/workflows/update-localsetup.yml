@@ -1,0 +1,78 @@
+name: Update LocalSetup pin
+
+on:
+  schedule:
+    - cron: "23 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: update-localsetup
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Check for a newer stable LocalSetup release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Compare published release with pinned version
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current="$(tr -d '[:space:]' < .github/localsetup-version)"
+          tag="$(gh api repos/CruxExperts/LocalSetup/releases/latest --jq '.tag_name')"
+          latest="${tag#v}"
+          [[ "$tag" == "v${latest}" ]]
+          python - "$current" "$latest" <<'PY'
+          import re
+          import sys
+
+          versions = []
+          for value in sys.argv[1:]:
+              if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value):
+                  raise SystemExit(f"Unexpected stable LocalSetup version: {value}")
+              versions.append(tuple(map(int, value.split("."))))
+
+          if versions[1] <= versions[0]:
+              print(f"LocalSetup {sys.argv[1]} is current (latest stable: {sys.argv[2]})")
+              raise SystemExit(0)
+          with open(__import__("os").environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={sys.argv[2]}\n")
+          PY
+
+      - name: Open or update version pin pull request
+        if: steps.release.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          branch="automation/update-localsetup"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --create "$branch"
+          printf '%s\n' "$VERSION" > .github/localsetup-version
+          git add .github/localsetup-version
+          git commit -m "chore: update LocalSetup to ${VERSION}"
+          git push --force origin "HEAD:refs/heads/${branch}"
+
+          title="chore: update LocalSetup to ${VERSION}"
+          body="Updates the pinned LocalSetup release to [${VERSION}](https://github.com/CruxExperts/LocalSetup/releases/tag/v${VERSION}). CI installs this exact release and runs the repository doctor before the change is merged."
+          existing_pr="$(gh pr list --base main --head "$branch" --state open --json number --jq '.[0].number // empty')"
+          if [[ -n "$existing_pr" ]]; then
+            gh pr edit "$existing_pr" --title "$title" --body "$body"
+          else
+            gh pr create --base main --head "$branch" --title "$title" --body "$body"
+          fi
+
+          # GITHUB_TOKEN-created PRs do not trigger pull_request workflows.
+          gh workflow run ci.yml --ref "$branch"

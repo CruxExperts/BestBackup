@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -31,6 +32,44 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --locked
+
+      - name: Read pinned LocalSetup version
+        if: matrix.python-version == '3.12'
+        run: echo "LOCALSETUP_VERSION=$(tr -d '[:space:]' < .github/localsetup-version)" >> "$GITHUB_ENV"
+
+      - name: Check out pinned LocalSetup release
+        if: matrix.python-version == '3.12'
+        run: |
+          set -euo pipefail
+          [[ "$LOCALSETUP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git clone --depth 1 --branch "v${LOCALSETUP_VERSION}" \
+            https://github.com/CruxExperts/LocalSetup.git "$RUNNER_TEMP/localsetup"
+          test "$(git -C "$RUNNER_TEMP/localsetup" describe --tags --exact-match HEAD)" = "v${LOCALSETUP_VERSION}"
+          python - "$RUNNER_TEMP/localsetup/pyproject.toml" "$LOCALSETUP_VERSION" <<'PY'
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path(sys.argv[1]).read_text())["project"]
+          if project["name"] != "localsetup" or project["version"] != sys.argv[2]:
+              raise SystemExit("The pinned LocalSetup tag and package version do not match")
+          PY
+          uv sync --locked --no-dev --project "$RUNNER_TEMP/localsetup"
+
+      - name: Verify LocalSetup version and repository setup
+        if: matrix.python-version == '3.12'
+        run: |
+          set -euo pipefail
+          uv run --locked --project "$RUNNER_TEMP/localsetup" python -c \
+            'import importlib.metadata, sys; actual = importlib.metadata.version("localsetup"); expected = sys.argv[1]; print(f"LocalSetup {actual}"); assert actual == expected' \
+            "$LOCALSETUP_VERSION"
+          uv run --locked --project "$RUNNER_TEMP/localsetup" localsetup doctor \
+            --target-directory "$GITHUB_WORKSPACE" \
+            --global-preset core \
+            --repo-preset core \
+            --platforms codex \
+            --dependency-mode uv-sync \
+            --json
 
       - name: Lint with ruff
         run: uv run ruff check bbackup/ scripts/check_markdown_standards.py scripts/check_publishing_ready.py scripts/check_version_sync.py scripts/smoke_installed_artifact.py scripts/generate_cli_skills.py tests/

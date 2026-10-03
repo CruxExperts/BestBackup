@@ -8,6 +8,8 @@
 
 | File | Contents |
 |---|---|
+| [development/version-2.md](development/version-2.md) | Version 2 preview, configuration, evidence and remaining release gates |
+| [production-cli.md](production-cli.md) | Generated version 2 preview command reference |
 | [architecture.md](architecture.md) | Module breakdown, design decisions, config internals |
 | [management.md](management.md) | Full `bbman` command reference |
 | [encryption.md](encryption.md) | Encryption setup, key hosting, multi-server deployment |

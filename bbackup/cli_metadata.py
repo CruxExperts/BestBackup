@@ -1935,3 +1935,61 @@ def get_command(cli: CliName, name: str) -> Optional[CliCommand]:
     """Lookup a command by cli + name. Returns None if unknown."""
     registry = get_command_registry(cli)
     return registry.get(f"{cli}:{name}")
+
+# Version-two operation definitions. Production CLI help and JSON schemas share
+# this registry; unsupported capabilities are deliberately absent.
+PRODUCTION_COMMANDS = {
+    "doctor": {"summary": "Inspect configured repository bindings and engine availability.", "fields": {}},
+    "jobs list": {"summary": "List configured capture jobs.", "fields": {}},
+    "jobs run": {"summary": "Capture locally and copy explicit successful snapshots.", "fields": {"name": "string"}},
+    "repositories list": {"summary": "List declared repositories without host credentials.", "fields": {}},
+    "repositories init": {"summary": "Initialize an encrypted repository.", "fields": {"name": "string", "source": "optional-string"}},
+    "repositories check": {"summary": "Read and verify repository data.", "fields": {"name": "string"}},
+    "snapshots list": {"summary": "List successful local snapshot receipts.", "fields": {"limit": "limit", "offset": "offset"}},
+    "snapshots copy": {"summary": "Copy a successful snapshot into an independent repository.", "fields": {"source": "string", "destination": "string", "snapshot": "string"}},
+    "restore": {"summary": "Restore and verify files in a new isolated directory.", "fields": {"repository": "string", "snapshot": "string", "target": "path"}},
+    "runs list": {"summary": "Read sanitized operation events.", "fields": {"limit": "limit", "offset": "offset"}},
+    "service render": {"summary": "Render disabled systemd service and persistent timer units.", "fields": {"name": "string", "executable": "path"}},
+}
+
+
+def production_schema(command: str) -> dict:
+    """JSON Schema for exactly the fields accepted by a production command."""
+    definition = PRODUCTION_COMMANDS[command]
+    properties = {}
+    required = []
+    for name, kind in definition["fields"].items():
+        if kind == "boolean":
+            properties[name] = {"type": "boolean", "default": False}
+        elif kind in ("limit", "offset"):
+            properties[name] = {"type": "integer", "minimum": 1 if kind == "limit" else 0}
+            if kind == "limit":
+                properties[name]["maximum"] = 1000
+        else:
+            properties[name] = {"type": "string", "minLength": 1}
+            if kind != "optional-string":
+                required.append(name)
+    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+            "additionalProperties": False, "properties": properties, "required": required}
+
+PRODUCTION_COMMANDS.update({
+    "recovery inspect": {"summary": "Inspect cloud versioning and lifecycle without a protection claim.", "fields": {"bucket": "string", "endpoint": "string", "prefix": "optional-string", "region": "optional-string"}},
+    "recovery checkpoint": {"summary": "Check a quiescent repository and seal an independent recovery kit.", "fields": {"repository": "string", "snapshot": "string", "bucket": "string", "endpoint": "string", "prefix": "optional-string", "region": "optional-string", "target": "path", "signer": "string", "recipient": "string", "quiescent_window_confirmed": "boolean"}},
+    "recovery open": {"summary": "Authenticate and decrypt a recovery kit into a new private directory.", "fields": {"kit": "path", "target": "path", "signer": "string"}},
+    "recovery restore": {"summary": "Restore signed exact historical object versions into a new local repository.", "fields": {"manifest": "path", "signature": "path", "signer": "string", "password_file": "path", "repository": "string", "repository_id": "string", "snapshot": "string", "bucket": "string", "endpoint": "string", "prefix": "optional-string", "region": "optional-string", "target": "path"}},
+})
+
+PRODUCTION_COMMANDS["runs stream"] = {
+    "summary": "Emit a bounded page of lifecycle events as explicit JSON lines, without a result envelope.",
+    "fields": {"limit": "limit", "offset": "offset"},
+}
+
+PRODUCTION_COMMANDS["skills"] = {
+    "summary": "Discover the production operation registry and generated input schemas.",
+    "fields": {"name": "optional-string"},
+}
+
+PRODUCTION_COMMANDS["runs reconcile"] = {
+    "summary": "Record an administrator-reviewed outcome for an uncertain operation without replaying it.",
+    "fields": {"repository": "string", "operation_id": "string", "outcome": "string", "repository_reviewed": "boolean"},
+}

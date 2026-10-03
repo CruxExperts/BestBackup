@@ -1,0 +1,401 @@
+{
+  "doctor": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "jobs list": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "jobs run": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "recovery checkpoint": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "bucket": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "endpoint": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "prefix": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "quiescent_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      },
+      "recipient": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "region": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "signer": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "snapshot": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "target": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "snapshot",
+      "bucket",
+      "endpoint",
+      "target",
+      "signer",
+      "recipient"
+    ],
+    "type": "object"
+  },
+  "recovery inspect": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "bucket": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "endpoint": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "prefix": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "region": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "bucket",
+      "endpoint"
+    ],
+    "type": "object"
+  },
+  "recovery open": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "kit": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "signer": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "target": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "kit",
+      "target",
+      "signer"
+    ],
+    "type": "object"
+  },
+  "recovery restore": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "bucket": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "endpoint": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "manifest": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "password_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "prefix": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "region": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository_id": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "signature": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "signer": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "snapshot": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "target": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "manifest",
+      "signature",
+      "signer",
+      "password_file",
+      "repository",
+      "repository_id",
+      "snapshot",
+      "bucket",
+      "endpoint",
+      "target"
+    ],
+    "type": "object"
+  },
+  "repositories check": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "repositories init": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "source": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "repositories list": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "restore": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "snapshot": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "target": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "snapshot",
+      "target"
+    ],
+    "type": "object"
+  },
+  "runs list": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "limit": {
+        "maximum": 1000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "offset": {
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "runs reconcile": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "operation_id": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "outcome": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository_reviewed": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "repository",
+      "operation_id",
+      "outcome"
+    ],
+    "type": "object"
+  },
+  "runs stream": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "limit": {
+        "maximum": 1000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "offset": {
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "service render": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "executable": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "name": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "executable"
+    ],
+    "type": "object"
+  },
+  "skills": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "snapshots copy": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "destination": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "snapshot": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "source": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "source",
+      "destination",
+      "snapshot"
+    ],
+    "type": "object"
+  },
+  "snapshots list": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "limit": {
+        "maximum": 1000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "offset": {
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

@@ -53,7 +53,12 @@ def main(argv: list[str]) -> int:
         }
 
         assert_ok(["uv", "venv", str(venv), "--python", "3.12"])
-        assert_ok(["uv", "pip", "install", "--python", str(venv / "bin" / "python"), str(wheel)])
+        requirements = smoke_root / "locked-requirements.txt"
+        exported = assert_ok(["uv", "export", "--locked", "--no-dev", "--no-emit-project", "--format", "requirements-txt"])
+        requirements.write_text(exported.stdout, encoding="utf-8")
+        assert_ok(["uv", "pip", "install", "--python", str(venv / "bin" / "python"),
+                   "--require-hashes", "-r", str(requirements)])
+        assert_ok(["uv", "pip", "install", "--python", str(venv / "bin" / "python"), "--no-deps", str(wheel)])
 
         bin_dir = venv / "bin"
         bbackup = str(bin_dir / "bbackup")
@@ -61,6 +66,10 @@ def main(argv: list[str]) -> int:
 
         assert_ok([bbackup, "--version"], env=env)
         assert_ok([bbman, "--version"], env=env)
+        production = assert_ok([bbackup, "production", "skills", "--name", "jobs run"], env=env)
+        production_payload = json.loads(production.stdout)
+        if production_payload.get("schema_version") != 2 or "jobs run" not in production_payload.get("data", {}):
+            raise SystemExit("smoke: installed production schema discovery failed")
 
         init_result = assert_ok([bbackup, "init-config", "--output", "json"], env=env)
         init_payload = json.loads(init_result.stdout)

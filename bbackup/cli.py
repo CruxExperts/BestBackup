@@ -155,6 +155,8 @@ def _snapshot_result(command: str, result: dict, output: str, console: Console) 
 def cli(ctx, config):
     """bbackup - Docker and filesystem backup tool with Rich TUI."""
     ctx.ensure_object(dict)
+    if ctx.invoked_subcommand == "production":
+        return
     ctx.obj["config"] = Config(config_path=config)
     ctx.obj["console"] = Console()
     setup_logging(ctx.obj["config"])
@@ -1339,6 +1341,11 @@ def _print_skills_markdown() -> None:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+from .production_cli import cli as production_cli
+
+cli.add_command(production_cli, name="production")
+
 
 if __name__ == "__main__":
     cli()

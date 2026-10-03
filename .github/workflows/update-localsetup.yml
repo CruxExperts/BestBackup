@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: main
 
       - name: Compare published release with pinned version
         id: release
@@ -45,7 +47,8 @@ jobs:
           if versions[1] <= versions[0]:
               print(f"LocalSetup {sys.argv[1]} is current (latest stable: {sys.argv[2]})")
               raise SystemExit(0)
-          with open(__import__("os").environ["GITHUB_OUTPUT"], "a") as output:
+          import os
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               output.write(f"version={sys.argv[2]}\n")
           PY
 
@@ -57,22 +60,40 @@ jobs:
         run: |
           set -euo pipefail
           branch="automation/update-localsetup"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch --create "$branch"
-          printf '%s\n' "$VERSION" > .github/localsetup-version
-          git add .github/localsetup-version
-          git commit -m "chore: update LocalSetup to ${VERSION}"
-          git push --force origin "HEAD:refs/heads/${branch}"
-
           title="chore: update LocalSetup to ${VERSION}"
           body="Updates the pinned LocalSetup release to [${VERSION}](https://github.com/CruxExperts/LocalSetup/releases/tag/v${VERSION}). CI installs this exact release and runs the repository doctor before the change is merged."
-          existing_pr="$(gh pr list --base main --head "$branch" --state open --json number --jq '.[0].number // empty')"
-          if [[ -n "$existing_pr" ]]; then
-            gh pr edit "$existing_pr" --title "$title" --body "$body"
-          else
-            gh pr create --base main --head "$branch" --title "$title" --body "$body"
+          remote_sha="$(git ls-remote --heads origin "refs/heads/${branch}" | cut -f1)"
+          pin_changed=true
+          if [[ -n "$remote_sha" ]]; then
+            git fetch origin "refs/heads/${branch}:refs/remotes/origin/${branch}"
+            remote_version="$(git show "refs/remotes/origin/${branch}:.github/localsetup-version" 2>/dev/null | tr -d '[:space:]' || true)"
+            if [[ "$remote_version" == "$VERSION" ]]; then
+              pin_changed=false
+            fi
           fi
 
-          # GITHUB_TOKEN-created PRs do not trigger pull_request workflows.
-          gh workflow run ci.yml --ref "$branch"
+          if [[ "$pin_changed" == true ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git switch --create "$branch"
+            printf '%s\n' "$VERSION" > .github/localsetup-version
+            git add .github/localsetup-version
+            git commit -m "chore: update LocalSetup to ${VERSION}"
+            git push --force-with-lease="refs/heads/${branch}:${remote_sha}" \
+              origin "HEAD:refs/heads/${branch}"
+          fi
+
+          existing_pr="$(gh pr list --base main --head "$branch" --state open --json number --jq '.[0].number // empty')"
+          if [[ -n "$existing_pr" ]]; then
+            if [[ "$pin_changed" == true ]]; then
+              gh pr edit "$existing_pr" --title "$title" --body "$body"
+            fi
+          else
+            gh pr create --base main --head "$branch" --title "$title" --body "$body"
+            pin_changed=true
+          fi
+
+          if [[ "$pin_changed" == true ]]; then
+            # GITHUB_TOKEN-created PRs do not trigger pull_request workflows.
+            gh workflow run ci.yml --ref "$branch"
+          fi

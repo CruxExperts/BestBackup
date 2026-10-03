@@ -20,6 +20,11 @@ Enable the repository hooks once per checkout:
 git config core.hooksPath .githooks
 ```
 
+CI checks the Codex LocalSetup adapter with the exact stable release pinned in
+[`.github/localsetup-version`](localsetup-version). A daily workflow opens or
+updates a pull request when a newer stable LocalSetup release is published; CI
+is dispatched for that update branch.
+
 The preview's ordinary tests use local repositories and executable fixtures. Live cloud accounts, production database credentials, and real recovery data are not required for unit tests. Never commit passwords, host bindings, customer data, or cloud tokens.
 
 ## Validate a change

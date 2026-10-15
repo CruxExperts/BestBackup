@@ -10,7 +10,7 @@ import re
 import tarfile
 import tempfile
 
-from .operations import OperationPlan, OperationRunner, OperationStatus
+from .operations import OperationPlan, OperationRunner, OperationStatus, repository_key
 
 
 class RecoveryError(RuntimeError):
@@ -243,6 +243,16 @@ def create_checked_kit(service, adapter, repository, snapshot, destination: Path
             result.update(asdict(checkpoint))
             result.pop("path", None)
             result.update(seal_kit(manifest, binding.password_file, destination, signer=signer, recipient=recipient, cancel=cancel))
+            with service._receipts() as db:
+                db.execute(
+                    """INSERT INTO checkpoints
+                       (repository, repository_identity, snapshot, operation,
+                        manifest_sha256, captured_at, expires_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (repository, repository_key(service._identity(repository)),
+                     snapshot, plan.operation_id, result["manifest_sha256"],
+                     result["captured_at"], result["expires_at"]),
+                )
     plan, _ = service._execute(repository, [*engine.check_args(), "--read-data"], label="checkpoint", finalize=finalize, cancel=cancel)
     result["operation_id"] = plan.operation_id
     return result

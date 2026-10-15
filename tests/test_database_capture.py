@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
+import json
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -124,7 +125,9 @@ def test_mysql_family_checks_engines_and_streams_complete_dump(
     _script(
         clients,
         client,
-        f"printf '%s\\n' \"$*\" > '{preflight_args}'\nprintf 'InnoDB\\nInnoDB\\n'\n",
+        f"printf '%s\\n' \"$*\" >> '{preflight_args}'\n"
+        'case "$*" in *DEFAULT_CHARACTER_SET_NAME*) printf "utf8mb4\\tutf8mb4_general_ci\\n" ;; '
+        '*) printf "InnoDB\\nInnoDB\\n" ;; esac\n',
     )
     dump = _script(
         clients,
@@ -147,6 +150,7 @@ def test_mysql_family_checks_engines_and_streams_complete_dump(
     with _capture(_source(kind), _mysql_binding(tmp_path, kind), tmp_path) as paths:
         exported = Path(paths[0])
         content = exported.read_text()
+        manifest = json.loads(Path(paths[-1]).read_text())
         assert content.startswith("database-dump\n")
         assert "--defaults-file=" in content
         assert "--lock-all-tables" in content
@@ -155,7 +159,10 @@ def test_mysql_family_checks_engines_and_streams_complete_dump(
         assert "--routines" in content
         assert "--events" in content
         assert "--triggers" in content
-        assert "--databases app_db" in content
+        assert ("--set-gtid-purged=OFF" in content) is (kind == "mysql")
+        assert "--skip-add-drop-table" not in content
+        assert "--databases" not in content
+        assert content.splitlines()[1].split()[-1] == "app_db"
         assert "inherited-mysql-secret" not in content
         assert "inherited-pg-secret" not in content
         assert "ambient-secret" not in content
@@ -168,7 +175,17 @@ def test_mysql_family_checks_engines_and_streams_complete_dump(
             assert "/capture-" in private_home
             assert login_path == "/dev/null"
             assert "--no-login-paths" not in preflight_args.read_text()
-        assert exported.stat().st_mode & 0o777 == 0o600
+        assert manifest["exports"] == [
+            {
+                "source": "database",
+                "kind": kind,
+                "format": f"{kind}-single-database-sql-v1",
+                "path": str(exported),
+                "source_database": "app_db",
+                "character_set": "utf8mb4",
+                "collation": "utf8mb4_general_ci",
+            }
+        ]
 
     assert exported is not None and not exported.exists()
     assert dump.exists()
@@ -188,7 +205,12 @@ def test_mysql_capture_requires_explicit_read_lock_before_client_dispatch(tmp_pa
 def test_mysql_refuses_non_innodb_before_running_dump(tmp_path, monkeypatch):
     clients = tmp_path / "clients"
     clients.mkdir()
-    _script(clients, "mysql", "printf 'MyISAM\\n'\n")
+    _script(
+        clients,
+        "mysql",
+        'case "$*" in *DEFAULT_CHARACTER_SET_NAME*) printf "utf8mb4\\tutf8mb4_general_ci\\n" ;; '
+        '*) printf "MyISAM\\n" ;; esac\n',
+    )
     dump_marker = tmp_path / "dump-was-run"
     _script(clients, "mysqldump", f"touch '{dump_marker}'\n")
     monkeypatch.setenv("PATH", str(clients))

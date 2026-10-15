@@ -10,6 +10,67 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+### Added
+
+- Local retention now uses immutable capture-time replica requirements and
+  read-only, restic-policy plans with snapshot-bound approval tokens. Apply
+  forgets only reviewed eligible snapshot IDs, validates state under the
+  repository lease, records uncertain mutations, and never prunes pack data.
+- First-run setup and revision-checked configuration editing share the machine
+  command and dashboard operation boundary. Configuration changes retain private
+  compressed backups; setup never initializes repositories or enables services.
+- Dashboard administration forms cover repository checks, direct job execution,
+  replication, retention, recovery, and database reconciliation. Interactive
+  operations support cancellation and path-free numeric progress; the command
+  interface exposes progress only through explicit JSON-lines output.
+- Native MySQL/MariaDB restoration accepts trusted versioned exports only on an
+  explicitly acknowledged empty recovery server, using the original database
+  name. Pinned connection settings and shared uncertainty tracking prevent
+  automatic replay after ambiguous mutations.
+- Version-two native Docker capture now preserves daemon-provided mask/read-only
+  paths, validates typed bind/local-volume declarations, and ignores only added
+  writable-layer entries exactly at mount destinations rebuilt by restore.
+  It quiesces only selected running containers, then restores into a new
+  directory and container using an already-local pinned image. Durable restart
+  intentions require explicit recovery; Docker restore reconciliation records
+  reviewed ledger outcomes without replay.
+- Overview and machine diagnostics now report actual backup/copy/check/restore
+  observations, operation outcomes, local capacity, observed active timers, and
+  signed-checkpoint expiry without treating them as application or cloud proof.
+- Receipt-schema upgrades preserve a validated, private compressed SQLite
+  backup before migration; an unavailable private backup stops the upgrade.
+- Native Ubuntu package construction now validates target Python/architecture,
+  hash-locked dependencies, and the supplied restic executable. Disabled systemd
+  templates share the runtime unit renderer. Release automation separates native
+  builds from explicit fixed-fingerprint signature verification and publication.
+
+### Fixed
+
+- Database restore recognizes Unix-socket-only MySQL/MariaDB servers reporting
+  port zero without weakening validation of configured TCP ports.
+- Debian abort recovery distinguishes an active-client refusal before any
+  package transition from a retained interrupted-transition marker. Validating
+  the intact payload under a shared lock keeps the former package installed;
+  the latter still requires exclusive locking before its marker can be cleared.
+- Release-note extraction accepts the dated changelog headings used by actual
+  releases and still refuses a missing release section. Readiness checks no
+  longer require obsolete release-action tags or diagnostic wording.
+
+### Qualification
+
+- Live PostgreSQL 17.11, MySQL 8.4.12, and MariaDB 11.8.9 capture/restore drills
+  validated transaction boundaries and recovered application data. MySQL-family
+  drills additionally exercised DEFINER views, routines, triggers, and events.
+- A million-file local capture, independent repository copy, full-data check,
+  and verified restore passed. An offline signed/encrypted recovery-kit drill
+  recovered files after removing the original source and password. These checks
+  do not qualify cloud providers, off-host custody, or terabyte-scale recovery.
+- Native AMD64 Ubuntu 24.04/Python 3.12 and Ubuntu 26.04/Python 3.14 package
+  drills passed installed capture/check/restore, active-dashboard upgrade refusal,
+  interrupted-unpack blocking, damaged-payload refusal, and verified same-version
+  repair with configuration and SQLite state preserved. ARM64, boot/reboot,
+  and cross-application-version rollback remain unqualified.
+
 ---
 
 ## [2.0.0-alpha.1] - 2026-10-03

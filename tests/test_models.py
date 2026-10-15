@@ -116,6 +116,44 @@ def test_database_sources_reference_named_private_connections(config):
     assert parsed.sources[1].kind == "mysql"
 
 
+def test_docker_source_requires_one_named_container_and_explicit_stop_policy(config):
+    config["sources"] = [{
+        "name": "app",
+        "kind": "docker",
+        "container": "web-01",
+        "connection": "local_docker",
+        "stop_policy": "stop-restart",
+    }]
+    config["jobs"][0]["sources"] = ["app"]
+
+    source = Configuration.parse(config).sources[0]
+
+    assert source.paths == ()
+    assert source.container == "web-01"
+    assert source.connection == "local_docker"
+    assert source.stop_policy == "stop-restart"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"name": "app", "kind": "docker", "container": "web", "connection": "local"},
+        {"name": "app", "kind": "docker", "container": "web", "connection": "local",
+         "stop_policy": "none"},
+        {"name": "app", "kind": "docker", "containers": ["web"], "connection": "local",
+         "stop_policy": "stop-restart"},
+        {"name": "app", "kind": "docker", "container": "web", "connection": "tcp://remote",
+         "stop_policy": "stop-restart"},
+    ],
+)
+def test_docker_source_rejects_ambiguous_or_unsafe_schema(config, source):
+    config["sources"] = [source]
+    config["jobs"][0]["sources"] = [source["name"]]
+
+    with pytest.raises(ConfigurationError):
+        Configuration.parse(config)
+
+
 @pytest.mark.parametrize(
     "source",
     [
@@ -191,6 +229,9 @@ def test_database_host_bindings_expose_only_private_file_references(tmp_path):
                 "options_file": str(tmp_path / "mysql.cnf"),
             },
         },
+        "docker_bindings": {
+            "local_docker": {"kind": "docker", "socket": str(tmp_path / "docker.sock")}
+        },
     }
     path.write_text(json.dumps(raw))
     path.chmod(0o600)
@@ -206,6 +247,7 @@ def test_database_host_bindings_expose_only_private_file_references(tmp_path):
         tmp_path / "pg_service.conf",
         tmp_path / "pgpass",
         tmp_path / "mysql.cnf",
+        tmp_path / "docker.sock",
     }
 
 

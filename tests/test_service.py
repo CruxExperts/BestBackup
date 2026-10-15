@@ -1,5 +1,8 @@
-import sqlite3
+import json
+import gzip
 import shutil
+import sqlite3
+from dataclasses import replace
 
 import pytest
 
@@ -9,6 +12,7 @@ from bbackup.operations import (
     OperationRun,
     OperationStatus,
     RepositoryConflictError,
+    repository_key,
 )
 from bbackup.service import BackupService, ServiceError
 
@@ -136,10 +140,45 @@ def test_legacy_snapshot_receipt_does_not_guess_missing_capture_token(service, t
         HostBindings(state, service.bindings.repositories),
     )
     with migrated._receipts() as db:
-        row = db.execute("SELECT capture_token FROM snapshots").fetchone()
-    assert row == (None,)
+        row = db.execute(
+            "SELECT capture_token, required_replicas FROM snapshots"
+        ).fetchone()
+    assert row == (None, None)
     with pytest.raises(ServiceError, match="recoverable capture token"):
         migrated.copy("local", "copy", "a" * 64)
+    archive, = (state / "state-backups").glob("receipts-*.sqlite3.gz")
+    assert archive.stat().st_mode & 0o777 == 0o600
+    recovered = tmp_path / "pre-migration.sqlite3"
+    with gzip.GzipFile(filename=archive, mode="rb") as incoming, recovered.open("xb") as output:
+        shutil.copyfileobj(incoming, output)
+    with sqlite3.connect(recovered) as db:
+        assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert {row[1] for row in db.execute("PRAGMA table_info(snapshots)")} == {
+            "repository", "snapshot", "job", "operation",
+        }
+        assert db.execute("SELECT * FROM snapshots").fetchall() == [
+            ("local", "a" * 64, "daily", "old-operation"),
+        ]
+
+
+def test_receipt_upgrade_refuses_nonprivate_backup_without_migrating(service, tmp_path):
+    state = tmp_path / "unbacked-state"
+    state.mkdir(mode=0o700)
+    with sqlite3.connect(state / "snapshots.sqlite3") as db:
+        db.execute("CREATE TABLE snapshots (repository TEXT, snapshot TEXT, job TEXT, operation TEXT)")
+        db.execute("INSERT INTO snapshots VALUES ('local', 'saved-id', 'daily', 'saved-operation')")
+    backup = state / "state-backups"
+    backup.mkdir()
+    backup.chmod(0o755)
+    with pytest.raises(ServiceError, match="backup directory must be private"):
+        BackupService(service.config, HostBindings(state, service.bindings.repositories))
+    with sqlite3.connect(state / "snapshots.sqlite3") as db:
+        assert {row[1] for row in db.execute("PRAGMA table_info(snapshots)")} == {
+            "repository", "snapshot", "job", "operation",
+        }
+        assert db.execute("SELECT * FROM snapshots").fetchall() == [
+            ("local", "saved-id", "daily", "saved-operation"),
+        ]
 
 
 def test_capture_receipt_is_committed_before_ledger_success(service, monkeypatch):
@@ -169,6 +208,64 @@ def test_capture_receipt_is_committed_before_ledger_success(service, monkeypatch
     events = service.ledger.events(plans[0].operation_id)
     assert [event.kind.value for event in events] == ["started", "uncertain"]
     with service._receipts() as db:
+        assert db.execute("SELECT 1 FROM snapshots").fetchone() is None
+
+
+def test_docker_capture_failure_restarts_before_refusing_success_receipt(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    from bbackup.models import DockerBinding
+
+    data = tmp_path / "docker-data"
+    password = tmp_path / "docker-password"
+    password.write_text("docker-password")
+    password.chmod(0o600)
+    data.mkdir()
+    config = Configuration.parse({
+        "schema_version": 2,
+        "repositories": [{"name": "local"}],
+        "sources": [{
+            "name": "app", "kind": "docker", "container": "old-app",
+            "connection": "local-docker", "stop_policy": "stop-restart",
+        }],
+        "jobs": [{"name": "daily", "repository": "local", "sources": ["app"]}],
+    })
+    capture_service = BackupService(
+        config,
+        HostBindings(
+            tmp_path / "docker-state",
+            {"local": RepositoryBinding(str(tmp_path / "docker-repo"), password)},
+            docker_bindings={"local-docker": DockerBinding("docker", tmp_path / "docker.sock")},
+        ),
+    )
+    state = {"running": True}
+
+    class FakeDockerRuntime:
+        @contextmanager
+        def capture(self, *_args, **_kwargs):
+            state["running"] = False
+            try:
+                yield ((str(data),), ())
+            finally:
+                state["running"] = True
+
+    capture_service.docker_runtime = FakeDockerRuntime()
+    plans = []
+
+    def failed_restic(plan, **_kwargs):
+        plans.append(plan)
+        assert state["running"] is False
+        return _run(plan, status=OperationStatus.FAILED, exit_code=1)
+
+    monkeypatch.setattr(capture_service.runner, "run", failed_restic)
+    with pytest.raises(ServiceError, match="interrupted"):
+        capture_service.capture("daily")
+
+    assert state["running"] is True
+    assert [event.kind.value for event in capture_service.ledger.events(plans[0].operation_id)] == [
+        "started", "uncertain",
+    ]
+    with capture_service._receipts() as db:
         assert db.execute("SELECT 1 FROM snapshots").fetchone() is None
 
 
@@ -329,3 +426,298 @@ def test_real_capture_copy_check_restore(service, tmp_path):
     assert path.stat().st_mode & 0o777 == 0o640
     assert (path.parent / "link").is_symlink()
     assert len(service.snapshots()) == 1
+
+
+def _retention_snapshot(snapshot_id, tags=None):
+    return {
+        "id": snapshot_id,
+        "time": "2026-01-01T00:00:00Z",
+        "hostname": "test-host",
+        "tags": ["bbackup-job=daily"] if tags is None else tags,
+        "paths": ["/data"],
+    }
+
+
+def _record_retention_source(service, snapshot_id, *, required=("copy",), capture_token="capture-token",
+                            job="daily"):
+    evidence = None if required is None else json.dumps({"schema_version": 1, "bindings": {
+        name: repository_key(service._identity(name)) for name in required
+    }}, sort_keys=True, separators=(",", ":"))
+    with service._receipts() as db:
+        db.execute(
+            """INSERT INTO snapshots
+               (repository, snapshot, job, operation, capture_token, required_replicas)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("local", snapshot_id, job, "capture-operation", capture_token, evidence),
+        )
+
+
+def _record_retention_copy(service, snapshot_id, *, destination="copy", capture_token="capture-token"):
+    with service._receipts() as db:
+        db.execute(
+            """INSERT INTO copies
+               (source_repository, source_snapshot, destination_repository,
+                destination_snapshot, operation, capture_token, destination_identity)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("local", snapshot_id, destination, "d" * 64, "copy-operation", capture_token,
+             repository_key(service._identity(destination))),
+        )
+
+
+def _mock_retention_restic(service, monkeypatch, snapshots, selected, *, apply_status=None):
+    state = {"snapshots": list(snapshots), "apply_args": [], "apply_operation_id": None,
+             "replica_snapshots": [{"id": "d" * 64, "original": item["id"],
+                                    "tags": ["bbackup-capture=capture-token"]} for item in snapshots]}
+
+    def fake_run(plan, **_kwargs):
+        argv = list(plan.argv)
+        if "snapshots" in argv:
+            if plan.repository_id == repository_key(service._identity("copy")):
+                return _run(plan, stdout=json.dumps(state["replica_snapshots"]).encode())
+            return _run(plan, stdout=json.dumps(state["snapshots"]).encode())
+        if "forget" in argv and "--dry-run" in argv:
+            payload = [{"remove": [{"id": snapshot_id} for snapshot_id in selected]}]
+            return _run(plan, stdout=json.dumps(payload).encode())
+        if "forget" in argv:
+            state["apply_args"].append(argv)
+            state["apply_operation_id"] = plan.operation_id
+            if apply_status is not None:
+                return _run(plan, status=apply_status, exit_code=-9)
+            removed = set(argv[argv.index("--") + 1:])
+            state["snapshots"] = [
+                item for item in state["snapshots"] if item["id"] not in removed
+            ]
+        return _run(plan)
+
+    monkeypatch.setattr(service.runner, "run", fake_run)
+    return state
+
+
+def test_capture_keeps_original_replica_obligation_after_job_policy_changes(service, monkeypatch):
+    snapshot_id = "e" * 64
+
+    def fake_run(plan, **_kwargs):
+        return _run(
+            plan,
+            stdout=(f'{{"message_type":"summary","snapshot_id":"{snapshot_id}"}}\n').encode(),
+        )
+
+    monkeypatch.setattr(service.runner, "run", fake_run)
+    service.capture("daily")
+    service.config = replace(service.config, jobs=(replace(service.config.jobs[0], replicas=()),))
+    _mock_retention_restic(service, monkeypatch, [_retention_snapshot(snapshot_id)], [snapshot_id])
+    plan = service.retention_plan("daily")
+    assert plan["target_snapshot_ids"] == []
+    assert plan["protected_snapshots"] == [{
+        "snapshot_id": snapshot_id, "reason": "required_copy_pending",
+    }]
+
+
+def test_rebinding_replica_name_cannot_satisfy_original_capture_requirement(service, monkeypatch, tmp_path):
+    snapshot_id = "9" * 64
+    _record_retention_source(service, snapshot_id)
+    repositories = dict(service.bindings.repositories)
+    repositories["copy"] = replace(repositories["copy"], repository=str(tmp_path / "different-copy"))
+    changed = BackupService(service.config, replace(service.bindings, repositories=repositories))
+    _record_retention_copy(changed, snapshot_id)
+    state = _mock_retention_restic(changed, monkeypatch, [_retention_snapshot(snapshot_id)], [snapshot_id])
+    plan = changed.retention_plan("daily")
+    assert plan["target_snapshot_ids"] == []
+    assert plan["protected_snapshots"] == [{
+        "snapshot_id": snapshot_id, "reason": "missing_required_replica_evidence",
+    }]
+    changed.retention_apply("daily", plan["plan_token"], True)
+    assert state["snapshots"] == [_retention_snapshot(snapshot_id)]
+
+
+def test_retention_keeps_snapshot_with_pending_required_copy(service, monkeypatch):
+    snapshot_id = "a" * 64
+    _record_retention_source(service, snapshot_id)
+    state = _mock_retention_restic(
+        service, monkeypatch, [_retention_snapshot(snapshot_id)], [snapshot_id],
+    )
+
+    plan = service.retention_plan("daily")
+    assert plan["target_snapshot_ids"] == []
+    assert plan["protected_snapshots"] == [{
+        "snapshot_id": snapshot_id, "reason": "required_copy_pending",
+    }]
+    applied = service.retention_apply("daily", plan["plan_token"], True)
+    assert applied["deleted_snapshot_ids"] == []
+    assert state["snapshots"] == [_retention_snapshot(snapshot_id)]
+    assert state["apply_args"] == []
+
+
+def test_retention_refuses_nonlocal_repository_bindings(service):
+    repositories = dict(service.bindings.repositories)
+    repositories["local"] = RepositoryBinding(
+        "rclone:remote:repository", repositories["local"].password_file
+    )
+    remote = BackupService(
+        service.config, replace(service.bindings, repositories=repositories)
+    )
+    with pytest.raises(ServiceError, match="absolute local repository path"):
+        remote.retention_plan("daily")
+
+
+def test_retention_preserves_foreign_unrecorded_and_legacy_snapshots(service, monkeypatch):
+    unrecorded_id, foreign_id, legacy_id = "a" * 64, "b" * 64, "c" * 64
+    _record_retention_source(service, foreign_id, required=(), job="other-job")
+    _record_retention_source(service, legacy_id, required=None)
+    snapshot_ids = [unrecorded_id, foreign_id, legacy_id]
+    state = _mock_retention_restic(
+        service,
+        monkeypatch,
+        [_retention_snapshot(snapshot_id) for snapshot_id in snapshot_ids],
+        snapshot_ids,
+    )
+
+    plan = service.retention_plan("daily")
+    assert plan["target_snapshot_ids"] == []
+    assert plan["protected_snapshots"] == [
+        {"snapshot_id": unrecorded_id, "reason": "unrecorded_or_foreign"},
+        {"snapshot_id": foreign_id, "reason": "unrecorded_or_foreign"},
+        {"snapshot_id": legacy_id, "reason": "missing_required_replica_evidence"},
+    ]
+    service.retention_apply("daily", plan["plan_token"], True)
+    assert {item["id"] for item in state["snapshots"]} == set(snapshot_ids)
+    assert state["apply_args"] == []
+
+
+def test_retention_policy_change_invalidates_approval(service, monkeypatch):
+    snapshot_id = "f" * 64
+    _record_retention_source(service, snapshot_id)
+    _record_retention_copy(service, snapshot_id)
+    state = _mock_retention_restic(
+        service, monkeypatch, [_retention_snapshot(snapshot_id)], [snapshot_id],
+    )
+    plan = service.retention_plan("daily")
+    job = service.config.jobs[0]
+    changed_job = replace(
+        job, retention=replace(job.retention, local_daily=job.retention.local_daily + 1)
+    )
+    service.config = replace(service.config, jobs=(changed_job,))
+
+    with pytest.raises(ServiceError, match="approval is stale"):
+        service.retention_apply("daily", plan["plan_token"], True)
+    assert state["apply_args"] == []
+
+
+def test_lost_replica_invalidates_approval_and_holds_remaining_local_snapshot(service, monkeypatch):
+    snapshot_id = "7" * 64
+    _record_retention_source(service, snapshot_id)
+    _record_retention_copy(service, snapshot_id)
+    state = _mock_retention_restic(service, monkeypatch, [_retention_snapshot(snapshot_id)], [snapshot_id])
+    approved = service.retention_plan("daily")
+    assert approved["target_snapshot_ids"] == [snapshot_id]
+    state["replica_snapshots"] = []
+    with pytest.raises(ServiceError):
+        service.retention_apply("daily", approved["plan_token"], True)
+    current = service.retention_plan("daily")
+    assert current["target_snapshot_ids"] == []
+    assert current["protected_snapshots"] == [{
+        "snapshot_id": snapshot_id, "reason": "required_copy_not_verified",
+    }]
+    assert state["snapshots"] == [_retention_snapshot(snapshot_id)]
+    assert state["apply_args"] == []
+
+
+def test_retention_rechecks_snapshot_state_under_apply_lease(service, monkeypatch):
+    snapshot_id = "1" * 64
+    _record_retention_source(service, snapshot_id)
+    _record_retention_copy(service, snapshot_id)
+    state = _mock_retention_restic(
+        service, monkeypatch, [_retention_snapshot(snapshot_id)], [snapshot_id],
+    )
+    original_plan = service.retention_plan
+    reviewed = original_plan("daily")
+
+    def change_after_review(job_name, *, cancel=None):
+        result = original_plan(job_name, cancel=cancel)
+        state["snapshots"].append(_retention_snapshot("2" * 64, tags=[]))
+        return result
+
+    monkeypatch.setattr(service, "retention_plan", change_after_review)
+    with pytest.raises(ServiceError, match="became stale"):
+        service.retention_apply("daily", reviewed["plan_token"], True)
+    assert state["apply_args"] == []
+
+
+def test_interrupted_retention_mutation_remains_uncertain(service, monkeypatch):
+    snapshot_id = "3" * 64
+    _record_retention_source(service, snapshot_id)
+    _record_retention_copy(service, snapshot_id)
+    state = _mock_retention_restic(
+        service, monkeypatch, [_retention_snapshot(snapshot_id)], [snapshot_id],
+        apply_status=OperationStatus.TIMED_OUT,
+    )
+    plan = service.retention_plan("daily")
+
+    with pytest.raises(ServiceError, match="uncertain"):
+        service.retention_apply("daily", plan["plan_token"], True)
+    events = service.ledger.events(state["apply_operation_id"])
+    assert [event.kind.value for event in events] == ["started", "uncertain"]
+    with service._receipts() as db:
+        assert db.execute(
+            "SELECT 1 FROM snapshots WHERE repository='local' AND snapshot=?",
+            (snapshot_id,),
+        ).fetchone()
+
+
+def test_retention_forgets_only_reviewed_eligible_snapshot_without_prune(service, monkeypatch):
+    snapshot_id = "4" * 64
+    _record_retention_source(service, snapshot_id)
+    _record_retention_copy(service, snapshot_id)
+    state = _mock_retention_restic(
+        service, monkeypatch, [_retention_snapshot(snapshot_id)], [snapshot_id],
+    )
+    plan = service.retention_plan("daily")
+    assert plan["target_snapshot_ids"] == [snapshot_id]
+    with pytest.raises(ServiceError, match="explicit approval"):
+        service.retention_apply("daily", plan["plan_token"], False)
+    assert state["apply_args"] == []
+
+    applied = service.retention_apply("daily", plan["plan_token"], True)
+    assert applied["deleted_snapshot_ids"] == [snapshot_id]
+    assert state["snapshots"] == []
+    forget_args = state["apply_args"][0]
+    assert forget_args[forget_args.index("--") + 1:] == [snapshot_id]
+    assert "--prune" not in forget_args
+    with service._receipts() as db:
+        assert db.execute(
+            "SELECT 1 FROM snapshots WHERE repository='local' AND snapshot=?",
+            (snapshot_id,),
+        ).fetchone() is None
+    events = service.ledger.events(applied["operation_id"])
+    assert [event.kind.value for event in events] == ["started", "succeeded"]
+
+
+def test_docker_reconcile_is_reviewed_ledger_only_and_scoped_to_daemon_and_name(service):
+    from bbackup.operations import ReconciliationOutcome
+
+    scope = service._docker_scope("local", "daemon-id", "web-recovered")
+    plan = OperationPlan.create(scope, "docker-restore", ["docker", "create", "web-recovered"])
+    lease = service.ledger.begin(plan)
+    lease.close()  # Simulate a dispatched operation whose outcome was not recorded.
+    daemon_checks = []
+
+    class ReadOnlyDockerRuntime:
+        def daemon_identity(self, connection):
+            daemon_checks.append(connection)
+            return "daemon-id"
+
+    service.docker_runtime = ReadOnlyDockerRuntime()
+    with pytest.raises(ServiceError, match="explicit review"):
+        service.docker_reconcile(
+            "local", "web-recovered", plan.operation_id, ReconciliationOutcome.SUCCEEDED, False
+        )
+
+    result = service.docker_reconcile(
+        "local", "web-recovered", plan.operation_id, ReconciliationOutcome.SUCCEEDED, True
+    )
+
+    assert daemon_checks == ["local"]
+    assert result["replayed"] is False
+    assert [event.kind.value for event in service.ledger.events(plan.operation_id)] == [
+        "started", "uncertain", "reconciled_succeeded",
+    ]

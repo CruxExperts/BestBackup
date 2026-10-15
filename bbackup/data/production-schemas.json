@@ -1,4 +1,30 @@
 {
+  "config save": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "document_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "revision": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "document_file",
+      "revision"
+    ],
+    "type": "object"
+  },
+  "config show": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
   "databases reconcile": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -40,6 +66,10 @@
         "minLength": 1,
         "type": "string"
       },
+      "isolated_server_confirmed": {
+        "default": false,
+        "type": "boolean"
+      },
       "repository": {
         "minLength": 1,
         "type": "string"
@@ -67,6 +97,100 @@
       "source",
       "connection",
       "target_database"
+    ],
+    "type": "object"
+  },
+  "docker reconcile": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connection": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "container": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "docker_reviewed": {
+        "default": false,
+        "type": "boolean"
+      },
+      "operation_id": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "outcome": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "connection",
+      "container",
+      "operation_id",
+      "outcome"
+    ],
+    "type": "object"
+  },
+  "docker recover": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connection": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "reviewed": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "connection"
+    ],
+    "type": "object"
+  },
+  "docker restore": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connection": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "container": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "snapshot": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "source": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "target": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "trusted_archive": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "repository",
+      "snapshot",
+      "source",
+      "connection",
+      "target",
+      "container"
     ],
     "type": "object"
   },
@@ -361,6 +485,43 @@
     ],
     "type": "object"
   },
+  "retention apply": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "approved": {
+        "default": false,
+        "type": "boolean"
+      },
+      "job": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "plan_token": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "job",
+      "plan_token"
+    ],
+    "type": "object"
+  },
+  "retention plan": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "job": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "job"
+    ],
+    "type": "object"
+  },
   "runs list": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -439,6 +600,25 @@
     "required": [
       "name",
       "executable"
+    ],
+    "type": "object"
+  },
+  "setup": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "bindings_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "configuration_file": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "configuration_file",
+      "bindings_file"
     ],
     "type": "object"
   },

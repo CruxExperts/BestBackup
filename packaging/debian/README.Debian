@@ -1,0 +1,68 @@
+bbackup Debian package
+=======================
+
+This package installs one self-contained, versioned tree at @VERSION_ROOT@:
+Python modules, the locked runtime dependency set, and the verified restic binary.
+The stable entry points are /usr/bin/bbackup and /usr/bin/bbman. They invoke
+system Python @PYTHON_VERSION@ in isolated mode; they do not install Python
+packages into the system interpreter and do not access a package index at runtime.
+
+Configuration, private bindings, credentials, repositories, and backup state are
+not package payload. Package removal and upgrades do not remove or roll back that
+data. No service is enabled or started by package hooks.
+
+The package also installs disabled `bbackup@.service` and `bbackup@.timer`
+templates under `/usr/lib/systemd/system`; each timer instance defaults to
+`daily` and does nothing until explicitly enabled. The service runs as root
+under the system manager's default configuration. The templates use
+`/etc/bbackup/config.json` and `/etc/bbackup/bindings.json`. Installation
+creates neither file, enrolls no configuration or credentials, and supplies no
+default secrets. The package does not enable or start a timer.
+Before activation, provide reviewed
+configuration and private bindings, enroll them with the production `setup`
+command, and verify them with `doctor` and `jobs list`. For non-daily or
+per-job schedules, use the production `service render` command to create
+concrete job-specific units; the generic timer is daily only.
+
+Each command holds a shared flock on /run/lock/bbackup-package.lock for its
+entire process lifetime. Upgrade and removal hooks take a nonblocking exclusive
+lock and refuse while a command is active. They leave a root-owned marker at
+/var/lib/bbackup-package/upgrade-pending before changing package files. Launchers
+refuse to run while that marker exists. Successful configure verifies every
+versioned runtime file, installed systemd templates, tmpfiles rule, and launchers
+against the installed checksum manifest before clearing the marker.
+
+If dpkg aborts an upgrade or removal after restoring the previous package, its
+installed abort hook verifies the same payload manifest and executables. A real
+transition marker requires the exclusive lock before validation and removal.
+If refusal happened before a marker was created, the hook instead uses a shared
+lock, confirms that no marker appeared, and validates without deleting anything.
+This allows already-running clients without admitting a transition writer.
+Older installed builds lacking that marker-free abort path can be left
+half-configured after an active-client refusal. Stop clients and install the
+corrected matching package before relying on the corrected abort behavior.
+
+Do not remove a transition marker manually. Inspect dpkg status and logs; run
+`sudo dpkg --configure -a` only if dpkg reports an unconfigured package and the
+installed hook can validate its payload. Otherwise reinstall the preserved
+matching `.deb` after stopping clients, then inspect `sudo dpkg --audit`.
+No backup or restore operation is replayed.
+
+If a transition is refused, stop all bbackup and bbman clients and retry the
+package operation. For a failed or interrupted transaction, inspect dpkg's
+status and logs, then use the recovery steps above. Package repair does not
+replay backup operations. If repair cannot verify the installed files, keep the
+package closed and investigate before retrying.
+
+To roll back, install the preserved older .deb using dpkg or apt after stopping
+clients. Package rollback changes only program files; it never rolls user data
+backward. Keep configuration, credentials, repositories, and state backed up
+according to their own retention policy.
+
+The reboot lock file is recreated by systemd-tmpfiles from
+/usr/lib/tmpfiles.d/bbackup.conf. If it is unexpectedly missing, the launchers
+fail closed; run `sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/bbackup.conf`
+or repair the package. Third-party license texts supplied in dependency wheels
+are retained with their installed distribution metadata and copied, when present,
+to /usr/share/doc/bbackup/third-party-licenses/. See `copyright` for project and
+third-party attribution boundaries.

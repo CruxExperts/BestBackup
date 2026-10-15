@@ -13,6 +13,25 @@ All operation commands emit one schema-version-2 JSON result. Use `--schema` for
 Inspect configured repository bindings and engine availability.
 
 
+## `setup`
+
+Validate and create new portable configuration and private host-binding files without enabling services.
+
+- `--configuration-file`: path.
+- `--bindings-file`: path.
+
+## `config show`
+
+Read portable configuration and its revision without exposing private bindings.
+
+
+## `config save`
+
+Validate and replace the portable configuration only at its reviewed revision, preserving a private backup.
+
+- `--document-file`: path.
+- `--revision`: string.
+
 ## `jobs list`
 
 List configured capture jobs.
@@ -56,6 +75,20 @@ Copy a successful snapshot into an independent repository.
 - `--source`: string.
 - `--destination`: string.
 - `--snapshot`: string.
+
+## `retention plan`
+
+Review a read-only local retention plan bound to current snapshot and replica evidence.
+
+- `--job`: string.
+
+## `retention apply`
+
+Apply only a reviewed local retention plan after explicit approval; never prunes repository data.
+
+- `--job`: string.
+- `--plan-token`: string.
+- `--approved`: boolean.
 
 ## `restore`
 
@@ -152,7 +185,7 @@ Record an administrator-reviewed outcome for an uncertain operation without repl
 
 ## `databases restore`
 
-Restore a trusted PostgreSQL snapshot export into a new database and validate connectivity.
+Restore a trusted native snapshot export; MySQL/MariaDB require an explicitly confirmed empty dedicated server and the original database name.
 
 - `--repository`: string.
 - `--snapshot`: string.
@@ -160,6 +193,7 @@ Restore a trusted PostgreSQL snapshot export into a new database and validate co
 - `--connection`: string.
 - `--target-database`: string.
 - `--trusted-archive`: boolean.
+- `--isolated-server-confirmed`: boolean.
 
 ## `databases reconcile`
 
@@ -179,3 +213,32 @@ Inspect a Backblaze B2 bucket using its vendor SDK, bounded retries, and environ
 - `--prefix`: optional-string.
 - `--key-id-env`: optional-string.
 - `--key-env`: optional-string.
+
+## `docker restore`
+
+Restore a trusted Docker snapshot into a new container and target directory using an already-local image.
+
+- `--repository`: string.
+- `--snapshot`: string.
+- `--source`: string.
+- `--connection`: string.
+- `--target`: path.
+- `--container`: string.
+- `--trusted-archive`: boolean.
+
+## `docker recover`
+
+Review durable Docker stop intentions and restart only their exact originally-running containers.
+
+- `--connection`: string.
+- `--reviewed`: boolean.
+
+## `docker reconcile`
+
+Record a reviewed outcome for an uncertain Docker create or recovery operation without replaying it.
+
+- `--connection`: string.
+- `--container`: string.
+- `--operation-id`: string.
+- `--outcome`: string.
+- `--docker-reviewed`: boolean.

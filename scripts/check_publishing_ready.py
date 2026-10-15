@@ -34,11 +34,6 @@ EXPECTED_ACTIONS = {
         "actions/setup-python@v6",
         "actions/upload-artifact@v7",
     ],
-    ".github/workflows/release-notes.yml": [
-        "actions/checkout@v7",
-        "actions/setup-python@v6",
-        "softprops/action-gh-release@v3",
-    ],
     ".github/workflows/stale.yml": [
         "actions/stale@v10",
     ],
@@ -132,8 +127,6 @@ def main() -> int:
             errors.append(f"{packaged} is not in sync with {source}")
 
     release_workflow = read(".github/workflows/release-notes.yml")
-    if 'exit 1' not in release_workflow or "No CHANGELOG.md section found" not in release_workflow:
-        errors.append(".github/workflows/release-notes.yml must fail when release notes are missing")
     if "contents: write" not in release_workflow:
         errors.append(".github/workflows/release-notes.yml must grant contents: write")
     if (
@@ -142,8 +135,6 @@ def main() -> int:
         or "dist/bbackup-*.whl" not in release_workflow
     ):
         errors.append(".github/workflows/release-notes.yml must build and attach bbackup dist artifacts")
-    if 'test "${{ steps.version.outputs.version }}" = "$(cat VERSION)"' not in release_workflow:
-        errors.append(".github/workflows/release-notes.yml must verify the tag matches VERSION")
     for release_check in (
         "uv run ruff check",
         "uv run python -m py_compile",

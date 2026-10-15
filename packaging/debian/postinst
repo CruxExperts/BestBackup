@@ -1,0 +1,126 @@
+#!/bin/sh
+set -eu
+
+LOCK_PATH='@LOCK_PATH@'
+PENDING_PATH='@PENDING_PATH@'
+VERSION_ROOT='@VERSION_ROOT@'
+PYTHON='@PYTHON@'
+BINARY_DIR='@BINARY_DIR@'
+TMPFILES_FILE='@TMPFILES_FILE@'
+case "${1-}" in
+    configure|abort-upgrade|abort-remove|abort-deconfigure)
+        action=$1
+        ;;
+    *) printf 'bbackup postinst: unsupported dpkg action: %s\n' "${1-<missing>}" >&2; exit 1 ;;
+esac
+
+verify_payload() {
+    manifest='@PAYLOAD_MANIFEST@'
+    if [ ! -s "$manifest" ] || [ -L "$manifest" ]; then
+        printf 'bbackup postinst: payload checksum manifest is missing, empty, or unsafe: %s\n' "$manifest" >&2
+        exit 1
+    fi
+    while IFS= read -r entry; do
+        relative_path=${entry#*  }
+        if [ "$relative_path" = "$entry" ] || [ -z "$relative_path" ] \
+            || [ -L "/$relative_path" ] || [ ! -f "/$relative_path" ]; then
+            printf 'bbackup postinst: package payload is missing or unsafe: %s\n' "$relative_path" >&2
+            exit 1
+        fi
+    done < "$manifest"
+    if ! (cd / && sha256sum --check --strict "$manifest"); then
+        printf '%s\n' 'bbackup postinst: package payload checksum verification failed.' >&2
+        exit 1
+    fi
+}
+
+require_file() {
+    path=$1
+    if [ ! -f "$path" ] || [ -L "$path" ]; then
+        printf 'bbackup postinst: required package file is missing or unsafe: %s\n' "$path" >&2
+        exit 1
+    fi
+}
+
+verify_restored_payload() {
+    verify_payload
+    if [ ! -x "$VERSION_ROOT/bin/restic" ] || [ ! -x "$BINARY_DIR/bbackup" ] \
+        || [ ! -x "$BINARY_DIR/bbman" ]; then
+        printf '%s\n' 'bbackup postinst: restored package executables are not executable.' >&2
+        exit 1
+    fi
+}
+
+if [ "$action" = abort-upgrade ] || [ "$action" = abort-remove ]; then
+    require_file "$LOCK_PATH"
+    if [ "$(stat -c '%u:%g:%a' "$LOCK_PATH")" != '@ROOT_UID@:@ROOT_GID@:644' ]; then
+        printf '%s\n' 'bbackup postinst: package lock ownership or permissions are unsafe.' >&2
+        exit 1
+    fi
+    exec 9<>"$LOCK_PATH"
+
+    if [ ! -e "$PENDING_PATH" ] && [ ! -L "$PENDING_PATH" ]; then
+        # prerm can refuse before creating the marker (for example, an active
+        # client held the shared lock). A shared lock distinguishes that from
+        # an active package transition while allowing that client to continue.
+        if ! flock --shared --nonblock 9; then
+            printf '%s\n' 'bbackup postinst: cannot recover while a package transition is active.' >&2
+            exit 75
+        fi
+        if [ -e "$PENDING_PATH" ] || [ -L "$PENDING_PATH" ]; then
+            printf '%s\n' 'bbackup postinst: package transition marker changed during abort recovery.' >&2
+            exit 1
+        fi
+        verify_restored_payload
+        exit 0
+    fi
+
+    require_file "$PENDING_PATH"
+    if [ "$(stat -c '%u:%g:%a' "$PENDING_PATH")" != '@ROOT_UID@:@ROOT_GID@:600' ]; then
+        printf '%s\n' 'bbackup postinst: upgrade marker ownership or permissions are unsafe.' >&2
+        exit 1
+    fi
+    if ! flock --exclusive --nonblock 9; then
+        printf '%s\n' 'bbackup postinst: cannot recover while bbackup or bbman is active.' >&2
+        exit 75
+    fi
+    require_file "$PENDING_PATH"
+    if [ "$(stat -c '%u:%g:%a' "$PENDING_PATH")" != '@ROOT_UID@:@ROOT_GID@:600' ]; then
+        printf '%s\n' 'bbackup postinst: upgrade marker ownership or permissions are unsafe.' >&2
+        exit 1
+    fi
+    verify_restored_payload
+    rm -- "$PENDING_PATH"
+    exit 0
+fi
+
+if [ "$action" = abort-deconfigure ]; then
+    # Deconfiguration is not an aborted package replacement; retain the fail-closed marker.
+    exit 0
+fi
+
+
+require_file "$LOCK_PATH"
+if [ "$(stat -c '%u:%g:%a' "$LOCK_PATH")" != '@ROOT_UID@:@ROOT_GID@:644' ]; then
+    printf '%s\n' 'bbackup postinst: package lock ownership or permissions are unsafe.' >&2
+    exit 1
+fi
+require_file "$PENDING_PATH"
+if [ "$(stat -c '%u:%g:%a' "$PENDING_PATH")" != '@ROOT_UID@:@ROOT_GID@:600' ]; then
+    printf '%s\n' 'bbackup postinst: upgrade marker ownership or permissions are unsafe.' >&2
+    exit 1
+fi
+require_file "$VERSION_ROOT/site-packages/bbackup/cli.py"
+require_file "$VERSION_ROOT/site-packages/bbackup/bbman_entry.py"
+require_file "$VERSION_ROOT/bin/restic"
+require_file "$BINARY_DIR/bbackup"
+require_file "$BINARY_DIR/bbman"
+require_file "$TMPFILES_FILE"
+if [ ! -x "$PYTHON" ] || [ ! -x "$VERSION_ROOT/bin/restic" ] \
+    || [ ! -x "$BINARY_DIR/bbackup" ] || [ ! -x "$BINARY_DIR/bbman" ]; then
+    printf '%s\n' 'bbackup postinst: a required package executable is not executable.' >&2
+    exit 1
+fi
+
+verify_payload
+rm -- "$PENDING_PATH"

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-from pathlib import Path
 import shlex
+import textwrap
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
 from bbackup.database_restore import (
     DatabaseRestoreError,
     DatabaseRestoreUncertainError,
+    extract_mysql_transport_options,
+    restore_mysql,
     restore_postgresql,
+    validate_mysql_database_name,
 )
 from bbackup.models import DatabaseBinding
 
@@ -337,3 +341,433 @@ def test_cancel_during_restore_is_uncertain_and_target_is_retained(
     assert tools["restore_started"].exists()
     assert tools["created_marker"].exists()
     assert "DROP DATABASE" not in tools["calls"].read_text()
+
+
+def _mysql_toolchain(
+    tmp_path: Path,
+    *,
+    kind: str = "mysql",
+    schemas: tuple[str, ...] = (
+        "information_schema",
+        "mysql",
+        "performance_schema",
+        "sys",
+    ),
+    fail_import: bool = False,
+    slow_import: bool = False,
+    fail_verification: bool = False,
+    identity_change_at: int | None = None,
+    options_text: str | None = None,
+    rotate_options_on_create: bool = False,
+    expected_database: str = "source_db",
+):
+    clients = tmp_path / "mysql-clients"
+    clients.mkdir()
+    options = _private_file(
+        tmp_path / "provisioner.cnf",
+        options_text
+        or "[client]\nhost=db.example\nport=3306\nuser=provisioner\npassword=admin-secret\n",
+    )
+    dump = _private_file(
+        tmp_path / "native.sql",
+        b"CREATE DEFINER=`owner`@`%` VIEW v AS SELECT 1;\n"
+        b"CREATE TRIGGER tr BEFORE INSERT ON t FOR EACH ROW SET @x = 1;\n"
+        b"CREATE PROCEDURE p() SELECT 1;\n",
+    )
+    paths = {
+        name: tmp_path / name
+        for name in (
+            "mysql-calls.log",
+            "mysql-environment.log",
+            "mysql-target-created",
+            "mysql-import-started",
+            "mysql-imported-dump",
+            "mysql-import-database",
+            "mysql-identity-count",
+            "mysql-verification-count",
+        )
+    }
+    script = textwrap.dedent(
+        f"""\
+        #!/usr/bin/env python3
+        import os
+        from pathlib import Path
+        import sys
+        import time
+
+        PATHS = { {name: str(path) for name, path in paths.items()}!r }
+        KIND = {kind!r}
+        SCHEMAS = {schemas!r}
+        FAIL_IMPORT = {fail_import!r}
+        SLOW_IMPORT = {slow_import!r}
+        FAIL_VERIFICATION = {fail_verification!r}
+        IDENTITY_CHANGE_AT = {identity_change_at!r}
+        OPTIONS_PATH = {str(options)!r}
+        ROTATE_OPTIONS_ON_CREATE = {rotate_options_on_create!r}
+        EXPECTED_DATABASE = {expected_database!r}
+
+        def marker(name):
+            return Path(PATHS[name])
+
+        def record(name, text):
+            with marker(name).open("a", encoding="utf-8") as output:
+                output.write(text + "\\n")
+
+        args = sys.argv[1:]
+        options_arg = next(arg for arg in args if arg.startswith("--defaults-file="))
+        options_file = Path(options_arg.split("=", 1)[1])
+        query_arg = next((arg for arg in args if arg.startswith("--execute=")), None)
+        query = query_arg.split("=", 1)[1] if query_arg is not None else None
+        settings = dict()
+        for line in options_file.read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.startswith("["):
+                key, value = line.split("=", 1)
+                settings[key.strip()] = value.strip().strip("'").strip('"')
+        endpoint = settings.get("host", "unknown")
+        record(
+            "mysql-calls.log",
+            "admin endpoint=" + endpoint + " defaults=" + str(options_file)
+            + " args=" + repr(args),
+        )
+        record(
+            "mysql-environment.log",
+            "MYSQL_PWD=" + os.environ.get("MYSQL_PWD", "<missing>")
+            + " PGPASSWORD=" + os.environ.get("PGPASSWORD", "<missing>"),
+        )
+
+        if query is None:
+            database_arg = next(
+                (arg for arg in args if arg.startswith("--database=")), ""
+            )
+            database = database_arg.split("=", 1)[1] if database_arg else ""
+            if database != EXPECTED_DATABASE:
+                print("unexpected import database", file=sys.stderr)
+                raise SystemExit(44)
+            marker("mysql-import-database").write_text(database, encoding="utf-8")
+            marker("mysql-import-started").touch()
+            with marker("mysql-imported-dump").open("wb") as output:
+                output.write(sys.stdin.buffer.read())
+            if SLOW_IMPORT:
+                time.sleep(30)
+            if FAIL_IMPORT:
+                print("private-error-token", file=sys.stderr)
+                raise SystemExit(7)
+            raise SystemExit(0)
+
+        if "@@version" in query:
+            count_path = marker("mysql-identity-count")
+            count = int(count_path.read_text() if count_path.exists() else "0") + 1
+            count_path.write_text(str(count), encoding="ascii")
+            server_id = (
+                "43"
+                if IDENTITY_CHANGE_AT is not None and count >= IDENTITY_CHANGE_AT
+                else "42"
+            )
+            version = (
+                "8.0.36\\tMySQL Community Server - GPL"
+                if KIND == "mysql"
+                else "10.11.7-MariaDB\\tMariaDB Server"
+            )
+            identity = version.split("\\t") + [
+                server_id,
+                "db-host",
+                "0" if KIND == "mariadb" else "3306",
+                "/var/lib/mysql",
+            ]
+            if "DEFAULT_CHARACTER_SET_NAME" in query:
+                verify_path = marker("mysql-verification-count")
+                verify_count = (
+                    int(verify_path.read_text() if verify_path.exists() else "0") + 1
+                )
+                verify_path.write_text(str(verify_count), encoding="ascii")
+                character_set = (
+                    "latin1"
+                    if FAIL_VERIFICATION and verify_count >= 2
+                    else "utf8mb4"
+                )
+                print(
+                    "\\t".join(
+                        identity + [character_set, "utf8mb4_general_ci"]
+                    )
+                )
+            else:
+                print("\\t".join(identity))
+        elif query == (
+            "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME"
+        ):
+            for schema in SCHEMAS:
+                print(schema)
+        elif "information_schema.COLLATIONS" in query:
+            print("1")
+        elif query.startswith("CREATE DATABASE "):
+            marker("mysql-target-created").touch()
+            if ROTATE_OPTIONS_ON_CREATE:
+                Path(OPTIONS_PATH).write_text(
+                    "[client]\\nhost=attacker.example\\nport=3306\\n"
+                    "user=provisioner\\npassword=rotated-secret\\n",
+                    encoding="utf-8",
+                )
+        else:
+            print("unexpected administrator query", file=sys.stderr)
+            raise SystemExit(43)
+        """
+    )
+    for name in ("mysql", "mariadb"):
+        client = clients / name
+        client.write_text(script, encoding="utf-8")
+        client.chmod(0o700)
+    return {
+        "binding": DatabaseBinding(kind, options_file=options),
+        "calls": paths["mysql-calls.log"],
+        "environment": paths["mysql-environment.log"],
+        "target_created": paths["mysql-target-created"],
+        "import_started": paths["mysql-import-started"],
+        "imported_dump": paths["mysql-imported-dump"],
+        "import_database": paths["mysql-import-database"],
+        "options": options,
+        "dump": dump,
+        "clients": clients,
+    }
+
+
+def _run_mysql_restore(
+    tools,
+    monkeypatch,
+    *,
+    target="source_db",
+    source="source_db",
+    export_format=None,
+    isolated_server_confirmed=True,
+    cancel=None,
+    timeout=20,
+    runner=None,
+):
+    monkeypatch.setenv("PATH", f"{tools['clients']}:/usr/bin:/bin")
+    monkeypatch.setenv("PGPASSWORD", "inherited-pg-secret")
+    monkeypatch.setenv("MYSQL_PWD", "inherited-mysql-secret")
+    kind = tools["binding"].kind
+    return restore_mysql(
+        tools["dump"],
+        tools["binding"],
+        target,
+        source_database=source,
+        export_format=export_format or f"{kind}-single-database-sql-v1",
+        character_set="utf8mb4",
+        collation="utf8mb4_general_ci",
+        isolated_server_confirmed=isolated_server_confirmed,
+        cancel=cancel,
+        timeout=timeout,
+        runner=runner,
+    )
+
+
+@pytest.mark.parametrize("kind", ["mysql", "mariadb"])
+def test_mysql_family_restore_imports_full_dump_with_captured_schema_metadata(
+    tmp_path, monkeypatch, kind
+):
+    tools = _mysql_toolchain(tmp_path, kind=kind)
+    original_dump = tools["dump"].read_bytes()
+
+    result = _run_mysql_restore(tools, monkeypatch)
+
+    calls = tools["calls"].read_text()
+    assert result == "source_db"
+    assert tools["target_created"].exists()
+    assert tools["import_started"].exists()
+    assert tools["imported_dump"].read_bytes() == original_dump
+    assert tools["import_database"].read_text() == "source_db"
+    assert "CHARACTER SET `utf8mb4` COLLATE `utf8mb4_general_ci`" in calls
+    assert "SELECT 1" not in calls
+    environment = tools["environment"].read_text()
+    assert "MYSQL_PWD=<missing>" in environment
+    assert "PGPASSWORD=<missing>" in environment
+    assert "inherited-mysql-secret" not in environment
+    assert "inherited-pg-secret" not in environment
+
+
+def test_mysql_restore_pins_provisioning_options_for_every_admin_command(
+    tmp_path, monkeypatch
+):
+    tools = _mysql_toolchain(tmp_path, rotate_options_on_create=True)
+
+    assert _run_mysql_restore(tools, monkeypatch) == "source_db"
+
+    calls = tools["calls"].read_text().splitlines()
+    assert "host=attacker.example" in tools["options"].read_text()
+    assert calls
+    assert all("endpoint=db.example" in line for line in calls)
+    assert all(str(tools["options"]) not in line for line in calls)
+    pinned_files = {
+        line.split(" defaults=", 1)[1].split(" ", 1)[0]
+        for line in calls
+    }
+    assert len(pinned_files) == 1
+    assert all("attacker.example" not in line for line in calls)
+
+
+@pytest.mark.parametrize("name", ["db", "restore-db.v2", "a" * 64])
+def test_validate_mysql_database_name_returns_valid_name(name):
+    assert validate_mysql_database_name(name) == name
+
+
+@pytest.mark.parametrize("name", ["", "_db", "-db", "a" * 65, "db name", "db`"])
+def test_validate_mysql_database_name_rejects_invalid_name(name):
+    with pytest.raises(DatabaseRestoreError):
+        validate_mysql_database_name(name)
+
+
+def test_extract_mysql_transport_options_keeps_only_validated_connection_settings(
+    tmp_path
+):
+    tools = _mysql_toolchain(
+        tmp_path,
+        options_text=(
+            "[client]\nhost=db.example\nport=3306\nuser=provisioner\n"
+            "password=admin-secret\n"
+        ),
+    )
+
+    assert extract_mysql_transport_options(tools["binding"]) == {
+        "host": "db.example",
+        "port": "3306",
+    }
+
+
+def test_mysql_restore_requires_explicit_isolated_server_approval(
+    tmp_path, monkeypatch
+):
+    tools = _mysql_toolchain(tmp_path)
+
+    with pytest.raises(DatabaseRestoreError, match="explicitly confirmed"):
+        _run_mysql_restore(tools, monkeypatch, isolated_server_confirmed=False)
+
+    assert not tools["calls"].exists()
+    assert not tools["target_created"].exists()
+
+
+@pytest.mark.parametrize("schemas", [("source_db",), ("other_db",)])
+def test_mysql_restore_refuses_any_existing_user_database_before_mutation(
+    tmp_path, monkeypatch, schemas
+):
+    tools = _mysql_toolchain(tmp_path, schemas=schemas)
+
+    with pytest.raises(DatabaseRestoreError, match="contains a user database"):
+        _run_mysql_restore(tools, monkeypatch)
+
+    assert not tools["target_created"].exists()
+    assert not tools["import_started"].exists()
+
+
+def test_mysql_restore_requires_exact_source_database_name_before_dispatch(
+    tmp_path, monkeypatch
+):
+    tools = _mysql_toolchain(tmp_path)
+
+    with pytest.raises(DatabaseRestoreError, match="exact source database name"):
+        _run_mysql_restore(tools, monkeypatch, target="renamed_db")
+
+    assert not tools["calls"].exists()
+
+
+def test_mysql_restore_rejects_legacy_generic_sql_manifest_before_dispatch(
+    tmp_path, monkeypatch
+):
+    tools = _mysql_toolchain(tmp_path)
+
+    with pytest.raises(DatabaseRestoreError, match="explicit versioned"):
+        _run_mysql_restore(tools, monkeypatch, export_format="sql")
+
+    assert not tools["calls"].exists()
+
+
+def test_mysql_restore_refuses_server_identity_change_before_creation(
+    tmp_path, monkeypatch
+):
+    tools = _mysql_toolchain(tmp_path, identity_change_at=2)
+
+    with pytest.raises(DatabaseRestoreError, match="identity changed"):
+        _run_mysql_restore(tools, monkeypatch)
+
+    assert not tools["target_created"].exists()
+    assert not tools["import_started"].exists()
+
+
+def test_mysql_restore_marks_post_creation_identity_change_uncertain(
+    tmp_path, monkeypatch
+):
+    tools = _mysql_toolchain(tmp_path, identity_change_at=3)
+
+    with pytest.raises(DatabaseRestoreUncertainError):
+        _run_mysql_restore(tools, monkeypatch)
+
+    assert tools["target_created"].exists()
+    assert not tools["import_started"].exists()
+
+
+def test_mysql_restore_sanitizes_failed_import_and_retains_partial_target(
+    tmp_path, monkeypatch
+):
+    tools = _mysql_toolchain(tmp_path, fail_import=True)
+
+    with pytest.raises(
+        DatabaseRestoreUncertainError, match="archive import"
+    ) as caught:
+        _run_mysql_restore(tools, monkeypatch)
+
+    assert tools["target_created"].exists()
+    assert tools["import_started"].exists()
+    assert tools["imported_dump"].read_bytes() == tools["dump"].read_bytes()
+    assert "private-error-token" not in str(caught.value)
+
+
+def test_mysql_restore_cancellation_is_uncertain_and_keeps_target(
+    tmp_path, monkeypatch
+):
+    tools = _mysql_toolchain(tmp_path, slow_import=True)
+    cancel = threading.Event()
+
+    def cancel_after_import_starts():
+        deadline = time.monotonic() + 5
+        while not tools["import_started"].exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        cancel.set()
+
+    canceller = threading.Thread(target=cancel_after_import_starts)
+    canceller.start()
+    try:
+        with pytest.raises(DatabaseRestoreUncertainError, match="archive import"):
+            _run_mysql_restore(tools, monkeypatch, cancel=cancel, timeout=15)
+    finally:
+        canceller.join(timeout=5)
+
+    assert tools["target_created"].exists()
+    assert tools["import_started"].exists()
+
+
+def test_mysql_restore_verification_failure_is_uncertain_and_retains_target(
+    tmp_path, monkeypatch
+):
+    tools = _mysql_toolchain(tmp_path, fail_verification=True)
+
+    with pytest.raises(DatabaseRestoreUncertainError):
+        _run_mysql_restore(tools, monkeypatch)
+
+    assert tools["target_created"].exists()
+    assert tools["import_started"].exists()
+
+
+def test_mysql_restore_rejects_unsafe_provisioning_option_before_dispatch(
+    tmp_path, monkeypatch
+):
+    tools = _mysql_toolchain(
+        tmp_path,
+        options_text=(
+            "[client]\nhost=db.example\nuser=provisioner\npassword=admin-secret\n"
+            "init-command=DROP DATABASE production\n"
+        ),
+    )
+
+    with pytest.raises(DatabaseRestoreError):
+        _run_mysql_restore(tools, monkeypatch)
+
+    assert not tools["calls"].exists()

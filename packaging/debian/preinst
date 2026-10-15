@@ -1,0 +1,44 @@
+#!/bin/sh
+set -eu
+
+LOCK_PATH='@LOCK_PATH@'
+PENDING_PATH='@PENDING_PATH@'
+STATE_DIR='@STATE_DIR@'
+
+case "${1-}" in
+    install|upgrade|abort-upgrade) ;;
+    *) printf 'bbackup preinst: unsupported dpkg action: %s\n' "${1-<missing>}" >&2; exit 1 ;;
+esac
+
+mkdir -p "$(dirname "$LOCK_PATH")"
+if [ -L "$LOCK_PATH" ]; then
+    printf '%s\n' 'bbackup preinst: package lock must not be a symlink.' >&2
+    exit 1
+fi
+if [ ! -e "$LOCK_PATH" ]; then
+    if [ "${1-}" != install ]; then
+        printf '%s\n' 'bbackup preinst: package lock is missing; restore it with systemd-tmpfiles and retry.' >&2
+        exit 1
+    fi
+    install --owner=@ROOT_UID@ --group=@ROOT_GID@ --mode=0644 /dev/null "$LOCK_PATH"
+fi
+if [ ! -f "$LOCK_PATH" ]; then
+    printf '%s\n' 'bbackup preinst: package lock is not a regular file.' >&2
+    exit 1
+fi
+if [ "$(stat -c '%u:%g:%a' "$LOCK_PATH")" != '@ROOT_UID@:@ROOT_GID@:644' ]; then
+    printf '%s\n' 'bbackup preinst: package lock ownership or permissions are unsafe.' >&2
+    exit 1
+fi
+
+install --directory --owner=@ROOT_UID@ --group=@ROOT_GID@ --mode=0755 "$STATE_DIR"
+exec 9<>"$LOCK_PATH"
+if ! flock --exclusive --nonblock 9; then
+    printf '%s\n' 'bbackup preinst: bbackup or bbman is active; stop clients and retry.' >&2
+    exit 75
+fi
+
+umask 077
+temporary_marker="$PENDING_PATH.tmp.$$"
+install --owner=@ROOT_UID@ --group=@ROOT_GID@ --mode=0600 /dev/null "$temporary_marker"
+mv -f -- "$temporary_marker" "$PENDING_PATH"

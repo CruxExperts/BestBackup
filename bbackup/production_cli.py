@@ -1,8 +1,7 @@
 """Version-two noninteractive CLI over the shared operations service."""
-from dataclasses import asdict
+from contextlib import nullcontext
 import json
 from pathlib import Path
-import shutil
 import signal
 import sqlite3
 import tarfile
@@ -12,14 +11,16 @@ import click
 from click.core import ParameterSource
 
 from .capture import CaptureError
-from .b2 import B2Error, inspect_b2
-from .cloud import CloudError, S3CloudAdapter
-from .recovery import RecoveryError, create_checked_kit, open_kit, verify_checkpoint, verify_reconstructed_repository
+from .b2 import B2Error
+from .cloud import CloudError
+from .recovery import RecoveryError
 from .cli_metadata import PRODUCTION_COMMANDS, production_schema
+from .configuration_workspace import ConfigurationWorkspace
 from .models import Configuration, ConfigurationError, HostBindings, strict_json
-from .operations import OperationError, ReconciliationOutcome, repository_key, UncertainOperationError
+from .operations import OperationError, UncertainOperationError
 from .service import BackupService, ServiceError
-from .scheduling import job_units
+from .production_operations import execute_operation
+from .progress import observe_progress
 
 
 def _emit(command, data=None, error=None):
@@ -60,78 +61,12 @@ def _service(ctx):
     return BackupService(Configuration.load(ctx.obj["config"]), HostBindings.load(ctx.obj["bindings"]))
 
 
-def dispatch(service, command, values, ctx, cancel):
-    if command == "doctor":
-        return {"restic_available": shutil.which("restic") is not None,
-                "jobs": len(service.config.jobs), "production_qualified": False}
-    if command == "jobs list":
-        return [asdict(job) for job in service.config.jobs]
-    if command == "jobs run":
-        return service.run_job(values["name"], cancel=cancel)
-    if command == "repositories list":
-        return [asdict(repo) for repo in service.config.repositories]
-    if command == "repositories init":
-        return service.initialize(values["name"], source=values.get("source"), cancel=cancel)
-    if command == "repositories check":
-        return service.check(values["name"], cancel=cancel)
-    if command == "snapshots list":
-        return service.snapshots(**values)
-    if command == "snapshots copy":
-        return service.copy(**values, cancel=cancel)
-    if command == "restore":
-        return service.restore(values["repository"], values["snapshot"], Path(values["target"]), cancel=cancel)
-    if command == "databases restore":
-        return service.restore_database(**values, cancel=cancel)
-    if command == "databases reconcile":
-        if values["database_reviewed"] is not True:
-            raise ConfigurationError("Database inspection must be explicitly acknowledged")
-        try:
-            outcome = ReconciliationOutcome(values["outcome"])
-        except ValueError:
-            raise ConfigurationError("Invalid reconciliation outcome") from None
-        service.ledger.reconcile(repository_key(service.database_identity(values["connection"], values["target_database"])), values["operation_id"], outcome)
-        return {"operation_id": values["operation_id"], "reviewed_outcome": outcome.value, "replayed": False}
-    if command == "runs reconcile":
-        if values["repository_reviewed"] is not True:
-            raise ConfigurationError("Repository inspection must be explicitly acknowledged")
-        try:
-            outcome = ReconciliationOutcome(values["outcome"])
-        except ValueError:
-            raise ConfigurationError("Invalid reconciliation outcome") from None
-        service.ledger.reconcile(repository_key(service._identity(values["repository"])), values["operation_id"], outcome)
-        return {"operation_id": values["operation_id"], "reviewed_outcome": outcome.value, "replayed": False}
-    if command in ("runs list", "runs stream"):
-        events = service.ledger.events(**values)
-        return [asdict(event) for event in events]
-    if command == "service render":
-        return job_units(service._job(values["name"]), executable=Path(values["executable"]),
-                         config=ctx.obj["config"].absolute(), bindings=ctx.obj["bindings"].absolute())
-    raise ServiceError("Unsupported command")
 
+def _workspace(ctx):
+    if ctx.obj.get("config") is None or ctx.obj.get("bindings") is None:
+        raise ConfigurationError("This command requires --config and --bindings")
+    return ConfigurationWorkspace(ctx.obj["config"], ctx.obj["bindings"])
 
-def _recovery_dispatch(ctx, command, values, cancel):
-    if command == "recovery b2-inspect":
-        return inspect_b2(**values, cancel=cancel)
-    if command == "recovery open":
-        return open_kit(Path(values["kit"]), Path(values["target"]), signer=values["signer"], cancel=cancel)
-    adapter = S3CloudAdapter(values["bucket"], endpoint_url=values["endpoint"],
-                             prefix=values.get("prefix", ""), region_name=values.get("region"))
-    if command == "recovery inspect":
-        return asdict(adapter.inspect_lifecycle())
-    if command == "recovery checkpoint":
-        return create_checked_kit(_service(ctx), adapter, values["repository"], values["snapshot"], Path(values["target"]),
-                                  signer=values["signer"], recipient=values["recipient"],
-                                  quiescent_window_confirmed=values["quiescent_window_confirmed"], cancel=cancel)
-    digest = verify_checkpoint(Path(values["manifest"]), Path(values["signature"]), values["signer"], cancel=cancel)
-    result = asdict(adapter.restore_checkpoint(values["manifest"], values["target"],
-                     expected_manifest_sha256=digest, expected_source_repository=values["repository"],
-                     expected_repository_id=values["repository_id"], expected_source_snapshot_id=values["snapshot"], cancel_event=cancel))
-    result["destination"] = str(result["destination"])
-    verify_reconstructed_repository(Path(values["target"]), Path(values["password_file"]),
-                                    values["repository_id"], values["snapshot"], cancel=cancel)
-    result["repository_verified"] = True
-    result["recovery_demonstrated"] = False
-    return result
 
 
 def _register(command, definition):
@@ -146,45 +81,30 @@ def _register(command, definition):
         try:
             supplied = kwargs.pop("input_json")
             schema = kwargs.pop("schema")
+            progress_json = kwargs.pop("progress_json")
             if schema:
                 _emit(command, production_schema(command))
                 return
             values = strict_json(supplied) if supplied is not None else {}
             if not isinstance(values, dict) or set(values) - set(definition["fields"]):
                 raise ConfigurationError("Unknown JSON fields or non-object input")
-            for name, kind in definition["fields"].items():
+            for name in definition["fields"]:
                 if name in values and ctx.get_parameter_source(name) == ParameterSource.COMMANDLINE:
                     raise ConfigurationError("Duplicate flag and JSON input")
-                value = values.get(name, kwargs[name])
-                if value is None:
-                    if kind == "optional-string":
-                        continue
-                    raise ConfigurationError("Missing required input")
-                if kind == "boolean":
-                    if type(value) is not bool:
-                        raise ConfigurationError("Expected boolean")
-                elif kind in ("limit", "offset"):
-                    if type(value) is not int or value < (1 if kind == "limit" else 0) or (kind == "limit" and value > 1000):
-                        raise ConfigurationError("Invalid pagination")
-                elif not isinstance(value, str) or not value or "\0" in value:
-                    raise ConfigurationError("Expected a nonempty string")
-                values[name] = value
+                if name not in values and kwargs[name] is not None:
+                    values[name] = kwargs[name]
             cancel = threading.Event()
             previous = {}
             if threading.current_thread() is threading.main_thread():
                 for signum in (signal.SIGINT, signal.SIGTERM):
                     previous[signum] = signal.signal(signum, lambda *_: cancel.set())
             try:
-                if command == "skills":
-                    name = values.get("name")
-                    if name is not None and name not in PRODUCTION_COMMANDS:
-                        raise ConfigurationError("Unknown command schema")
-                    data = {key: {"summary": item["summary"], "input_schema": production_schema(key)}
-                            for key, item in PRODUCTION_COMMANDS.items() if name is None or key == name}
-                elif command.startswith("recovery "):
-                    data = _recovery_dispatch(ctx, command, values, cancel)
-                else:
-                    data = dispatch(_service(ctx), command, values, ctx, cancel)
+                observer = (observe_progress(lambda data: click.echo(json.dumps(
+                    {"schema_version": 2, "type": "progress", "data": data}, sort_keys=True
+                ))) if progress_json else nullcontext())
+                with observer:
+                    data = execute_operation(command, values, config_path=ctx.obj.get("config"),
+                                             bindings_path=ctx.obj.get("bindings"), cancel=cancel)
             finally:
                 for signum, handler in previous.items():
                     signal.signal(signum, handler)
@@ -202,7 +122,9 @@ def _register(command, definition):
         except (ServiceError, OperationError, CaptureError, CloudError, B2Error, RecoveryError, tarfile.TarError, sqlite3.Error, OSError, ValueError, KeyError):
             _emit(command, error={"code": "operation_failed", "message": "Operation failed; inspect sanitized run state before retrying"})
             ctx.exit(3)
-    params = [click.Option(["--input-json"], type=str), click.Option(["--schema"], is_flag=True)]
+    params = [click.Option(["--input-json"], type=str), click.Option(["--schema"], is_flag=True),
+              click.Option(["--progress-json"], is_flag=True,
+                           help="Emit path-free numeric progress JSON lines before the final result.")]
     for name, kind in definition["fields"].items():
         params.append(click.Option(["--" + name.replace("_", "-")], is_flag=kind == "boolean",
                                    type=bool if kind == "boolean" else int if kind in ("limit", "offset") else str,
@@ -218,9 +140,16 @@ for _command, _definition in PRODUCTION_COMMANDS.items():
 @click.pass_context
 def tui(ctx):
     """Open the mouse and keyboard dashboard."""
-    from .dashboard import BackupDashboard
+    from .dashboard import BackupDashboard, BackupSetup
     try:
-        BackupDashboard(_service(ctx)).run()
+        workspace = _workspace(ctx)
+        if not workspace.config_path.exists() and not workspace.bindings_path.exists():
+            service = BackupSetup(workspace).run()
+            if service is None:
+                return
+        else:
+            service = _service(ctx)
+        BackupDashboard(service, workspace=workspace).run()
     except (ConfigurationError, ServiceError, OSError):
         _emit("tui", error={"code": "configuration_error", "message": "Dashboard configuration failed"})
         ctx.exit(2)

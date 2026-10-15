@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+LOCK_PATH='@LOCK_PATH@'
+PENDING_PATH='@PENDING_PATH@'
+VERSION_ROOT='@VERSION_ROOT@'
+PYTHON='@PYTHON@'
+RESTIC_BIN="$VERSION_ROOT/bin"
+
+if [ ! -f "$LOCK_PATH" ] || [ -L "$LOCK_PATH" ]; then
+    printf '%s\n' 'bbackup: package lock is unavailable; run systemd-tmpfiles or repair the package.' >&2
+    exit 75
+fi
+exec 9<"$LOCK_PATH"
+if ! flock --shared --nonblock 9; then
+    printf '%s\n' 'bbackup: package transition is in progress; retry after it completes.' >&2
+    exit 75
+fi
+if [ -e "$PENDING_PATH" ] || [ -L "$PENDING_PATH" ]; then
+    printf '%s\n' 'bbackup: package transition is incomplete; repair it with dpkg before retrying.' >&2
+    exit 75
+fi
+
+PATH="$RESTIC_BIN:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
+export PATH
+exec "$PYTHON" -I -S -c 'import sys; sys.path.insert(0, "@VERSION_ROOT@/site-packages"); sys.argv[0] = "bbackup"; from bbackup.cli import cli; cli()' "$@"

@@ -14,6 +14,7 @@ import os
 import re
 import selectors
 import signal
+import stat
 import sqlite3
 import subprocess
 import time
@@ -76,6 +77,7 @@ class OperationPlan:
     env: Mapping[str, str] | None = field(default=None, repr=False, compare=False)
     timeout_seconds: float | None = 3600.0
     destructive: bool = False
+    stdin_path: Path | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not _SAFE_TOKEN.fullmatch(self.operation_id):
@@ -100,6 +102,7 @@ class OperationPlan:
         env: Mapping[str, str] | None = None,
         timeout_seconds: float | None = 3600.0,
         destructive: bool = False,
+        stdin_path: str | os.PathLike[str] | None = None,
     ) -> OperationPlan:
         """Build a plan with a fresh ID and a hashed repository identity."""
 
@@ -112,6 +115,7 @@ class OperationPlan:
             env=dict(env) if env is not None else None,
             timeout_seconds=timeout_seconds,
             destructive=destructive,
+            stdin_path=Path(stdin_path) if stdin_path is not None else None,
         )
 
 
@@ -436,6 +440,17 @@ class OperationLedger:
             for row in rows
         )
 
+    def summary(self) -> tuple[dict[str, str | int | None], ...]:
+        """Aggregate durable outcomes without paging away older recovery facts."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT repository_id, label, status, COUNT(*) AS count,
+                          MAX(started_at) AS last_started_at,
+                          MAX(finished_at) AS last_finished_at
+                   FROM operations GROUP BY repository_id, label, status"""
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
 
 class OperationLease:
     """Active ledger record and repository lock for one operation."""
@@ -617,17 +632,43 @@ class OperationRunner:
             return OperationRun(plan.operation_id, plan.repository_id, OperationStatus.CANCELLED,
                                 None, started_at, _now(), time.monotonic() - started, b"", b"", 0, 0)
         popen_env = dict(plan.env) if plan.env is not None else None
-        process = subprocess.Popen(
-            plan.argv,
-            cwd=os.fspath(plan.cwd) if plan.cwd is not None else None,
-            env=popen_env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False,
-            bufsize=0,
-            start_new_session=True,
-        )
+        if plan.stdin_path is None:
+            process = subprocess.Popen(
+                plan.argv,
+                cwd=os.fspath(plan.cwd) if plan.cwd is not None else None,
+                env=popen_env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=False,
+                bufsize=0,
+                start_new_session=True,
+            )
+        else:
+            flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(plan.stdin_path, flags)
+            try:
+                info = os.fstat(descriptor)
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError("stdin_path must be a regular file")
+                with os.fdopen(descriptor, "rb") as input_stream:
+                    descriptor = -1
+                    process = subprocess.Popen(
+                        plan.argv,
+                        cwd=os.fspath(plan.cwd) if plan.cwd is not None else None,
+                        env=popen_env,
+                        stdin=input_stream,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        shell=False,
+                        bufsize=0,
+                        start_new_session=True,
+                    )
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
         assert process.stdout is not None and process.stderr is not None
         selector = selectors.DefaultSelector()
         emitters: dict[int, _LineEmitter] = {}

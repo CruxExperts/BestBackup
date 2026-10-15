@@ -10,7 +10,7 @@ Last Updated: 2026-03-04
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 
 CliName = Literal["bbackup", "bbman"]
@@ -1938,8 +1938,16 @@ def get_command(cli: CliName, name: str) -> Optional[CliCommand]:
 
 # Version-two operation definitions. Production CLI help and JSON schemas share
 # this registry; unsupported capabilities are deliberately absent.
-PRODUCTION_COMMANDS = {
+class ProductionCommand(TypedDict):
+    summary: str
+    fields: dict[str, str]
+
+
+PRODUCTION_COMMANDS: dict[str, ProductionCommand] = {
     "doctor": {"summary": "Inspect configured repository bindings and engine availability.", "fields": {}},
+    "setup": {"summary": "Validate and create new portable configuration and private host-binding files without enabling services.", "fields": {"configuration_file": "path", "bindings_file": "path"}},
+    "config show": {"summary": "Read portable configuration and its revision without exposing private bindings.", "fields": {}},
+    "config save": {"summary": "Validate and replace the portable configuration only at its reviewed revision, preserving a private backup.", "fields": {"document_file": "path", "revision": "string"}},
     "jobs list": {"summary": "List configured capture jobs.", "fields": {}},
     "jobs run": {"summary": "Capture locally and copy explicit successful snapshots.", "fields": {"name": "string"}},
     "repositories list": {"summary": "List declared repositories without host credentials.", "fields": {}},
@@ -1947,6 +1955,8 @@ PRODUCTION_COMMANDS = {
     "repositories check": {"summary": "Read and verify repository data.", "fields": {"name": "string"}},
     "snapshots list": {"summary": "List successful local snapshot receipts.", "fields": {"limit": "limit", "offset": "offset"}},
     "snapshots copy": {"summary": "Copy a successful snapshot into an independent repository.", "fields": {"source": "string", "destination": "string", "snapshot": "string"}},
+    "retention plan": {"summary": "Review a read-only local retention plan bound to current snapshot and replica evidence.", "fields": {"job": "string"}},
+    "retention apply": {"summary": "Apply only a reviewed local retention plan after explicit approval; never prunes repository data.", "fields": {"job": "string", "plan_token": "string", "approved": "boolean"}},
     "restore": {"summary": "Restore and verify files in a new isolated directory.", "fields": {"repository": "string", "snapshot": "string", "target": "path"}},
     "runs list": {"summary": "Read sanitized operation events.", "fields": {"limit": "limit", "offset": "offset"}},
     "service render": {"summary": "Render disabled systemd service and persistent timer units.", "fields": {"name": "string", "executable": "path"}},
@@ -1995,8 +2005,8 @@ PRODUCTION_COMMANDS["runs reconcile"] = {
 }
 
 PRODUCTION_COMMANDS["databases restore"] = {
-    "summary": "Restore a trusted PostgreSQL snapshot export into a new database and validate connectivity.",
-    "fields": {"repository": "string", "snapshot": "string", "source": "string", "connection": "string", "target_database": "string", "trusted_archive": "boolean"},
+    "summary": "Restore a trusted native snapshot export; MySQL/MariaDB require an explicitly confirmed empty dedicated server and the original database name.",
+    "fields": {"repository": "string", "snapshot": "string", "source": "string", "connection": "string", "target_database": "string", "trusted_archive": "boolean", "isolated_server_confirmed": "boolean"},
 }
 PRODUCTION_COMMANDS["databases reconcile"] = {
     "summary": "Record an administrator-reviewed database restore outcome without replaying it.",
@@ -2007,3 +2017,24 @@ PRODUCTION_COMMANDS["recovery b2-inspect"] = {
     "summary": "Inspect a Backblaze B2 bucket using its vendor SDK, bounded retries, and environment credentials.",
     "fields": {"bucket": "string", "prefix": "optional-string", "key_id_env": "optional-string", "key_env": "optional-string"},
 }
+PRODUCTION_COMMANDS.update({
+    "docker restore": {
+        "summary": "Restore a trusted Docker snapshot into a new container and target directory using an already-local image.",
+        "fields": {
+            "repository": "string", "snapshot": "string", "source": "string",
+            "connection": "string", "target": "path", "container": "string",
+            "trusted_archive": "boolean",
+        },
+    },
+    "docker recover": {
+        "summary": "Review durable Docker stop intentions and restart only their exact originally-running containers.",
+        "fields": {"connection": "string", "reviewed": "boolean"},
+    },
+    "docker reconcile": {
+        "summary": "Record a reviewed outcome for an uncertain Docker create or recovery operation without replaying it.",
+        "fields": {
+            "connection": "string", "container": "string", "operation_id": "string",
+            "outcome": "string", "docker_reviewed": "boolean",
+        },
+    },
+})

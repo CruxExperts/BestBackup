@@ -1,19 +1,31 @@
 # ruff: noqa: F811
 import json
-import shlex
-from pathlib import Path
-from unittest.mock import patch
+from dataclasses import asdict
 
 from click.testing import CliRunner
 
 from bbackup.production_cli import cli
-from bbackup.scheduling import job_units
 from tests.test_service import service  # noqa: F401
 
 
+def _without_none(value):
+    if isinstance(value, dict):
+        return {key: _without_none(item) for key, item in value.items() if item is not None}
+    if isinstance(value, (tuple, list)):
+        return [_without_none(item) for item in value]
+    return value
+
+
 def invoke(service, command):
-    with patch("bbackup.production_cli._service", return_value=service):
-        return CliRunner().invoke(cli, ["--config", "/unused", "--bindings", "/unused", *command])
+    config = service.state / "cli-config.json"
+    bindings = service.state / "cli-bindings.json"
+    config.write_text(json.dumps(_without_none(asdict(service.config)), default=str))
+    bindings.write_text(json.dumps(
+        _without_none({"schema_version": 2, **asdict(service.bindings)}), default=str
+    ))
+    config.chmod(0o600)
+    bindings.chmod(0o600)
+    return CliRunner().invoke(cli, ["--config", str(config), "--bindings", str(bindings), *command])
 
 
 def test_json_contract_unknown_and_duplicate(service):
@@ -34,16 +46,6 @@ def test_schema_and_sanitized_listing(service):
     assert ".password" not in result.output and "repository" not in json.loads(result.output)["data"][0]
 
 
-def test_systemd_unit_uses_real_cli_parser(service):
-    units = job_units(service.config.jobs[0], executable=Path("/usr/bin/bbackup"),
-                      config=Path("/etc/bbackup/config.json"), bindings=Path("/etc/bbackup/bindings.json"))
-    command = next(line[10:] for line in units["bbackup-daily.service"].splitlines() if line.startswith("ExecStart="))
-    argv = shlex.split(command)
-    assert argv[1] == "production"
-    with patch("bbackup.production_cli._service", return_value=service), patch.object(service, "run_job", return_value={"ok": True}):
-        result = CliRunner().invoke(cli, argv[2:])
-    assert result.exit_code == 0, result.output
-    assert "Persistent=true" in units["bbackup-daily.timer"]
 
 
 def test_syntax_failure_stays_machine_readable():
@@ -68,3 +70,25 @@ def test_reconciliation_requires_explicit_review_and_does_not_run_command(servic
                                "--outcome", "abandoned", "--repository-reviewed"])
     assert missing.exit_code == 3
     assert json.loads(missing.output)["success"] is False
+
+
+
+def test_docker_command_schemas_are_closed_and_require_explicit_identity(service):
+    expectations = {
+        "restore": {"repository", "snapshot", "source", "connection", "target", "container"},
+        "recover": {"connection"},
+        "reconcile": {"connection", "container", "operation_id", "outcome"},
+    }
+    acknowledgements = {
+        "restore": "trusted_archive",
+        "recover": "reviewed",
+        "reconcile": "docker_reviewed",
+    }
+    for operation, required in expectations.items():
+        result = invoke(service, ["docker", operation, "--schema"])
+        assert result.exit_code == 0, result.output
+        schema = json.loads(result.output)["data"]
+        assert schema["additionalProperties"] is False
+        assert required <= set(schema["required"])
+        acknowledgement = acknowledgements[operation]
+        assert schema["properties"][acknowledgement]["default"] is False

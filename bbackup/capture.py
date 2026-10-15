@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from collections.abc import Mapping
+from contextlib import ExitStack, contextmanager
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import stat
@@ -176,6 +177,53 @@ def _capture_mysql(source, binding, target, runner, deadline, cancel):
     assert binding.options_file is not None and source.database is not None
     options = f"--defaults-file={binding.options_file}"
     client = "mysql" if source.kind == "mysql" else "mariadb"
+    login_path_option = ["--no-login-paths"] if source.kind == "mysql" else []
+    env_values = {}
+    if source.kind == "mariadb":
+        # MariaDB clients may read ~/.mylogin.cnf; confine HOME to this private
+        # staging directory and explicitly disable the login-path file.
+        env_values["HOME"] = str(target.parent)
+        env_values["MYSQL_TEST_LOGIN_FILE"] = os.devnull
+    env = _native_environment(**env_values)
+    metadata_query = (
+        "SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME "
+        "FROM information_schema.SCHEMATA "
+        f"WHERE SCHEMA_NAME = '{source.database}'"
+    )
+    inspected = _run_native(
+        runner,
+        source,
+        [
+            client,
+            options,
+            *login_path_option,
+            "--batch",
+            "--skip-column-names",
+            "--raw",
+            f"--execute={metadata_query}",
+            f"--database={source.database}",
+        ],
+        env=env,
+        timeout=max(0.001, deadline - time.monotonic()),
+        cancel=cancel,
+    )
+    if inspected.stdout_bytes != len(inspected.stdout_tail):
+        raise CaptureError("MySQL and MariaDB database metadata is invalid")
+    try:
+        metadata = inspected.stdout_tail.decode("ascii").rstrip("\n").split("\t")
+        if (
+            len(metadata) != 2
+            or any(
+                not re.fullmatch(r"[A-Za-z0-9_]{1,64}", value)
+                for value in metadata
+            )
+        ):
+            raise ValueError()
+    except (UnicodeDecodeError, ValueError):
+        raise CaptureError(
+            "MySQL and MariaDB character set metadata could not be captured"
+        ) from None
+
     query = (
         "SELECT COALESCE(ENGINE, '') FROM information_schema.TABLES "
         f"WHERE TABLE_SCHEMA = '{source.database}' AND TABLE_TYPE = 'BASE TABLE' "
@@ -193,14 +241,6 @@ def _capture_mysql(source, binding, target, runner, deadline, cancel):
         if not engine or engine != "innodb":
             non_innodb = True
 
-    env_values = {}
-    if source.kind == "mariadb":
-        # MariaDB clients may read ~/.mylogin.cnf; confine HOME to this private
-        # staging directory and explicitly disable the login-path file.
-        env_values["HOME"] = str(target.parent)
-        env_values["MYSQL_TEST_LOGIN_FILE"] = os.devnull
-    env = _native_environment(**env_values)
-    login_path_option = ["--no-login-paths"] if source.kind == "mysql" else []
     _run_native(
         runner,
         source,
@@ -233,10 +273,14 @@ def _capture_mysql(source, binding, target, runner, deadline, cancel):
                     *login_path_option,
                     "--lock-all-tables",
                     "--quick",
+                    *(
+                        ["--set-gtid-purged=OFF"]
+                        if source.kind == "mysql"
+                        else []
+                    ),
                     "--routines",
                     "--events",
                     "--triggers",
-                    "--databases",
                     source.database,
                 ],
                 env=env,
@@ -252,6 +296,11 @@ def _capture_mysql(source, binding, target, runner, deadline, cancel):
         raise CaptureError(
             "Could not write the private MySQL or MariaDB export"
         ) from None
+    return {
+        "source_database": source.database,
+        "character_set": metadata[0],
+        "collation": metadata[1],
+    }
 
 
 @contextmanager
@@ -262,19 +311,26 @@ def capture_sources(
     timeout: float = 3600,
     cancel=None,
     database_bindings: Mapping[str, DatabaseBinding] | None = None,
+    docker_runtime=None,
+    protected_paths: tuple[Path, ...] = (),
+    operation_id: str | None = None,
     runner: OperationRunner | None = None,
 ):
-    """Yield source paths plus temporary database exports.
+    """Yield source paths plus temporary native exports and private Docker metadata.
 
     Ordinary file trees are live, best-effort captures, not atomic filesystem
     snapshots. PostgreSQL and SQLite use transactional exports. MySQL and
     MariaDB require an explicit read-lock quiescence declaration and use a
-    server read lock during export.
+    server read lock during export. Docker sources require a local daemon and
+    remain stopped only while the caller runs the restic operation.
     """
     deadline = time.monotonic() + timeout
     if timeout <= 0:
         raise CaptureError("Capture timeout must be positive")
     runner = runner or OperationRunner()
+    docker_sources = tuple(source for source in sources if source.kind == "docker")
+    if docker_sources and (docker_runtime is None or operation_id is None):
+        raise CaptureError("Docker source capture requires the shared local Docker runtime")
     with tempfile.TemporaryDirectory(prefix="capture-", dir=state_dir) as temporary:
         paths = []
         exports = []
@@ -290,9 +346,7 @@ def capture_sources(
             elif source.kind == "sqlite":
                 original = Path(source.paths[0])
                 if not original.is_file():
-                    raise CaptureError(
-                        "SQLite source must be an existing database file"
-                    )
+                    raise CaptureError("SQLite source must be an existing database file")
                 target = Path(temporary) / (source.name + ".sqlite")
 
                 def progress(status, remaining, total):
@@ -302,9 +356,7 @@ def capture_sources(
                         raise CaptureError("Capture cancelled")
 
                 try:
-                    with sqlite3.connect(
-                        original.as_uri() + "?mode=ro", uri=True
-                    ) as src:
+                    with sqlite3.connect(original.as_uri() + "?mode=ro", uri=True) as src:
                         with sqlite3.connect(target) as dst:
                             target.chmod(0o600)
                             src.backup(dst, pages=256, progress=progress, sleep=0.05)
@@ -313,14 +365,10 @@ def capture_sources(
                 except sqlite3.Error as exc:
                     raise CaptureError("SQLite capture failed") from exc
                 paths.append(str(target))
-                exports.append(
-                    {
-                        "source": source.name,
-                        "kind": source.kind,
-                        "format": "sqlite",
-                        "path": str(target),
-                    }
-                )
+                exports.append({
+                    "source": source.name, "kind": source.kind,
+                    "format": "sqlite", "path": str(target),
+                })
             elif source.kind in ("postgresql", "mysql", "mariadb"):
                 binding = _database_binding(source, database_bindings)
                 suffix = ".dump" if source.kind == "postgresql" else ".sql"
@@ -330,26 +378,40 @@ def capture_sources(
                         source, binding, target, runner, deadline, cancel
                     )
                 else:
-                    _capture_mysql(source, binding, target, runner, deadline, cancel)
+                    mysql_metadata = _capture_mysql(
+                        source, binding, target, runner, deadline, cancel
+                    )
                 paths.append(str(target))
-                exports.append(
-                    {
-                        "source": source.name,
-                        "kind": source.kind,
-                        "format": "postgresql-custom"
-                        if source.kind == "postgresql"
-                        else "sql",
-                        "path": str(target),
-                    }
-                )
+                exports.append({
+                    "source": source.name,
+                    "kind": source.kind,
+                    "format": "postgresql-custom"
+                    if source.kind == "postgresql"
+                    else f"{source.kind}-single-database-sql-v1",
+                    "path": str(target),
+                })
                 if source.kind == "postgresql":
                     exports[-1]["database_options"] = database_options
-            else:
+                else:
+                    exports[-1].update(mysql_metadata)
+            elif source.kind != "docker":
                 raise CaptureError("Source adapter is not implemented")
-        if exports:
-            manifest = Path(temporary) / "bbackup-capture.json"
-            with manifest.open("x", encoding="utf-8") as output:
-                manifest.chmod(0o600)
-                json.dump({"schema_version": 2, "exports": exports}, output)
-            paths.append(str(manifest))
-        yield paths
+
+        with ExitStack() as stack:
+            if docker_sources:
+                docker_paths, docker_exports = stack.enter_context(docker_runtime.capture(
+                    docker_sources,
+                    Path(temporary),
+                    protected_paths=protected_paths,
+                    operation_id=operation_id,
+                    cancel=cancel,
+                ))
+                paths.extend(docker_paths)
+                exports.extend(docker_exports)
+            if exports:
+                manifest = Path(temporary) / "bbackup-capture.json"
+                with manifest.open("x", encoding="utf-8") as output:
+                    manifest.chmod(0o600)
+                    json.dump({"schema_version": 2, "exports": exports}, output)
+                paths.append(str(manifest))
+            yield paths

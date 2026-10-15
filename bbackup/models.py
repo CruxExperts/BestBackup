@@ -89,18 +89,34 @@ class Source:
     database: str | None = None
     connection: str | None = None
     quiesce: str | None = None
+    container: str | None = None
+    stop_policy: str | None = None
 
     @classmethod
     def parse(cls, raw):
         raw = _object(
             raw,
-            {"name", "kind", "paths", "database", "connection", "quiesce"},
+            {"name", "kind", "paths", "database", "connection", "quiesce", "container", "stop_policy"},
             {"name", "kind"},
         )
         kind = raw["kind"]
-        if kind not in ("files", "sqlite", "postgresql", "mysql", "mariadb"):
-            raise ConfigurationError(
-                "Source kind is not implemented; capture is refused"
+        if kind not in ("files", "sqlite", "postgresql", "mysql", "mariadb", "docker"):
+            raise ConfigurationError("Source kind is not implemented; capture is refused")
+        if kind == "docker":
+            if set(raw) != {"name", "kind", "container", "connection", "stop_policy"}:
+                raise ConfigurationError(
+                    "Docker sources require one container, private connection, and explicit stop policy"
+                )
+            container = raw["container"]
+            if not isinstance(container, str) or not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", container
+            ):
+                raise ConfigurationError("Docker sources require one exact container name")
+            if raw["stop_policy"] != "stop-restart":
+                raise ConfigurationError("Docker sources require stop_policy='stop-restart'")
+            return cls(
+                _name(raw["name"]), kind, (), connection=_name(raw["connection"]),
+                container=container, stop_policy="stop-restart",
             )
         if kind in ("files", "sqlite"):
             if set(raw) != {"name", "kind", "paths"}:
@@ -115,20 +131,12 @@ class Source:
         if kind in ("mysql", "mariadb"):
             expected_database_fields.add("quiesce")
             if raw.get("quiesce") != "read-lock":
-                raise ConfigurationError(
-                    "MySQL and MariaDB sources require quiesce='read-lock'"
-                )
+                raise ConfigurationError("MySQL and MariaDB sources require quiesce='read-lock'")
         if set(raw) != expected_database_fields:
-            raise ConfigurationError(
-                "Database sources require a database name and private connection reference"
-            )
+            raise ConfigurationError("Database sources require a database name and private connection reference")
         return cls(
-            _name(raw["name"]),
-            kind,
-            (),
-            _name(raw["database"]),
-            _name(raw["connection"]),
-            raw.get("quiesce"),
+            _name(raw["name"]), kind, (), _name(raw["database"]),
+            _name(raw["connection"]), raw.get("quiesce"),
         )
 
 
@@ -326,7 +334,6 @@ class DatabaseBinding:
             options_file = _absolute_file(raw["options_file"], "Database options file")
             return cls(kind, options_file=options_file)
         raise ConfigurationError("Unsupported database binding kind")
-
     @property
     def sensitive_paths(self) -> tuple[Path, ...]:
         return tuple(
@@ -334,6 +341,26 @@ class DatabaseBinding:
             for path in (self.service_file, self.password_file, self.options_file)
             if path is not None
         )
+
+
+@dataclass(frozen=True)
+class DockerBinding:
+    """Private local Docker Unix-socket reference."""
+
+    kind: str
+    socket: Path
+
+    @classmethod
+    def parse(cls, raw):
+        raw = _object(raw, {"kind", "socket"}, {"kind", "socket"})
+        if raw["kind"] != "docker":
+            raise ConfigurationError("Docker bindings require kind='docker'")
+        return cls("docker", _absolute_file(raw["socket"], "Docker socket"))
+
+    @property
+    def sensitive_paths(self) -> tuple[Path, ...]:
+        return (self.socket,)
+
 
 
 def _absolute_file(value: Any, description: str) -> Path:
@@ -347,7 +374,7 @@ class HostBindings:
     state_dir: Path
     repositories: dict[str, RepositoryBinding]
     database_bindings: dict[str, DatabaseBinding] = field(default_factory=dict)
-
+    docker_bindings: dict[str, DockerBinding] = field(default_factory=dict)
     @classmethod
     def load(cls, path: Path):
         if path.stat().st_mode & 0o077:
@@ -358,7 +385,7 @@ class HostBindings:
             raise ConfigurationError("Host bindings exceed 1 MiB")
         raw = _object(
             strict_json(path.read_text(encoding="utf-8")),
-            {"schema_version", "state_dir", "repositories", "database_bindings"},
+            {"schema_version", "state_dir", "repositories", "database_bindings", "docker_bindings"},
             {"schema_version", "state_dir", "repositories"},
         )
         if type(raw["schema_version"]) is not int or raw["schema_version"] != 2:
@@ -382,7 +409,14 @@ class HostBindings:
             _name(key): DatabaseBinding.parse(value)
             for key, value in raw_database_bindings.items()
         }
-        return cls(Path(state), repositories, database_bindings)
+        raw_docker_bindings = raw.get("docker_bindings", {})
+        if not isinstance(raw_docker_bindings, dict):
+            raise ConfigurationError("Docker bindings must be an object")
+        docker_bindings = {
+            _name(key): DockerBinding.parse(value)
+            for key, value in raw_docker_bindings.items()
+        }
+        return cls(Path(state), repositories, database_bindings, docker_bindings)
 
     @property
     def sensitive_paths(self) -> tuple[Path, ...]:
@@ -390,5 +424,7 @@ class HostBindings:
 
         paths = [binding.password_file for binding in self.repositories.values()]
         for binding in self.database_bindings.values():
+            paths.extend(binding.sensitive_paths)
+        for binding in self.docker_bindings.values():
             paths.extend(binding.sensitive_paths)
         return tuple(path for path in paths if path is not None)

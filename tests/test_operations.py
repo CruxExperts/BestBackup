@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 import subprocess
@@ -34,7 +35,7 @@ def _plan(repository: Path, *, operation_id: str | None = None, **kwargs) -> Ope
         cwd=plan.cwd,
         env=plan.env,
         timeout_seconds=plan.timeout_seconds,
-        destructive=plan.destructive,
+        stdin_path=plan.stdin_path,
     )
 
 
@@ -106,6 +107,42 @@ def test_runner_streams_giant_line_in_bounded_chunks_and_caps_tails(tmp_path: Pa
     assert len(result.stdout_tail) == 256
     assert result.stdout_tail == output[-256:]
     assert result.stderr_bytes == len(b"finished\n")
+
+
+def test_runner_streams_file_backed_stdin_without_buffering_it(tmp_path: Path) -> None:
+    payload = b"native-export" * 250_000
+    source = tmp_path / "large.sql"
+    source.write_bytes(payload)
+    source.chmod(0o600)
+    code = """
+import hashlib
+import sys
+h = hashlib.sha256()
+count = 0
+while True:
+    chunk = sys.stdin.buffer.read(65536)
+    if not chunk:
+        break
+    count += len(chunk)
+    h.update(chunk)
+print(count, h.hexdigest())
+"""
+
+    result = OperationRunner().run(
+        OperationPlan.create(
+            tmp_path / "repo",
+            "file-backed-stdin",
+            (sys.executable, "-c", code),
+            stdin_path=source,
+            timeout_seconds=5,
+        )
+    )
+
+    assert result.status is OperationStatus.SUCCEEDED
+    assert result.stdout_tail.decode().strip() == (
+        f"{len(payload)} {hashlib.sha256(payload).hexdigest()}"
+    )
+    assert result.stdout_bytes < 100
 
 
 def test_runner_preserves_nonzero_exit_code_and_streams_stderr(tmp_path: Path) -> None:

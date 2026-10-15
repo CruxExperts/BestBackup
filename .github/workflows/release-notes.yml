@@ -4,87 +4,414 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful tag-build workflow run ID
+        required: true
+        type: string
+      tag:
+        description: Exact tag produced by that build
+        required: true
+        type: string
+      detached_signature:
+        description: ASCII-armored detached signature for SHA256SUMS
+        required: true
+        type: string
+
+permissions: {}
 
 jobs:
-  release:
-    name: Create release from tag
-    runs-on: ubuntu-latest
+  source-validation:
+    if: github.event_name == 'push'
+    name: Validate source and build portable artifacts
+    runs-on: ubuntu-24.04
     permissions:
-      contents: write
-
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
 
-      - name: Install uv
-        run: python -m pip install uv
-
-
-      - name: Install pinned restic
-        env:
-          RESTIC_VERSION: "0.19.1"
-          RESTIC_SHA256: "f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c"
+      - name: Install pinned uv
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/restic_${RESTIC_VERSION}_linux_amd64.bz2"
-          binary="$RUNNER_TEMP/restic"
-          curl --fail --location --retry 3 \
-            --output "$archive" \
-            "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_amd64.bz2"
-          echo "${RESTIC_SHA256}  ${archive}" | sha256sum --check -
-          bunzip2 --stdout "$archive" > "$binary"
-          chmod 0755 "$binary"
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-          "$binary" version
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          printf 'uv==0.11.21 --hash=sha256:%s\n' \
+            'b9ecdefa81db7e966d1655988cad6f840316228381dd69131ebc4ae9362bbccd' \
+            > "$RUNNER_TEMP/uv-requirements.txt"
+          python -m pip install --disable-pip-version-check --require-hashes \
+            --requirement "$RUNNER_TEMP/uv-requirements.txt"
+          uv --version
 
-      - name: Verify release version and publishing readiness
+      - name: Extract and verify tag version
+        id: version
         run: |
-          test "${{ steps.version.outputs.version }}" = "$(cat VERSION)"
+          set -euo pipefail
+          version="${GITHUB_REF#refs/tags/v}"
+          test -n "$version"
+          test "$version" = "$(cat VERSION)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release readiness
+        run: |
+          set -euo pipefail
           uv sync --locked
           uv run python scripts/check_version_sync.py
           uv run python scripts/check_publishing_ready.py
           uv run python scripts/check_markdown_standards.py
-          uv run ruff check bbackup/ scripts/check_markdown_standards.py scripts/check_publishing_ready.py scripts/check_version_sync.py scripts/smoke_installed_artifact.py scripts/generate_cli_skills.py tests/
+          uv run ruff check bbackup/ scripts/build_deb.py scripts/check_markdown_standards.py scripts/check_publishing_ready.py scripts/check_version_sync.py scripts/smoke_installed_artifact.py scripts/generate_cli_skills.py tests/
           uv run python scripts/generate_cli_skills.py --check
           uv run python -m py_compile bbackup.py bbman.py bbackup/*.py bbackup/data/*.py bbackup/management/*.py scripts/*.py
-          uv run pytest
+          workers="$(python -c 'import os; print(max(1, len(os.sched_getaffinity(0)) // 3))')"
+          uv run pytest -n "$workers"
 
-      - name: Extract changelog section for this version
-        id: changelog
+      - name: Extract changelog section
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          # Pull the block between the version header and the next version header
-          NOTES=$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md)
-          if [ -z "$NOTES" ]; then
-            echo "No CHANGELOG.md section found for v$VERSION" >&2
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          awk -v version="$version" '
+            $0 == "## [" version "]" || index($0, "## [" version "] - ") == 1 { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release_notes.txt
+          test -s release_notes.txt
+
+      - name: Build source archives
+        run: |
+          set -euo pipefail
+          uv build
+          uv run python scripts/smoke_installed_artifact.py
+          mkdir -p dist/release-source
+          cp dist/bbackup-*.whl dist/bbackup-*.tar.gz dist/release-source/
+          cp release_notes.txt dist/release-source/
+
+      - name: Upload source archives
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-source
+          path: dist/release-source/*
+          if-no-files-found: error
+          retention-days: 14
+
+  build-deb:
+    if: github.event_name == 'push'
+    name: Ubuntu ${{ matrix.release }} ${{ matrix.architecture }} native package
+    needs: source-validation
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    container:
+      image: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - release: "24.04"
+            architecture: amd64
+            runner: ubuntu-24.04
+            container: ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+            restic_archive_sha256: f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
+            uv_sha256: b9ecdefa81db7e966d1655988cad6f840316228381dd69131ebc4ae9362bbccd
+          - release: "24.04"
+            architecture: arm64
+            runner: ubuntu-24.04-arm
+            container: ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+            restic_archive_sha256: a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465
+            uv_sha256: 00193e4e077c27ee3d66da356744dbf0b3aa59356dfbd9a9efb1dc8469af8ad7
+          - release: "26.04"
+            architecture: amd64
+            runner: ubuntu-24.04
+            container: ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
+            restic_archive_sha256: f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
+            uv_sha256: b9ecdefa81db7e966d1655988cad6f840316228381dd69131ebc4ae9362bbccd
+          - release: "26.04"
+            architecture: arm64
+            runner: ubuntu-24.04-arm
+            container: ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
+            restic_archive_sha256: a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465
+            uv_sha256: 00193e4e077c27ee3d66da356744dbf0b3aa59356dfbd9a9efb1dc8469af8ad7
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+
+      - name: Download validated source wheel
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: release-source
+          path: source
+
+      - name: Install target build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            bzip2 ca-certificates curl dpkg-dev python3-packaging python3-venv systemd util-linux
+          python3 --version
+          case "${{ matrix.release }}" in
+            24.04) python3 -c 'import sys; assert sys.version_info[:2] == (3, 12)' ;;
+            26.04) python3 -c 'import sys; assert sys.version_info[:2] == (3, 14)' ;;
+            *) exit 1 ;;
+          esac
+          mkdir -p /opt/bbackup-build-tools
+          python3 -m venv /opt/bbackup-build-tools/uv
+          printf 'uv==0.11.21 --hash=sha256:%s\n' '${{ matrix.uv_sha256 }}' \
+            > "$RUNNER_TEMP/uv-requirements.txt"
+          /opt/bbackup-build-tools/uv/bin/python -m pip install \
+            --disable-pip-version-check --require-hashes \
+            --requirement "$RUNNER_TEMP/uv-requirements.txt"
+          /opt/bbackup-build-tools/uv/bin/uv --version
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/restic.bz2" \
+            "https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_linux_${{ matrix.architecture == 'amd64' && 'amd64' || 'arm64' }}.bz2"
+          # The matrix pins the official archive; the builder expects the unpacked executable digest.
+          echo '${{ matrix.restic_archive_sha256 }}  '"$RUNNER_TEMP/restic.bz2" | sha256sum --check -
+          bunzip2 --stdout "$RUNNER_TEMP/restic.bz2" > "$RUNNER_TEMP/restic"
+          chmod 0755 "$RUNNER_TEMP/restic"
+          printf 'RESTIC_EXECUTABLE_SHA256=%s\n' \
+            "$(sha256sum "$RUNNER_TEMP/restic" | awk '{print $1}')" >> "$GITHUB_ENV"
+          useradd --uid 1001 --user-group --create-home --shell /bin/sh packagebuilder
+          chown -R 1001:1001 "$GITHUB_WORKSPACE"
+
+      - name: Build package as an unprivileged user
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel="$(find source -maxdepth 1 -type f -name 'bbackup-*.whl' -print -quit)"
+          test -n "$wheel"
+          install -d -o 1001 -g 1001 dist/deb
+          runuser -u packagebuilder -- env \
+            HOME=/home/packagebuilder \
+            PATH="/opt/bbackup-build-tools/uv/bin:/usr/local/bin:/usr/bin:/bin" \
+            python3 scripts/build_deb.py \
+              --target-release '${{ matrix.release }}' \
+              --wheel "$GITHUB_WORKSPACE/$wheel" \
+              --restic "$RUNNER_TEMP/restic" \
+              --restic-sha256 "$RESTIC_EXECUTABLE_SHA256" \
+              --output-dir dist/deb
+
+      - name: Install and inspect package in target container
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(dist/deb/*.deb)
+          test "${#packages[@]}" -eq 1
+          dpkg --install "${packages[0]}"
+          dpkg-query --show --showformat='${Version}\n' bbackup
+          bbackup --version
+          bbman --help
+          test -s /usr/lib/bbackup/payload.sha256
+          test -s /usr/lib/systemd/system/bbackup@.service
+          test -s /usr/lib/systemd/system/bbackup@.timer
+          test ! -e /etc/systemd/system/timers.target.wants/bbackup@.timer
+          systemd-analyze verify \
+            /usr/lib/systemd/system/bbackup@.service \
+            /usr/lib/systemd/system/bbackup@.timer
+
+      - name: Upload target package artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bbackup-deb-ubuntu${{ matrix.release }}-${{ matrix.architecture }}
+          path: dist/deb/*
+          if-no-files-found: error
+          retention-days: 14
+
+  assemble-release-inputs:
+    if: github.event_name == 'push'
+    name: Assemble checksummed release inputs
+    needs:
+      - source-validation
+      - build-deb
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Download source archives
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: release-source
+          path: release-inputs
+
+      - name: Download target package outputs
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          pattern: "bbackup-deb-*"
+          merge-multiple: true
+          path: release-inputs
+
+      - name: Validate complete native artifact set and checksum inventory
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("release-inputs")
+          wheels = list(root.glob("bbackup-*.whl"))
+          source_archives = list(root.glob("bbackup-*.tar.gz"))
+          packages = list(root.glob("bbackup_*_ubuntu*.deb"))
+          manifests = list(root.glob("bbackup_*_ubuntu*.manifest.json"))
+          checksums = list(root.glob("bbackup_*_ubuntu*.sha256"))
+          assert len(wheels) == len(source_archives) == 1, "Expected one wheel and one source archive"
+          assert len(packages) == len(manifests) == len(checksums) == 4, "Expected four packages and sidecars"
+          targets = set()
+          for manifest_path in manifests:
+              manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+              target = (manifest["target"]["release"], manifest["target"]["architecture"])
+              package_path = root / manifest["artifact"]["filename"]
+              assert package_path in packages, f"Missing package referenced by {manifest_path.name}"
+              assert manifest["artifact"]["sha256"] == hashlib.sha256(
+                  package_path.read_bytes()
+              ).hexdigest(), f"Package hash mismatch for {package_path.name}"
+              targets.add(target)
+          assert targets == {
+              ("24.04", "amd64"), ("24.04", "arm64"),
+              ("26.04", "amd64"), ("26.04", "arm64"),
+          }, f"Incomplete target matrix: {targets!r}"
+          PY
+          (
+            cd release-inputs
+            find . -maxdepth 1 -type f \
+              ! -name 'SHA256SUMS' ! -name 'release_notes.txt' \
+              -printf '%f\n' | LC_ALL=C sort | while IFS= read -r file; do
+                sha256sum "$file"
+              done > SHA256SUMS
+          )
+          (
+            cd release-inputs
+            for checksum in bbackup_*_ubuntu*.sha256; do
+              sha256sum --check "$checksum"
+            done
+          )
+          test -s release-inputs/SHA256SUMS
+          (cd release-inputs && sha256sum --check SHA256SUMS)
+
+      - name: Upload immutable unsigned build inputs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-inputs
+          path: release-inputs/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release:
+    if: github.event_name == 'workflow_dispatch'
+    name: Verify operator signature and publish
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Validate build-run and tag binding
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[A-Za-z0-9.+_-]+$ ]]
+          default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+          test "$GITHUB_REF_NAME" = "$default_branch"
+          workflow_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release-notes.yml" --jq '.id')"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BUILD_RUN_ID}" > "$RUNNER_TEMP/build-run.json"
+          jq -e \
+            --arg tag "$RELEASE_TAG" \
+            --argjson workflow_id "$workflow_id" \
+            '.event == "push"
+             and .status == "completed"
+             and .conclusion == "success"
+             and .head_branch == $tag
+             and .workflow_id == $workflow_id
+             and .path == ".github/workflows/release-notes.yml"' \
+            "$RUNNER_TEMP/build-run.json" > /dev/null
+          expected_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}" --jq '.sha')"
+          actual_sha="$(jq -r '.head_sha' "$RUNNER_TEMP/build-run.json")"
+          test "$actual_sha" = "$expected_sha"
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "A release for $RELEASE_TAG already exists; refusing to replace it." >&2
             exit 1
           fi
-          # Write to file to preserve newlines
-          echo "$NOTES" > release_notes.txt
 
-      - name: Build release artifacts
-        run: uv build
-
-      - name: Smoke test built wheel
-        run: uv run python scripts/smoke_installed_artifact.py
-
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v3
+      - name: Download exact successful build artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
-          name: "v${{ steps.version.outputs.version }}"
-          body_path: release_notes.txt
-          files: |
-            dist/bbackup-*.tar.gz
-            dist/bbackup-*.whl
-          draft: false
-          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
-          make_latest: ${{ contains(steps.version.outputs.version, '-') && 'false' || 'true' }}
+          name: release-inputs
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release-inputs
+
+      - name: Verify checksum inventory and fixed-fingerprint signature
+        env:
+          DETACHED_SIGNATURE: ${{ inputs.detached_signature }}
+        run: |
+          set -euo pipefail
+          expected_fingerprint=AF7968466B5B39C5E928FEFE716342D3EFBA5522
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 0700 "$GNUPGHOME"
+          printf '%s\n' "$DETACHED_SIGNATURE" > "$RUNNER_TEMP/SHA256SUMS.asc"
+          grep -qx -- '-----BEGIN PGP SIGNATURE-----' "$RUNNER_TEMP/SHA256SUMS.asc"
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          root = Path("release-inputs")
+          listed = set()
+          for line in (root / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
+              match = re.fullmatch(r"[0-9a-f]{64}  ([A-Za-z0-9_.+~-]+)", line)
+              assert match is not None, "Malformed checksum entry"
+              name = match.group(1)
+              assert name not in (".", "..") and name not in listed, "Unsafe or duplicate checksum entry"
+              listed.add(name)
+          actual = {path.name for path in root.iterdir()
+                    if path.is_file() and path.name not in {"SHA256SUMS", "release_notes.txt"}}
+          assert listed == actual, "Unsigned or missing release artifact"
+          assert all(path.is_file() and not path.is_symlink() for path in root.iterdir()), "Unexpected release member"
+          PY
+          (
+            cd release-inputs
+            sha256sum --check SHA256SUMS
+          )
+          gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$expected_fingerprint"
+          imported_fingerprint="$(
+            gpg --batch --with-colons --fingerprint "$expected_fingerprint" |
+              awk -F: '$1 == "fpr" { print $10; exit }'
+          )"
+          test "$imported_fingerprint" = "$expected_fingerprint"
+          gpg --batch --status-fd=1 \
+            --verify "$RUNNER_TEMP/SHA256SUMS.asc" release-inputs/SHA256SUMS \
+            > "$RUNNER_TEMP/gpg-status.txt"
+          awk -v fingerprint="$expected_fingerprint" \
+            '$1 == "[GNUPG:]" && $2 == "VALIDSIG" && ($3 == fingerprint || $NF == fingerprint) \
+             && ($10 == "8" || $10 == "9" || $10 == "10") { valid=1 }
+             END { exit !valid }' "$RUNNER_TEMP/gpg-status.txt"
+
+      - name: Publish signed release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/SHA256SUMS.asc" release-inputs/SHA256SUMS.asc
+          assets=()
+          while IFS= read -r -d '' file; do
+            assets+=("$file")
+          done < <(find release-inputs -maxdepth 1 -type f \
+            ! -name 'release_notes.txt' ! -name 'SHA256SUMS.asc' -print0 | sort -z)
+          assets+=("$GITHUB_WORKSPACE/release-inputs/SHA256SUMS.asc")
+          release_args=(--verify-tag --title "$RELEASE_TAG" --notes-file release-inputs/release_notes.txt)
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            release_args+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" "${assets[@]}" "${release_args[@]}" \
+            --repo "$GITHUB_REPOSITORY"

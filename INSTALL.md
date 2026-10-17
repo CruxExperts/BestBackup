@@ -9,7 +9,7 @@ The stable release uses Python 3.12 or newer and the `restic` executable. Instal
 Install the pinned stable release with uv:
 
 ```bash
-uv tool install --force 'git+https://github.com/CruxExperts/best-backup.git@v2.0.2'
+uv tool install --force 'git+https://github.com/CruxExperts/BestBackup.git@v2.0.2'
 bbackup --version
 bbackup production --help
 ```
@@ -22,7 +22,7 @@ PostgreSQL capture requires `pg_dump` and `psql` for source metadata; restoring 
 
 ### Optional systemd scheduling
 
-The release can render user-level systemd service and timer unit files. Rendering does not install or enable them. Systemd boot and reboot behavior is not qualified; review [the quick start](QUICKSTART.md) and generated unit contents before enabling a schedule.
+The published v2.0.2 release can render systemd service and timer unit files; its boot and reboot behavior remains unqualified. The development checkout also offers explicit user-level installation through `service install`, with activation only when `--activate` is supplied. Review [the quick start](QUICKSTART.md#apply-a-schedule-deliberately) and the [development candidate reboot qualification](docs/development/version-2.md#development-candidate-rebootable-systemd-qualification) before enabling a schedule. A user timer needs a user systemd manager and may need administrator-managed lingering to run after logout or at boot.
 
 ### Cloud repositories
 
@@ -33,7 +33,7 @@ Restic repositories can use local storage, Backblaze B2 through the S3 API, or A
 To install the existing v1.8.6 release with the Docker/filesystem commands:
 
 ```bash
-uv tool install --force 'git+https://github.com/CruxExperts/best-backup.git@v1.8.6'
+uv tool install --force 'git+https://github.com/CruxExperts/BestBackup.git@v1.8.6'
 bbackup --version
 bbman --version
 ```
@@ -52,14 +52,14 @@ See [docs/management.md](docs/management.md) for legacy setup, health, remote, a
 
 ## Development checkout
 
-Use a checkout when you want to run stable v2 from source or contribute changes:
+The development checkout includes unreleased guided setup, schema-3 enrollment, and safety improvements. Use its current quick start; the published v2.0.2 guide remains available at its release tag.
 
 ```bash
-git clone https://github.com/CruxExperts/best-backup.git
-cd best-backup
+git clone https://github.com/CruxExperts/BestBackup.git
+cd BestBackup
 uv sync --locked
 uv run bbackup --version
-uv run bbackup production --help
+uv run bbackup production tui
 ```
 
 Optional Google Drive OAuth tooling belongs to the retained 1.x command line. Select its project extra only when working on that workflow:
@@ -81,7 +81,7 @@ sudo env \
   UV_TOOL_DIR=/opt/uv/tools \
   UV_TOOL_BIN_DIR=/usr/local/bin \
   "$UV" tool install --force \
-  'git+https://github.com/CruxExperts/best-backup.git@v2.0.2'
+  'git+https://github.com/CruxExperts/BestBackup.git@v2.0.2'
 
 bbackup --version
 ```
@@ -181,7 +181,7 @@ Ubuntu 24.04/26.04 with Python 3.12/3.14 is production-qualified only on AMD64. 
 
 <p align="center">
 Slavic Kozyuk<br>
-&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/best-backup/blob/main/LICENSE">MIT License</a>
+&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/BestBackup/blob/main/LICENSE">MIT License</a>
 </p>
 
 <!-- project-footer:end -->

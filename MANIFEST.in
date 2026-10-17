@@ -1,0 +1,17 @@
+# Portable source and maintenance inputs; runtime state never belongs in an sdist.
+include VERSION uv.lock .python-version config.yaml.example
+include bbackup.py bbman.py AGENTS.md CHANGELOG.md INSTALL.md QUICKSTART.md SECURITY.md SUPPORT.md
+include Dockerfile.test .dockerignore
+recursive-include scripts *.py *.sh *.md
+recursive-include docs *.md *.json *.svg *.png *.jpg
+recursive-include tests *.md *.py *.json *.yaml *.yml *.sh *.sql *.txt *.example
+recursive-include packaging *.in *.conf README.Debian preinst postinst prerm postrm
+recursive-include .github *.md *.yml *.yaml *.txt *.asc
+include .githooks/commit-msg .githooks/pre-push
+prune .agent
+prune .agents
+prune .codex
+prune .venv
+prune build
+prune dist
+global-exclude __pycache__ *.py[cod] .env *.pem *.key *.log

@@ -192,9 +192,9 @@ def fetch_manifest_checksums(repo_url: str, branch: str = "main") -> Dict[str, s
         Dict mapping file paths to SHA-256 checksums
     """
     # Construct manifest URL
-    if "github.com" in repo_url:
+    if parse_repo_url(repo_url)["type"] == "github":
         manifest_url = f"{repo_url}/raw/{branch}/VERSION_MANIFEST.json"
-    elif "gitlab.com" in repo_url:
+    elif parse_repo_url(repo_url)["type"] == "gitlab":
         manifest_url = f"{repo_url}/-/raw/{branch}/VERSION_MANIFEST.json"
     else:
         # Custom URL - try common patterns

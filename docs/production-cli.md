@@ -15,10 +15,12 @@ Inspect configured repository bindings and engine availability.
 
 ## `setup`
 
-Validate and create new portable configuration and private host-binding files without enabling services.
+Validate and create new version-three policy and private bindings, or explicitly migrate or enroll an existing pair without enabling services.
 
-- `--configuration-file`: path.
-- `--bindings-file`: path.
+- `--configuration-file`: optional-string.
+- `--bindings-file`: optional-string.
+- `--migrate`: boolean.
+- `--enroll`: boolean.
 
 ## `config show`
 
@@ -31,6 +33,16 @@ Validate and replace the portable configuration only at its reviewed revision, p
 
 - `--document-file`: path.
 - `--revision`: string.
+
+## `config migrate`
+
+Write enrolled version-three files beside untouched version-two originals.
+
+
+## `service enroll`
+
+Explicitly enroll the exact version-three policy and bindings on this machine and user.
+
 
 ## `jobs list`
 
@@ -111,6 +123,14 @@ Render disabled systemd service and persistent timer units.
 
 - `--name`: string.
 - `--executable`: path.
+
+## `service install`
+
+Install reviewed user-level units; activate the exact timer only with --activate.
+
+- `--name`: string.
+- `--executable`: path.
+- `--activate`: boolean.
 
 ## `recovery inspect`
 

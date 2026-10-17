@@ -7,6 +7,10 @@ Last Updated: 2026-02-26
 """
 
 import json
+import os
+import io
+import tarfile
+import stat
 import time
 from unittest.mock import MagicMock, patch
 
@@ -133,6 +137,8 @@ class TestBackupContainerConfig:
         assert config_file.exists()
         data = json.loads(config_file.read_text())
         assert data["Id"] == "abc"
+        assert stat.S_IMODE(config_file.stat().st_mode) == 0o600
+        assert stat.S_IMODE((tmp_path / "web_logs.txt").stat().st_mode) == 0o600
 
     def test_container_not_found_returns_false(self, mock_docker_client, tmp_path):
         mock_docker_client.containers.get.side_effect = APIError("not found")
@@ -289,6 +295,51 @@ class TestBackupVolumeRsync:
 
 
 class TestBackupVolumeTarFallback:
+    @pytest.mark.skipif(os.geteuid() == 0, reason="non-root ownership refusal")
+    def test_tar_capture_refuses_foreign_owner_before_inventory(self, mock_docker_client, mock_subprocess, tmp_path):
+        mock_run, _ = mock_subprocess
+        mock_docker_client.volumes.get.return_value = MagicMock()
+        mock_docker_client.containers.run.return_value = MagicMock()
+
+        def run(cmd, **kwargs):
+            if "which" in cmd:
+                return MagicMock(returncode=1, stdout="", stderr="")
+            if "cp" in cmd:
+                with tarfile.open(cmd[-1], "w:gz") as tar:
+                    member = tarfile.TarInfo("./private.txt")
+                    member.size = 4
+                    member.uid = os.geteuid() + 1
+                    member.gid = os.getegid()
+                    tar.addfile(member, io.BytesIO(b"data"))
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = run
+        db = make_backup(mock_docker_client)
+        assert db.backup_volume("myvolume", tmp_path) is False
+        assert not (tmp_path / "volumes" / "myvolume").exists()
+        assert not (tmp_path / "volumes" / "myvolume.tar.gz").exists()
+
+    @pytest.mark.skipif(not hasattr(os, "setxattr"), reason="extended attributes unavailable")
+    def test_encrypted_capture_checks_original_volume_before_copy(self, mock_docker_client, tmp_path):
+        mountpoint = tmp_path / "mounted_volume"
+        mountpoint.mkdir()
+        file = mountpoint / "file.txt"
+        file.write_text("data")
+        try:
+            os.setxattr(file, "user.bbackup-test", b"unsupported")
+        except OSError as exc:
+            pytest.skip(f"extended attributes unavailable: {exc}")
+        volume = MagicMock()
+        volume.attrs = {"Mountpoint": str(mountpoint)}
+        mock_docker_client.volumes.get.return_value = volume
+        cfg = Config(config_path=None)
+        cfg.encryption.enabled = True
+        db = DockerBackup(cfg)
+
+        assert db.backup_volume("myvolume", tmp_path) is False
+        mock_docker_client.containers.run.assert_not_called()
+        assert not (tmp_path / "volumes").exists()
+
     def test_tar_fallback_when_rsync_absent(self, mock_docker_client, mock_subprocess, tmp_path):
         mock_run, _ = mock_subprocess
         mock_docker_client.volumes.get.return_value = MagicMock()
@@ -418,6 +469,7 @@ class TestBackupVolumeCompression:
 
         vol_dir = tmp_path / "volumes" / "myvolume"
         vol_dir.mkdir(parents=True)
+        vol_dir.parent.chmod(0o700)
         (vol_dir / "file.txt").write_text("data")
 
         db.backup_volume("myvolume", tmp_path)

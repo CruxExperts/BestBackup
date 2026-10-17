@@ -11,9 +11,12 @@ Last Updated: 2026-02-27
 
 import io
 import json
+import os
 import uuid
 
 import pytest
+
+from bbackup.container_images import ALPINE_HELPER_IMAGE
 
 pytestmark = pytest.mark.integration
 
@@ -33,7 +36,7 @@ def docker_client():
 def alpine_rsync_image(docker_client, worker_id):
     """Build a per-worker Alpine image with rsync available."""
     tag = f"bbackup-alpine-rsync:{worker_id}"
-    dockerfile = b"FROM alpine:latest\nRUN apk add --no-cache rsync\n"
+    dockerfile = f"FROM {ALPINE_HELPER_IMAGE}\nRUN apk add --no-cache rsync\n".encode()
     docker_client.images.build(
         fileobj=io.BytesIO(dockerfile),
         tag=tag,
@@ -61,7 +64,7 @@ def seeded_volume(docker_client, unique_id):
     name = f"bbackup_itest_{unique_id}"
     vol = docker_client.volumes.create(name)
     docker_client.containers.run(
-        "alpine:latest",
+        ALPINE_HELPER_IMAGE,
         command="sh -c 'mkdir -p /v/subdir && echo hello > /v/file.txt && echo world > /v/subdir/nested.txt'",
         volumes={name: {"bind": "/v", "mode": "rw"}},
         remove=True,
@@ -78,8 +81,8 @@ def seeded_volume(docker_client, unique_id):
 # ---------------------------------------------------------------------------
 
 
-def test_backup_volume_rsync_path(docker_client, alpine_rsync_image, seeded_volume, tmp_path, unique_id):
-    """Real rsync-based volume backup produces output files."""
+def test_backup_volume_rsync_path(docker_client, alpine_rsync_image, seeded_volume, tmp_path, unique_id, caplog):
+    """Preserve volume ownership or refuse without a misleading artifact."""
     from bbackup.config import Config
     from bbackup.docker_backup import DockerBackup
 
@@ -99,7 +102,15 @@ def test_backup_volume_rsync_path(docker_client, alpine_rsync_image, seeded_volu
         result = db.backup_volume(seeded_volume.name, tmp_path)
 
     vol_dir = tmp_path / "volumes" / seeded_volume.name
-    assert result is True or vol_dir.exists()
+    if os.geteuid() != 0:
+        assert result is False
+        assert not vol_dir.exists()
+        assert "Cannot restore archive ownership" in caplog.text
+    else:
+        assert result is True
+        assert (vol_dir / "file.txt").read_text() == "hello\n"
+        assert (vol_dir / "subdir/nested.txt").read_text() == "world\n"
+        assert (vol_dir / "file.txt").stat().st_uid == 0
 
 
 def test_backup_volume_tar_fallback(docker_client, seeded_volume, tmp_path, unique_id):
@@ -123,7 +134,7 @@ def test_backup_container_config(docker_client, unique_id, tmp_path):
 
     container_name = f"bbackup_itest_container_{unique_id}"
     container = docker_client.containers.run(
-        "alpine:latest",
+        ALPINE_HELPER_IMAGE,
         command="sleep 30",
         name=container_name,
         detach=True,
@@ -467,7 +478,7 @@ def test_restore_volume_roundtrip(docker_client, alpine_rsync_image, seeded_volu
         if restore_result:
             # Verify file content by running a container
             output = docker_client.containers.run(
-                "alpine:latest",
+                ALPINE_HELPER_IMAGE,
                 command="cat /v/file.txt",
                 volumes={restore_vol_name: {"bind": "/v", "mode": "ro"}},
                 remove=True,

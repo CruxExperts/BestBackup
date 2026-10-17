@@ -1,4 +1,11 @@
 {
+  "config migrate": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
   "config save": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -584,6 +591,36 @@
     "required": [],
     "type": "object"
   },
+  "service enroll": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "service install": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "activate": {
+        "default": false,
+        "type": "boolean"
+      },
+      "executable": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "name": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "executable"
+    ],
+    "type": "object"
+  },
   "service render": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -614,12 +651,17 @@
       "configuration_file": {
         "minLength": 1,
         "type": "string"
+      },
+      "enroll": {
+        "default": false,
+        "type": "boolean"
+      },
+      "migrate": {
+        "default": false,
+        "type": "boolean"
       }
     },
-    "required": [
-      "configuration_file",
-      "bindings_file"
-    ],
+    "required": [],
     "type": "object"
   },
   "skills": {

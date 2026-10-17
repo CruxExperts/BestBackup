@@ -1,5 +1,5 @@
 """
-Smoke test a built wheel in an isolated environment.
+Verify portable source inputs and smoke test a built wheel in isolation.
 """
 
 from __future__ import annotations
@@ -8,8 +8,9 @@ import argparse
 import json
 import subprocess
 import sys
+import tarfile
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -36,14 +37,59 @@ def latest_wheel(dist_dir: Path) -> Path:
     return wheels[-1]
 
 
+SOURCE_INPUTS = {
+    "VERSION", "uv.lock", "pyproject.toml", "README.md", "LICENSE", "MANIFEST.in",
+    "bbackup/production_cli.py", "bbackup/data/production-schemas.json",
+    "scripts/build_deb.py", "scripts/check_assets.py", "scripts/verify_release_source.py", "scripts/README.md",
+    "tests/conftest.py",
+    "tests/fixtures/markdown/changelog-duplicate-category.md",
+    "tests/fixtures/markdown/changelog-unversioned-category.md",
+    "tests/fixtures/markdown/changelog-same-version-different-dates.md",
+    "packaging/debian/preinst", "docs/README.md",
+    "docs/assets/provenance.json",
+}
+
+
+def verify_source_archive(archive: Path) -> None:
+    """Check portable build/test inputs and private-state exclusion without extracting."""
+    expected_root = "bbackup-" + (REPO_ROOT / "VERSION").read_text().strip()
+    names = set()
+    forbidden = {".agent", ".agents", ".codex", ".git", ".venv", "build", "dist"}
+    with tarfile.open(archive, "r:gz") as stream:
+        for member in stream:
+            path = PurePosixPath(member.name)
+            if (path.is_absolute() or ".." in path.parts or not path.parts
+                    or path.parts[0] != expected_root or not (member.isfile() or member.isdir())):
+                raise ValueError("Source archive contains an unexpected path or member type")
+            relative = PurePosixPath(*path.parts[1:])
+            if (set(relative.parts) & forbidden or relative.name.startswith(".env")
+                    or relative.suffix in {".key", ".pem", ".pyc", ".log"}):
+                raise ValueError("Source archive contains private or generated runtime material")
+            if member.isfile():
+                names.add(str(relative))
+    missing = SOURCE_INPUTS - names
+    if missing:
+        raise ValueError("Source archive is missing portable inputs: " + ", ".join(sorted(missing)))
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Smoke test a built bbackup wheel.")
     parser.add_argument("--wheel", type=Path, default=None, help="Wheel path. Defaults to latest dist/bbackup-*.whl.")
+    parser.add_argument("--source", type=Path, default=None, help="Source archive to verify; otherwise use the latest dist/*.tar.gz when present.")
     args = parser.parse_args(argv)
 
     wheel = args.wheel or latest_wheel(REPO_ROOT / "dist")
     if not wheel.exists():
         raise SystemExit(f"smoke: wheel not found: {wheel}")
+
+    sources = sorted((REPO_ROOT / "dist").glob("bbackup-*.tar.gz"))
+    source = args.source or (sources[-1] if sources else None)
+    if source is not None:
+        try:
+            verify_source_archive(source)
+        except (ValueError, OSError, tarfile.TarError) as error:
+            raise SystemExit(f"smoke: {error}") from None
+        print(f"smoke: source archive ok ({source})")
 
     with tempfile.TemporaryDirectory(prefix="bbackup-wheel-smoke-") as tmp:
         smoke_root = Path(tmp)
@@ -93,7 +139,7 @@ def main(argv: list[str]) -> int:
             raise SystemExit("smoke: bbackup init-config --skills missing command section")
 
         repo_url_result = assert_ok([bbman, "repo-url", "--output", "json"], env=env)
-        if "https://github.com/CruxExperts/best-backup" not in repo_url_result.stdout:
+        if "https://github.com/CruxExperts/BestBackup" not in repo_url_result.stdout:
             raise SystemExit("smoke: bbman repo-url did not report canonical repository")
 
     print(f"smoke: ok ({wheel})")

@@ -528,7 +528,7 @@ class TestBackupCommand:
                 ],
             )
 
-        assert result.exit_code == EXIT_SUCCESS
+        assert result.exit_code == EXIT_SUCCESS, result.output
         data = json.loads(result.output)
         assert data["data"]["encryption"] == "encrypted"
         assert data["data"]["backup_dir"].endswith(".enc")
@@ -553,6 +553,7 @@ class TestBackupCommand:
             def run_backup(**kwargs):
                 backup_dir = kwargs["backup_dir"]
                 backup_dir.mkdir(parents=True, exist_ok=True)
+                backup_dir.parent.chmod(0o700)
                 (backup_dir / "backup_manifest.json").write_text("{}")
                 (backup_dir / "filesystems").mkdir()
                 (backup_dir / "filesystems" / "repo.txt").write_text("content")
@@ -576,7 +577,7 @@ class TestBackupCommand:
                 ],
             )
 
-        assert result.exit_code == EXIT_SUCCESS
+        assert result.exit_code == EXIT_SUCCESS, result.output
         data = json.loads(result.output)
         archive_path = staging_dir / f"{paths['expanded'].name}.tar.gz"
         assert data["data"]["backup_dir"] == str(archive_path)

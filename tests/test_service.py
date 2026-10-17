@@ -14,7 +14,7 @@ from bbackup.operations import (
     RepositoryConflictError,
     repository_key,
 )
-from bbackup.service import BackupService, ServiceError
+from bbackup.service import BackupService, ReplicaJobError, ServiceError
 
 
 @pytest.fixture
@@ -53,6 +53,83 @@ def _run(plan, *, status=OperationStatus.SUCCEEDED, exit_code=0, stdout=b""):
     )
 
 
+def test_replica_failure_isolated_and_later_destination_runs(service, monkeypatch):
+    job = replace(service.config.jobs[0], replicas=("first", "second"))
+    monkeypatch.setattr(service, "_job", lambda _name: job)
+    monkeypatch.setattr(service, "capture", lambda *_args, **_kwargs: {
+        "operation_id": "capture", "repository": "local", "snapshot_id": "a" * 64,
+        "local_complete": True, "cloud_complete": False,
+        "required_replicas": ["first", "second"],
+    })
+    called = []
+
+    def copy(_source, destination, _snapshot, **_kwargs):
+        called.append(destination)
+        if destination == "first":
+            raise ServiceError("failed")
+        return {"destination_repository": destination, "operation_id": "second-copy"}
+
+    monkeypatch.setattr(service, "copy", copy)
+    with pytest.raises(ReplicaJobError) as error:
+        service.run_job("daily")
+    assert called == ["first", "second"]
+    assert error.value.result["local_complete"] is True
+    assert error.value.result["replicas"] == [{"destination_repository": "second", "operation_id": "second-copy"}]
+    assert error.value.result["replica_failures"] == [
+        {"destination_repository": "first", "reason": "copy_failed_or_uncertain"}]
+    assert error.value.result["cloud_complete"] is False
+
+
+def test_cancellation_stops_later_replica_dispatch(service, monkeypatch):
+    import threading
+    cancel = threading.Event()
+    job = replace(service.config.jobs[0], replicas=("first", "second"))
+    monkeypatch.setattr(service, "_job", lambda _name: job)
+    monkeypatch.setattr(service, "capture", lambda *_args, **_kwargs: {
+        "operation_id": "capture", "repository": "local", "snapshot_id": "a" * 64,
+        "local_complete": True, "cloud_complete": False,
+        "required_replicas": ["first", "second"],
+    })
+    called = []
+
+    def copy(_source, destination, _snapshot, **_kwargs):
+        called.append(destination)
+        cancel.set()
+        raise ServiceError("cancelled")
+
+    monkeypatch.setattr(service, "copy", copy)
+    with pytest.raises(ReplicaJobError) as error:
+        service.run_job("daily", cancel=cancel)
+    assert called == ["first"]
+    assert error.value.result["cloud_complete"] is False
+
+
+def test_copy_failure_leaves_only_destination_uncertain(service, monkeypatch):
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service._execute("copy", ("restic", "copy"), label="copy", other=("local",), mutating=True)
+    statuses = {(row["repository_id"], row["status"]) for row in service.ledger.summary()}
+    assert (repository_key(service._identity("local")), "failed") in statuses
+    assert (repository_key(service._identity("copy")), "uncertain") in statuses
+
+
+def test_job_timeout_reaches_source_export_stage(service, monkeypatch):
+    service.config = replace(service.config, jobs=(
+        replace(service.config.jobs[0], timeout_seconds=73),))
+    observed = []
+
+    def capture_sources(*_args, **kwargs):
+        observed.append(kwargs["timeout"])
+        raise RuntimeError("stop before export")
+
+    monkeypatch.setattr("bbackup.service.capture_sources", capture_sources)
+    with pytest.raises(RuntimeError, match="stop before export"):
+        service.capture("daily")
+    assert observed == [73]
+
+
+@pytest.mark.integration
 @pytest.mark.skipif(shutil.which("restic") is None, reason="restic is required")
 def test_database_restore_uses_snapshot_manifest_without_original_sources(service, tmp_path, monkeypatch):
     import os

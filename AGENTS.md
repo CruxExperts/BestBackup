@@ -37,7 +37,24 @@ localsetup doctor --target-directory . --global-preset core --repo-preset core -
 ```
 
 If adapter shape needs to change, use `localsetup install`, `localsetup plan`,
-or `localsetup detach` before manual edits under `.codex/`.
+or `localsetup detach`. Discover the active adapter path from the command above;
+do not hand-edit managed `.agents/skills/` or `.codex/skills/` projections.
+
+## Shared operations and generated surfaces
+
+- CLI, dashboard, and timers dispatch through `production_operations.py` so
+  exact configuration snapshots, host enrollment, leases, and reconciliation
+  remain consistent. Do not dispatch mutations through cached service objects.
+- Schema-3 policy is portable; concrete source selectors and credentials belong
+  in private bindings. Migration preserves schema-2 originals and requires
+  deliberate local enrollment. Never automatically approve a copied declaration.
+- Generate CLI catalogs, schemas, and package copies from `cli_metadata.py` with
+  `uv run python scripts/generate_cli_skills.py`; use `--check` in validation.
+- Active generated artwork is recorded in `docs/assets/provenance.json`; run
+  `uv run python scripts/check_assets.py` after asset changes.
+- Keep actual qualification evidence and support limits in
+  `docs/development/version-2.md`. Preserve historical release evidence and
+  distinguish unreleased behavior from published artifacts.
 
 ## Development Commands
 

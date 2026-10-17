@@ -77,41 +77,28 @@ def _schedules(jobs: tuple[Job, ...]) -> list[ScheduleStatus]:
     }
     if not units:
         return schedules
-    try:
-        result = subprocess.run(
-            [
-                "systemctl",
-                "show",
-                "--property=Id,LoadState,ActiveState,NextElapseUSecRealtime",
-                "--",
-                *units,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            env={**os.environ, "LC_ALL": "C"},
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return schedules
-    # systemctl may return nonzero when one of the two supported forms is absent.
-    for block in result.stdout.split("\n\n"):
-        properties = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
-        unit = properties.get("Id")
-        if unit is None:
+    for manager in ("user", "system"):
+        command = ["systemctl", *(["--user"] if manager == "user" else []),
+                   "show", "--property=Id,LoadState,ActiveState,NextElapseUSecRealtime",
+                   "--", *units]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=2,
+                                    env={**os.environ, "LC_ALL": "C"})
+        except (OSError, subprocess.TimeoutExpired):
             continue
-        next_run = properties.get("NextElapseUSecRealtime", "")
-        if (
-            unit in units
-            and properties.get("LoadState") == "loaded"
-            and properties.get("ActiveState") == "active"
-            and next_run not in ("", "0", "n/a")
-        ):
-            row = units[unit]
-            if row["active_timer"] is None:
-                row.update(active_timer=unit, next_run=next_run)
-            else:
-                # Two enrolled timers for one job need operator reconciliation.
-                row.update(active_timer="conflicting timers", next_run=None)
+        # Missing units may make systemctl return nonzero alongside valid rows.
+        for block in result.stdout.split("\n\n"):
+            properties = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+            unit = properties.get("Id")
+            next_run = properties.get("NextElapseUSecRealtime", "")
+            if (unit in units and properties.get("LoadState") == "loaded"
+                    and properties.get("ActiveState") == "active"
+                    and next_run not in ("", "0", "n/a")):
+                row = units[unit]
+                if row["active_timer"] is None:
+                    row.update(active_timer=f"{manager}: {unit}", next_run=next_run)
+                else:
+                    row.update(active_timer="conflicting timers", next_run=None)
     return schedules
 
 

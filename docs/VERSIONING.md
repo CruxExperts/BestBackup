@@ -80,15 +80,15 @@ git diff --check
 ```
 
 6. Create a signed conventional commit for the release candidate.
-7. Push the candidate commit to `main` only after branch checks pass.
+7. Publish the signed candidate through a pull request, pass the required checks, and merge. Wait for successful trusted CI on the exact resulting default-branch commit.
 8. Create a signed annotated tag `v<VERSION>` at that exact commit and push the
-   tag. The tag-triggered workflow validates the source, builds the wheel and
+   tag. The tag-triggered workflow verifies the signed tag, default-branch ancestry, and exact-commit CI, then builds the wheel and
    source archive, creates native package artifacts, and uploads checksummed
    release inputs; it does not publish a GitHub release.
 9. After that exact tag run succeeds, sign its `SHA256SUMS` with the project
    release key. Dispatch `release-notes.yml` on the default branch with the
    successful `build_run_id`, exact tag, and detached signature. The workflow
    binds the run to the tag commit, verifies the complete artifact inventory
-   and fixed-fingerprint signature, then creates the release.
+   and fixed-fingerprint signature, then verifies a complete draft and publishes it once. Future published releases are immutable.
 10. Verify the published tag, assets, checksum manifest, and signature. Never
     replace an existing tag or replay a publication after an uncertain result.

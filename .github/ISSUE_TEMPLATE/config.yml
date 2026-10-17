@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/CruxExperts/BestBackup/security/advisories/new
+    about: Keep vulnerabilities and sensitive backup information out of public issues.
+  - name: Documentation and first-backup guide
+    url: https://github.com/CruxExperts/BestBackup/blob/main/QUICKSTART.md
+    about: Installation, setup, scheduling, migration, and verified restore.

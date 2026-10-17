@@ -1,12 +1,12 @@
 # Documentation
 
-This index separates the selected stable v2.0.2 tested scope from the retained 1.x management workflow. Start with the root [README](../README.md), then choose the guide for your task.
+Start with the [README](../README.md), then the [guided quick start](../QUICKSTART.md). Current checkout guides include unreleased schema-3 enrollment and safety improvements. Published v2.0.2 retains its [versioned documentation](https://github.com/CruxExperts/BestBackup/tree/v2.0.2/docs) and tested support scope.
 
 ## Start using bbackup
 
 | Guide | Use it for |
 |:--|:--|
-| [QUICKSTART.md](../QUICKSTART.md) | Strict v2 configuration, private bindings, local capture, replicas, and restore |
+| [QUICKSTART.md](../QUICKSTART.md) | Guided setup, schema-3 migration, private bindings, scheduled capture, and verified restore |
 | [INSTALL.md](../INSTALL.md) | Prerequisites, pinned releases, current release status, and development setup |
 | [cloud-storage.md](cloud-storage.md) | Implemented B2/AWS paths, not production-qualified; provider and protection limits |
 | [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) | Machine-readable schemas, JSON envelopes, bounded run records, and safe restore/reconciliation |
@@ -42,7 +42,7 @@ Back to [README.md](../README.md).
 
 <p align="center">
 Slavic Kozyuk<br>
-&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/best-backup/blob/main/LICENSE">MIT License</a>
+&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/BestBackup/blob/main/LICENSE">MIT License</a>
 </p>
 
 <!-- project-footer:end -->

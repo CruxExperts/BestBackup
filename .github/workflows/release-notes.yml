@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      actions: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -59,6 +60,12 @@ jobs:
           test "$version" = "$(cat VERSION)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Require signed tag and exact default-branch CI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/verify_release_source.py --repository "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG"
+
       - name: Verify release readiness
         run: |
           set -euo pipefail
@@ -66,11 +73,9 @@ jobs:
           uv run python scripts/check_version_sync.py
           uv run python scripts/check_publishing_ready.py
           uv run python scripts/check_markdown_standards.py
-          uv run ruff check bbackup/ scripts/build_deb.py scripts/check_markdown_standards.py scripts/check_publishing_ready.py scripts/check_version_sync.py scripts/smoke_installed_artifact.py scripts/generate_cli_skills.py tests/
+          uv run ruff check bbackup/ scripts/ tests/
           uv run python scripts/generate_cli_skills.py --check
           uv run python -m py_compile bbackup.py bbman.py bbackup/*.py bbackup/data/*.py bbackup/management/*.py scripts/*.py
-          workers="$(python -c 'import os; print(max(1, len(os.sched_getaffinity(0)) // 3))')"
-          uv run pytest -n "$workers"
 
       - name: Extract changelog section
         run: |
@@ -357,9 +362,20 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: release-verification
-          sparse-checkout: .github/release-signing-key.asc
+          fetch-depth: 0
+          sparse-checkout: |
+            .github/release-signing-key.asc
+            scripts/verify_release_source.py
           sparse-checkout-cone-mode: false
           persist-credentials: false
+
+      - name: Recheck trusted release source before publication
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: >-
+          python3 release-verification/scripts/verify_release_source.py
+          --repository "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" --checkout release-verification
 
       - name: Verify checksum inventory and fixed-fingerprint signature
         env:
@@ -419,9 +435,26 @@ jobs:
           done < <(find release-inputs -maxdepth 1 -type f \
             ! -name 'release_notes.txt' ! -name 'SHA256SUMS.asc' -print0 | sort -z)
           assets+=("$GITHUB_WORKSPACE/release-inputs/SHA256SUMS.asc")
-          release_args=(--verify-tag --title "$RELEASE_TAG" --notes-file release-inputs/release_notes.txt)
+          release_args=(--draft --verify-tag --title "$RELEASE_TAG" --notes-file release-inputs/release_notes.txt)
           if [[ "$RELEASE_TAG" == *-* ]]; then
             release_args+=(--prerelease)
           fi
           gh release create "$RELEASE_TAG" "${assets[@]}" "${release_args[@]}" \
             --repo "$GITHUB_REPOSITORY"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            > "$RUNNER_TEMP/draft-release.json"
+          python3 - <<'PYVERIFY'
+          import hashlib, json, os
+          from pathlib import Path
+          draft = json.loads((Path(os.environ["RUNNER_TEMP"]) / "draft-release.json").read_text())
+          expected = {}
+          for path in Path("release-inputs").iterdir():
+              if path.name == "release_notes.txt":
+                  continue
+              with path.open("rb") as stream:
+                  digest = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
+              expected[path.name] = (path.stat().st_size, digest)
+          actual = {asset["name"]: (asset["size"], asset.get("digest")) for asset in draft["assets"]}
+          assert draft["draft"] and actual == expected, "Draft asset inventory or SHA256 differs"
+          PYVERIFY
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false

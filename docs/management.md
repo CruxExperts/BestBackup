@@ -133,7 +133,7 @@ uv tool install --force \
   --with google-auth-oauthlib \
   --with oauthlib \
   --with requests-oauthlib \
-  git+https://github.com/CruxExperts/best-backup.git
+  git+https://github.com/CruxExperts/BestBackup.git
 bbman auth-gdrive --client-secrets client_secret.json --dry-run --output json
 ```
 
@@ -267,7 +267,7 @@ Manage the repository URL used for update checks and downloads.
 
 ```bash
 bbman repo-url                              # Show current URL and its source
-bbman repo-url --url https://github.com/CruxExperts/best-backup
+bbman repo-url --url https://github.com/CruxExperts/BestBackup
 bbman repo-url --output json
 ```
 
@@ -357,7 +357,7 @@ The separate version 2 interface uses strict input schemas and a different resul
 `~/.config/bbackup/management.yaml` controls wrapper behavior:
 
 ```yaml
-repo_url: "https://github.com/CruxExperts/best-backup"
+repo_url: "https://github.com/CruxExperts/BestBackup"
 auto_check_updates: true
 check_interval_days: 7
 auto_setup_on_first_run: true
@@ -487,13 +487,21 @@ intentionally trusted account.
 
 Back to [README.md](../README.md).
 
+## Development safety changes for retained commands
+
+The development checkout refuses Docker container and volume restore targets that already exist. Use an unused destination through the existing rename map; existing resources are preserved. Legacy container restoration with bind mounts is refused because a new container name cannot isolate writes to a live host path.
+
+SFTP now loads trusted system/user known-host entries and rejects unknown or changed host keys. Verify a server's host-key fingerprint through a trusted channel before adding it to known hosts. An upload never silently trusts a new server.
+
+Plaintext staging is private to its owner. Unsupported filesystem metadata and unsafe archive entries fail before a successful encrypted/archive result can permit staging removal. Existing backups may lack metadata that cannot be recovered retroactively; inspect the compatibility guidance in [encryption](encryption.md).
+
 <!-- project-footer:start -->
 
 <br><br>
 
 <p align="center">
 Slavic Kozyuk<br>
-&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/best-backup/blob/main/LICENSE">MIT License</a>
+&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/BestBackup/blob/main/LICENSE">MIT License</a>
 </p>
 
 <!-- project-footer:end -->

@@ -549,7 +549,7 @@ authorized resources; without such evidence, B2/AWS remain outside the stable
 support scope. Do not replay uncertain backup mutations or change live provider
 policy during a recovery.
 
-The signed [2.0.0-alpha.1 prerelease](https://github.com/CruxExperts/best-backup/releases/tag/v2.0.0-alpha.1) was published on October 3, 2026 from commit `b10ed84`. GitHub CI passed on Python 3.12, 3.13, and 3.14, and the release workflow built and smoke-tested its wheel and source archive. `SHA256SUMS` and its OpenPGP signature cover the exact downloadable artifacts. The release remains explicitly marked as a prerelease; it does not establish production qualification.
+The signed [2.0.0-alpha.1 prerelease](https://github.com/CruxExperts/BestBackup/releases/tag/v2.0.0-alpha.1) was published on October 3, 2026 from commit `b10ed84`. GitHub CI passed on Python 3.12, 3.13, and 3.14, and the release workflow built and smoke-tested its wheel and source archive. `SHA256SUMS` and its OpenPGP signature cover the exact downloadable artifacts. The release remains explicitly marked as a prerelease; it does not establish production qualification.
 
 On October 3, 2026, the combined checkout passed 753 tests with eight workers,
 including native-client fixtures and a real restic snapshot-manifest round trip
@@ -685,6 +685,104 @@ off-host custody or cloud-protected retention. No legacy implementation has
 been removed before its replacement is ready. Restore deadlines must come from
 measured drills.
 
+## Unreleased repository and recovery hardening — October 17, 2026
+
+This development work follows the published v2.0.2 artifacts and does not replace
+their release evidence. Portable schema 3 policy uses logical source names;
+private host bindings contain selectors and credential-file references. Explicit
+migration preserves the original files. Enrollment binds the exact reviewed pair
+to the machine and user, and concurrent edits cannot refresh that approval.
+Operations hold the shared policy lease throughout execution; settings saves
+refuse busy or stale inputs. Partial replica failures return nonzero while
+retaining local-capture and per-destination results. Native capture and restic
+stages receive the configured time limit.
+
+The guided setup and labeled dashboard forms use the shared command dispatcher,
+contextual field help, inline validation, and retained input after errors. Settings
+loads the current document before editing job schedule/time limits. Interactive
+job controls run or cancel that exact guarded operation; installed systemd timers
+continue independently. User and system timer observations are distinguished,
+and duplicate active timers are reported as a conflict.
+
+Legacy encrypted tree format 3 encrypts the authenticated inventory and uses
+opaque payload identifiers. Source metadata that cannot be preserved is refused
+before finalization. Decryption failures do not publish a successful output;
+Docker restore refuses occupied targets and proves ownership of a newly created
+volume before writing or cleanup. Archive filters retain normalized safe link
+targets and numeric ownership. SFTP requires an already trusted host key.
+
+The repository now contains generated banner/social assets with embedded rights
+metadata and checked provenance, plus a real headless dashboard preview using
+disposable data and illustrative capacity. Shared CLI discovery is regenerated
+from the owning registry. Release publication verifies signed tags and successful
+trusted CI for the exact default-branch commit, uploads a draft, checks all remote
+asset digests, and only then publishes it.
+
+Live GitHub protections enabled during this work include secret scanning and push
+protection, weekly Python/Actions code scanning, approval for all outside-fork
+workflows, signed commits, pull requests with zero required human approvals,
+resolved discussions, strict current CI checks, and protected release tags.
+The update-branch button is enabled. Non-provider secret-pattern enablement was
+requested through the documented API but remained disabled in readback; it is
+not claimed as enabled. Action SHA enforcement, the narrower action allowlist,
+the new aggregate required check, and immutable releases are staged for after
+the matching workflow is published, avoiding a broken existing release path.
+Source changes and new artwork are not yet published by these settings changes.
+
+The final broad suite passed **938 tests with one skip**. The isolated installed
+wheel smoke check passed. The test image built from an 8.3 MB allowlisted context
+and collected the tests successfully; its existing uv bootstrap now accepts both
+registry-verified amd64 and arm64 wheel hashes. Only the amd64 image was built
+locally. Focused checks additionally cover UI/CLI/status/management, encrypted
+inventory and archive tampering, source ownership, and enrollment/save races.
+Live restic-dependent dashboard and database drills are marked for the CI
+integration job so an unavailable engine cannot silently omit their coverage.
+These results do not qualify cloud providers, ARM64, full-machine recovery, or
+application startup. Rebootable guest evidence for the development candidate
+is recorded below; it does not retroactively qualify the published release.
+
+### Development candidate: rebootable systemd qualification
+
+On October 17, 2026, the isolated AMD64 Ubuntu 24.04.5 LTS guest
+(systemd 255.4-1ubuntu8.17, native Python 3.12, restic 0.19.1) passed the
+complete rebootable drill. The Canonical image's signed checksum was verified;
+the image SHA-256 was
+`6a81c37564db9b1ee84e141922625e1d7c5b389b99bb3c572e0243607d5bb4d2`.
+
+The same complete drill also passed on AMD64 Ubuntu 26.04.1 LTS with native
+Python 3.14 and systemd 259.5-0ubuntu3.4. Its signature-verified Canonical image
+SHA-256 was
+`8800651811af9a85465ad1d552add729947bb16488dddb4a9b5305a3d97332b2`.
+Each final run exited successfully with all ten checks true, in 328.4 seconds
+on Ubuntu 24.04 and 329.4 seconds on Ubuntu 26.04.
+
+The drill installed schema-3 policy and private bindings, enrolled the job,
+verified generated units with `systemd-analyze verify`, explicitly activated a
+user timer, and waited for a successfully completed scheduled backup. It verified
+an additional repository copy and byte-matched a restored file. Disabled timers
+stayed disabled. A stopped timer missed its deadline; after a real guest reboot,
+`Persistent=true` caught up successfully. An overlapping operation was refused as
+busy. A second, abrupt guest reset interrupted an in-flight mutation; the next
+boot recorded uncertainty and refused retry without dispatching restic again.
+Three distinct guest boot identifiers per guest were checked and retained privately.
+
+The installed qualification wheel SHA-256 was
+`286fbd25bb346a403e448b0ad2c6b6008c9cd78bb77519b927e3e3c389b106f7`.
+The final delivery wheel SHA-256 is
+`72a9a7a5757a749a00ee5f09eb4f2183c2e1610cc5f9e472b01be377b74ce31a`.
+A ZIP-member comparison found only the reviewed `dashboard_setup.py` enrollment
+screen fix and wheel `RECORD` changed. All engine, enrollment, and scheduling
+bytes match, so the lifecycle evidence is reused for those unchanged components;
+the final wheel separately passed isolated installation smoke checks.
+
+Both repositories lived in the same disposable guest with separate passwords.
+This proves the tested scheduled file-backup and interruption behavior, not
+independent host-loss recovery, off-host password custody, cloud-provider recovery,
+application startup, native ARM64 behavior, or package upgrade choreography. The
+harness never invoked host systemd. See the [qualification script instructions](../../scripts/README.md#rebootable-systemd-qualification)
+for reproduction; private logs, guest disks, and machine identifiers are excluded
+from source archives and Git.
+
 ## Dependency evidence
 
 The optional Google Drive client uses oauthlib 4.0.0 to incorporate upstream
@@ -737,7 +835,7 @@ recorded privately. They do not constitute base-image vulnerability closure.
 
 <p align="center">
 Slavic Kozyuk<br>
-&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/best-backup/blob/main/LICENSE">MIT License</a>
+&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/BestBackup/blob/main/LICENSE">MIT License</a>
 </p>
 
 <!-- project-footer:end -->

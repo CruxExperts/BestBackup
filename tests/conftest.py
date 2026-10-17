@@ -7,15 +7,26 @@ Last Updated: 2026-02-26
 """
 
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 
 def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
-    """Use half the detected CPUs, capped at eight workers."""
+    """Use one third of CPUs available through affinity and cgroup quota."""
     del config
-    return max(1, min(8, (os.cpu_count() or 1) // 2))
+    try:
+        available = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        available = os.cpu_count() or 1
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        if quota != "max":
+            available = min(available, max(1, int(quota) // int(period)))
+    except (OSError, ValueError, ZeroDivisionError):
+        pass
+    return max(1, available // 3)
 
 
 @pytest.fixture

@@ -44,6 +44,8 @@ _localsetup/
 .codex/sessions/
 .codex/logs/
 .codex/tmp/
+.agents/state/
+.agents/skills/
 .localsetup-maint/
 /state/
 

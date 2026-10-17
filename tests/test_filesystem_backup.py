@@ -11,11 +11,30 @@ Last Updated: 2026-02-27
 """
 
 from pathlib import Path
+import os
+import stat
+import pytest
 from unittest.mock import MagicMock, patch
 
 from bbackup.config import Config, FilesystemTarget
 from bbackup.filesystem_backup import FilesystemBackup
 from bbackup.restore import DockerRestore
+
+
+@pytest.mark.skipif(not hasattr(os, "setxattr"), reason="extended attributes unavailable")
+def test_original_source_xattr_rejected_before_rsync(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    item = source / "file.txt"
+    item.write_text("data")
+    try:
+        os.setxattr(item, "user.bbackup-test", b"acl-like")
+    except OSError as exc:
+        pytest.skip(f"extended attributes unavailable: {exc}")
+    backup = make_fs_backup(tmp_path)
+    with patch.object(backup, "_run_rsync") as rsync:
+        assert backup.backup_path(make_target(path=str(source)), tmp_path / "output") is False
+        rsync.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +310,13 @@ class TestRunRsync:
 
 
 class TestBackupPath:
+    @pytest.fixture(autouse=True)
+    def mocked_source_preflight(self, monkeypatch):
+        # These command dispatch tests use a deliberately nonexistent source.
+        monkeypatch.setattr(
+            "bbackup.filesystem_backup.EncryptionManager.validate_directory_tree", lambda source: []
+        )
+
     def test_creates_dest_dir(self, tmp_path):
         fb = make_fs_backup(tmp_path)
         target = make_target(name="docs", path="/tmp/source")
@@ -300,6 +326,7 @@ class TestBackupPath:
             fb.backup_path(target, backup_dir)
 
         assert (backup_dir / "filesystems" / "docs").exists()
+        assert stat.S_IMODE((backup_dir / "filesystems" / "docs").stat().st_mode) == 0o700
 
     def test_returns_true_on_success(self, tmp_path):
         fb = make_fs_backup(tmp_path)
@@ -321,6 +348,30 @@ class TestBackupPath:
         with patch.object(fb, "_build_rsync_cmd", side_effect=RuntimeError("boom")):
             result = fb.backup_path(target, tmp_path)
         assert result is False
+
+    def test_rejects_symlinked_staging_root(self, tmp_path):
+        fb = make_fs_backup(tmp_path)
+        target = make_target()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        backup_link = tmp_path / "backup_link"
+        backup_link.symlink_to(outside, target_is_directory=True)
+
+        with patch.object(fb, "_run_rsync", return_value=True) as run_rsync:
+            assert fb.backup_path(target, backup_link) is False
+
+        run_rsync.assert_not_called()
+        assert list(outside.iterdir()) == []
+
+    def test_rejects_target_name_traversal(self, tmp_path):
+        fb = make_fs_backup(tmp_path)
+        target = make_target(name="../outside")
+
+        with patch.object(fb, "_run_rsync", return_value=True) as run_rsync:
+            assert fb.backup_path(target, tmp_path / "backup") is False
+
+        run_rsync.assert_not_called()
+        assert not (tmp_path / "outside").exists()
 
     def test_no_excludes_skips_tempfile(self, tmp_path):
         """When target has no excludes, no --exclude-from should appear in command."""
@@ -348,7 +399,9 @@ class TestBackupPath:
         def capture(cmd, cb):
             if "--exclude-from" in cmd:
                 idx = cmd.index("--exclude-from")
-                seen_exclude_file.append(Path(cmd[idx + 1]))
+                exclude_path = Path(cmd[idx + 1])
+                seen_exclude_file.append(exclude_path)
+                assert stat.S_IMODE(exclude_path.stat().st_mode) == 0o600
             return True
 
         with patch.object(fb, "_run_rsync", side_effect=capture):
@@ -364,14 +417,15 @@ class TestBackupPath:
 
         created_files = []
 
-        original_mktemp = __import__("tempfile").mktemp
+        tempfile_module = __import__("tempfile")
+        original_mkstemp = tempfile_module.mkstemp
 
-        def track_mktemp(suffix="", **kwargs):
-            path = original_mktemp(suffix=suffix)
+        def track_mkstemp(*args, **kwargs):
+            fd, path = original_mkstemp(*args, **kwargs)
             created_files.append(path)
-            return path
+            return fd, path
 
-        with patch("tempfile.mktemp", side_effect=track_mktemp):
+        with patch("tempfile.mkstemp", side_effect=track_mkstemp):
             with patch.object(fb, "_run_rsync", return_value=True):
                 fb.backup_path(target, tmp_path)
 
@@ -384,14 +438,15 @@ class TestBackupPath:
         target = make_target(excludes=["*.pyc"])
 
         created_files = []
-        original_mktemp = __import__("tempfile").mktemp
+        tempfile_module = __import__("tempfile")
+        original_mkstemp = tempfile_module.mkstemp
 
-        def track_mktemp(suffix="", **kwargs):
-            path = original_mktemp(suffix=suffix)
+        def track_mkstemp(*args, **kwargs):
+            fd, path = original_mkstemp(*args, **kwargs)
             created_files.append(path)
-            return path
+            return fd, path
 
-        with patch("tempfile.mktemp", side_effect=track_mktemp):
+        with patch("tempfile.mkstemp", side_effect=track_mkstemp):
             with patch.object(fb, "_run_rsync", return_value=False):
                 fb.backup_path(target, tmp_path)
 
@@ -404,14 +459,15 @@ class TestBackupPath:
         target = make_target(excludes=["*.pyc"])
 
         created_files = []
-        original_mktemp = __import__("tempfile").mktemp
+        tempfile_module = __import__("tempfile")
+        original_mkstemp = tempfile_module.mkstemp
 
-        def track_mktemp(suffix="", **kwargs):
-            path = original_mktemp(suffix=suffix)
+        def track_mkstemp(*args, **kwargs):
+            fd, path = original_mkstemp(*args, **kwargs)
             created_files.append(path)
-            return path
+            return fd, path
 
-        with patch("tempfile.mktemp", side_effect=track_mktemp):
+        with patch("tempfile.mkstemp", side_effect=track_mkstemp):
             with patch.object(fb, "_run_rsync", side_effect=RuntimeError("boom")):
                 result = fb.backup_path(target, tmp_path)
 

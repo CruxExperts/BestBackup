@@ -183,12 +183,12 @@ def test_schedules_require_loaded_active_systemd_timer_with_next_run(monkeypatch
     )
     monkeypatch.setattr(
         "bbackup.service_status.subprocess.run",
-        lambda *args, **kwargs: SimpleNamespace(stdout=output),
+        lambda command, **kwargs: SimpleNamespace(stdout=output if "--user" in command else ""),
     )
 
     schedule, = _schedules((job,))
 
-    assert schedule["active_timer"] == "bbackup-daily.timer"
+    assert schedule["active_timer"] == "user: bbackup-daily.timer"
     assert schedule["next_run"] == "2026-10-16 00:00:00 UTC"
 
 
@@ -197,10 +197,21 @@ def test_configured_schedule_without_active_timer_has_no_next_run(monkeypatch):
     output = "Id=bbackup-daily.timer\nLoadState=not-found\nActiveState=inactive\nNextElapseUSecRealtime=0"
     monkeypatch.setattr(
         "bbackup.service_status.subprocess.run",
-        lambda *args, **kwargs: SimpleNamespace(stdout=output),
+        lambda command, **kwargs: SimpleNamespace(stdout=output if "--user" in command else ""),
     )
 
     schedule, = _schedules((job,))
 
     assert schedule["active_timer"] is None
+    assert schedule["next_run"] is None
+
+
+def test_schedules_detect_duplicate_user_and_system_timers(monkeypatch):
+    job = Job(name="daily", repository="local", sources=("files",), schedule="daily")
+    output = ("Id=bbackup-daily.timer\nLoadState=loaded\nActiveState=active\n"
+              "NextElapseUSecRealtime=2026-10-16 00:00:00 UTC")
+    monkeypatch.setattr("bbackup.service_status.subprocess.run",
+                        lambda *args, **kwargs: SimpleNamespace(stdout=output))
+    schedule, = _schedules((job,))
+    assert schedule["active_timer"] == "conflicting timers"
     assert schedule["next_run"] is None

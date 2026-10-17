@@ -1,4 +1,4 @@
-"""Strict version-two portable configuration. Secrets remain in host bindings."""
+"""Strict portable policy and private host bindings."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 
 
 class ConfigurationError(ValueError):
-    """Configuration does not satisfy the version-two contract."""
+    """Configuration does not satisfy the declared contract."""
 
 
 def _object(value: Any, allowed: set[str], required: set[str]) -> dict:
@@ -85,7 +85,7 @@ class Repository:
 class Source:
     name: str
     kind: str
-    paths: tuple[str, ...]
+    paths: tuple[str, ...] = ()
     database: str | None = None
     connection: str | None = None
     quiesce: str | None = None
@@ -139,6 +139,27 @@ class Source:
             _name(raw["connection"]), raw.get("quiesce"),
         )
 
+    @classmethod
+    def parse_policy(cls, raw):
+        """Parse a portable source without accepting any host selector."""
+        raw = _object(raw, {"name", "kind", "quiesce", "stop_policy"}, {"name", "kind"})
+        kind = raw["kind"]
+        if kind not in ("files", "sqlite", "postgresql", "mysql", "mariadb", "docker"):
+            raise ConfigurationError("Source kind is not implemented; capture is refused")
+        expected = {"name", "kind"}
+        if kind in ("mysql", "mariadb"):
+            expected.add("quiesce")
+            if raw.get("quiesce") != "read-lock":
+                raise ConfigurationError("MySQL and MariaDB sources require quiesce='read-lock'")
+        if kind == "docker":
+            expected.add("stop_policy")
+            if raw.get("stop_policy") != "stop-restart":
+                raise ConfigurationError("Docker sources require stop_policy='stop-restart'")
+        if set(raw) != expected:
+            raise ConfigurationError("Portable sources may contain policy, not host selectors")
+        return cls(_name(raw["name"]), kind, quiesce=raw.get("quiesce"),
+                   stop_policy=raw.get("stop_policy"))
+
 
 @dataclass(frozen=True)
 class Retention:
@@ -168,6 +189,7 @@ class Job:
     replicas: tuple[str, ...] = ()
     schedule: str = "daily"
     overdue_hours: int = 26
+    timeout_seconds: int = 3600
     retention: Retention = field(default_factory=Retention)
 
     @classmethod
@@ -199,6 +221,7 @@ class Job:
             replicas,
             schedule,
             _positive(raw.get("overdue_hours", 26)),
+            _positive(raw.get("timeout_seconds", 3600)),
             Retention.parse(raw.get("retention", {})),
         )
 
@@ -217,8 +240,9 @@ class Configuration:
             {"schema_version", "repositories", "sources", "jobs"},
             {"schema_version", "repositories", "sources", "jobs"},
         )
-        if type(raw["schema_version"]) is not int or raw["schema_version"] != 2:
-            raise ConfigurationError("Expected schema_version 2")
+        version = raw["schema_version"]
+        if type(version) is not int or version not in (2, 3):
+            raise ConfigurationError("Expected schema_version 2 or 3")
         groups = []
         for key, model in (
             ("repositories", Repository),
@@ -227,11 +251,12 @@ class Configuration:
         ):
             if not isinstance(raw[key], list):
                 raise ConfigurationError("Configuration collections must be arrays")
-            entries = tuple(model.parse(item) for item in raw[key])
+            parser = Source.parse_policy if key == "sources" and version == 3 else model.parse
+            entries = tuple(parser(item) for item in raw[key])
             if len({item.name for item in entries}) != len(entries):
                 raise ConfigurationError("Duplicate names in configuration collection")
             groups.append(entries)
-        config = cls(*groups)
+        config = cls(*groups, schema_version=version)
         repositories = {repo.name: repo for repo in config.repositories}
         sources = {source.name for source in config.sources}
         for job in config.jobs:
@@ -370,26 +395,76 @@ def _absolute_file(value: Any, description: str) -> Path:
 
 
 @dataclass(frozen=True)
+class SourceBinding:
+    """Concrete capture selector owned by one private host."""
+
+    paths: tuple[str, ...] = ()
+    database: str | None = None
+    connection: str | None = None
+    container: str | None = None
+
+    @classmethod
+    def parse(cls, raw, policy: Source):
+        kind = policy.kind
+        if kind in ("files", "sqlite"):
+            raw = _object(raw, {"paths"}, {"paths"})
+            paths = _strings(raw["paths"])
+            if not paths or any(not Path(path).is_absolute() for path in paths):
+                raise ConfigurationError("Source paths must be nonempty absolute paths")
+            if kind == "sqlite" and len(paths) != 1:
+                raise ConfigurationError("SQLite sources require exactly one database")
+            return cls(paths=paths)
+        if kind == "docker":
+            raw = _object(raw, {"container", "connection"}, {"container", "connection"})
+            container = raw["container"]
+            if not isinstance(container, str) or not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", container
+            ):
+                raise ConfigurationError("Docker sources require one exact container name")
+            return cls(connection=_name(raw["connection"]), container=container)
+        raw = _object(raw, {"database", "connection"}, {"database", "connection"})
+        return cls(database=_name(raw["database"]), connection=_name(raw["connection"]))
+
+    def resolve(self, policy: Source) -> Source:
+        return Source(policy.name, policy.kind, self.paths, self.database,
+                      self.connection, policy.quiesce, self.container,
+                      policy.stop_policy)
+
+
+@dataclass(frozen=True)
 class HostBindings:
     state_dir: Path
     repositories: dict[str, RepositoryBinding]
     database_bindings: dict[str, DatabaseBinding] = field(default_factory=dict)
     docker_bindings: dict[str, DockerBinding] = field(default_factory=dict)
+    source_bindings: dict[str, SourceBinding] = field(default_factory=dict)
+    schema_version: int = 2
     @classmethod
-    def load(cls, path: Path):
+    def load(cls, path: Path, configuration: Configuration | None = None):
         if path.stat().st_mode & 0o077:
             raise ConfigurationError(
                 "Host bindings must not be accessible to group or other users"
             )
         if path.stat().st_size > 1024 * 1024:
             raise ConfigurationError("Host bindings exceed 1 MiB")
+        return cls.parse(strict_json(path.read_text(encoding="utf-8")), configuration)
+
+    @classmethod
+    def parse(cls, raw, configuration: Configuration | None = None):
         raw = _object(
-            strict_json(path.read_text(encoding="utf-8")),
-            {"schema_version", "state_dir", "repositories", "database_bindings", "docker_bindings"},
+            raw,
+            {"schema_version", "state_dir", "repositories", "database_bindings", "docker_bindings", "source_bindings"},
             {"schema_version", "state_dir", "repositories"},
         )
-        if type(raw["schema_version"]) is not int or raw["schema_version"] != 2:
-            raise ConfigurationError("Expected host binding schema_version 2")
+        version = raw["schema_version"]
+        if type(version) is not int or version not in (2, 3):
+            raise ConfigurationError("Expected host binding schema_version 2 or 3")
+        if configuration is not None and version != configuration.schema_version:
+            raise ConfigurationError("Policy and bindings schema versions must match")
+        if version == 2 and "source_bindings" in raw:
+            raise ConfigurationError("Version 2 bindings cannot contain source_bindings")
+        if version == 3 and "source_bindings" not in raw:
+            raise ConfigurationError("Version 3 bindings require source_bindings")
         state = raw["state_dir"]
         if not isinstance(state, str) or not Path(state).is_absolute() or "\0" in state:
             raise ConfigurationError("State directory must be an absolute path")
@@ -416,7 +491,19 @@ class HostBindings:
             _name(key): DockerBinding.parse(value)
             for key, value in raw_docker_bindings.items()
         }
-        return cls(Path(state), repositories, database_bindings, docker_bindings)
+        source_bindings = {}
+        if version == 3:
+            if configuration is None:
+                raise ConfigurationError("Version 3 bindings require the matching portable policy")
+            raw_sources = raw["source_bindings"]
+            if not isinstance(raw_sources, dict) or set(raw_sources) != {s.name for s in configuration.sources}:
+                raise ConfigurationError("Private source bindings must match declared sources")
+            source_bindings = {
+                source.name: SourceBinding.parse(raw_sources[source.name], source)
+                for source in configuration.sources
+            }
+        return cls(Path(state), repositories, database_bindings, docker_bindings,
+                   source_bindings, version)
 
     @property
     def sensitive_paths(self) -> tuple[Path, ...]:

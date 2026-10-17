@@ -11,9 +11,9 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CANONICAL_REPO = "github.com/CruxExperts/best-backup"
+CANONICAL_REPO = "github.com/CruxExperts/BestBackup"
 LEGACY_REPO = "github.com/cptnfren/best-backup"
-STALE_CHECKOUT_PATH = "/mnt/data/devzone/linuxtools/best-backup"
+PRIVATE_ROOTS = (str(REPO_ROOT.resolve()), str(Path.home()))
 PY_COMPILE_COMMAND = (
     "uv run python -m py_compile bbackup.py bbman.py bbackup/*.py "
     "bbackup/data/*.py bbackup/management/*.py scripts/*.py"
@@ -30,12 +30,12 @@ PY_COMPILE_TARGETS = (
 
 EXPECTED_ACTIONS = {
     ".github/workflows/ci.yml": [
-        "actions/checkout@v7",
-        "actions/setup-python@v6",
-        "actions/upload-artifact@v7",
+        "actions/checkout",
+        "actions/setup-python",
+        "actions/upload-artifact",
     ],
     ".github/workflows/stale.yml": [
-        "actions/stale@v10",
+        "actions/stale",
     ],
 }
 
@@ -90,8 +90,12 @@ def main() -> int:
     for path, actions in EXPECTED_ACTIONS.items():
         text = read(path)
         for action in actions:
-            if action not in text:
-                errors.append(f"{path} is missing {action}")
+            if not re.search(r"uses:\s*" + re.escape(action) + r"@[0-9a-f]{40}\b", text):
+                errors.append(f"{path} must pin {action} to a full commit SHA")
+    for workflow in (REPO_ROOT / ".github/workflows").glob("*.yml"):
+        for action in re.findall(r"^\s*(?:-\s*)?uses:\s*(\S+)", workflow.read_text(), re.MULTILINE):
+            if not action.startswith("./") and not re.fullmatch(r"[A-Za-z0-9_./-]+@[0-9a-f]{40}", action):
+                errors.append(f"{workflow.name}: action must use a full commit SHA: {action}")
 
     for path in (
         "AGENTS.md",
@@ -112,6 +116,12 @@ def main() -> int:
     for legacy_requirements in ("requirements.txt", "requirements-dev.txt"):
         if (REPO_ROOT / legacy_requirements).exists():
             errors.append(f"{legacy_requirements} should not be present; use pyproject.toml and uv.lock")
+    manifest = REPO_ROOT / "MANIFEST.in"
+    if not manifest.is_file() or any(pattern not in manifest.read_text() for pattern in (
+        "recursive-include scripts", "recursive-include docs", "recursive-include packaging",
+        "include VERSION uv.lock", "prune .agents",
+    )):
+        errors.append("MANIFEST.in must include portable source inputs and exclude private agent state")
     if not (REPO_ROOT / "uv.lock").exists():
         errors.append("uv.lock is missing")
     if (REPO_ROOT / ".python-version").read_text(encoding="utf-8").strip() != "3.12":
@@ -139,7 +149,7 @@ def main() -> int:
         "uv run ruff check",
         "uv run python -m py_compile",
         "uv run python scripts/generate_cli_skills.py --check",
-        "uv run pytest",
+        "scripts/verify_release_source.py",
         "uv run python scripts/smoke_installed_artifact.py",
     ):
         if release_check not in release_workflow:
@@ -152,8 +162,15 @@ def main() -> int:
         errors.append(".github/workflows/ci.yml must test Python 3.12, 3.13, and 3.14")
     if "uv sync --locked" not in ci_workflow or "uv run pytest" not in ci_workflow:
         errors.append(".github/workflows/ci.yml must install and test through uv")
-    if "python -m pip install uv" not in ci_workflow:
-        errors.append(".github/workflows/ci.yml must install uv without disallowed third-party actions")
+    if "--require-hashes" not in ci_workflow or ".github/uv-bootstrap.txt" not in ci_workflow:
+        errors.append(".github/workflows/ci.yml must verify its pinned uv bootstrap")
+    if "uv run pytest tests/ -m integration" not in ci_workflow:
+        errors.append("CI must collect integration tests across the complete tests directory")
+    if "name: CI required" not in ci_workflow or "if: always()" not in ci_workflow:
+        errors.append("CI must expose its aggregate required result")
+    for path in ("SECURITY.md", "SUPPORT.md", ".github/pull_request_template.md"):
+        if "2.0.0-alpha.1 preview" in read(path) or "Version 2 is a preview" in read(path):
+            errors.append(f"{path} contains stale version-two support wording")
     for target in PY_COMPILE_TARGETS:
         if target not in ci_workflow:
             errors.append(f".github/workflows/ci.yml py_compile step is missing {target}")
@@ -168,8 +185,8 @@ def main() -> int:
         if path != Path("scripts/check_publishing_ready.py"):
             if LEGACY_REPO in text:
                 errors.append(f"{path} still references {LEGACY_REPO}")
-            if STALE_CHECKOUT_PATH in text:
-                errors.append(f"{path} still references stale checkout path {STALE_CHECKOUT_PATH}")
+            if any(root in text for root in PRIVATE_ROOTS):
+                errors.append(f"{path} contains a local workspace or home path")
 
     for path in ("README.md", "INSTALL.md", "QUICKSTART.md", "SUPPORT.md"):
         if CANONICAL_REPO not in read(path):
@@ -177,12 +194,12 @@ def main() -> int:
 
     for path in public_files:
         text = read(str(path))
-        if "github.com/" in text and "best-backup" in text:
+        if re.search(r"github[.]com/[^\s\"<>)]*/best-backup(?:[/#?\s\"<>)]|$)", text):
             if CANONICAL_REPO not in text and path != Path("docs/prompts/bootstrap-planning-agent.md"):
                 errors.append(f"{path} has a best-backup GitHub URL but not {CANONICAL_REPO}")
 
     changelog = read("CHANGELOG.md")
-    if not re.search(r"https://github\.com/CruxExperts/best-backup/compare/v\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?\.\.\.HEAD", changelog):
+    if not re.search(r"https://github\.com/CruxExperts/BestBackup/compare/v\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?\.\.\.HEAD", changelog):
         errors.append("CHANGELOG.md [Unreleased] compare link is not canonical")
 
     if errors:

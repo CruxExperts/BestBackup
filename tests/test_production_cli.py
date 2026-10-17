@@ -3,8 +3,12 @@ import json
 from dataclasses import asdict
 
 from click.testing import CliRunner
+import pytest
 
-from bbackup.production_cli import cli
+from bbackup.production_cli import _default_paths, cli
+from bbackup.configuration_workspace import ConfigurationWorkspace
+from bbackup.models import ConfigurationError
+from bbackup.production_operations import execute_operation
 from tests.test_service import service  # noqa: F401
 
 
@@ -19,12 +23,28 @@ def _without_none(value):
 def invoke(service, command):
     config = service.state / "cli-config.json"
     bindings = service.state / "cli-bindings.json"
-    config.write_text(json.dumps(_without_none(asdict(service.config)), default=str))
+    policy = _without_none(asdict(service.config))
+    policy["schema_version"] = 3
+    source_bindings = {}
+    for source in policy["sources"]:
+        kind, name = source["kind"], source["name"]
+        if kind in ("files", "sqlite"):
+            source_bindings[name] = {"paths": source.pop("paths")}
+        elif kind == "docker":
+            source_bindings[name] = {"container": source.pop("container"),
+                                     "connection": source.pop("connection")}
+        else:
+            source_bindings[name] = {"database": source.pop("database"),
+                                     "connection": source.pop("connection")}
+        source.pop("paths", None)
+    config.write_text(json.dumps(policy, default=str))
     bindings.write_text(json.dumps(
-        _without_none({"schema_version": 2, **asdict(service.bindings)}), default=str
+        _without_none({**asdict(service.bindings), "schema_version": 3,
+                       "source_bindings": source_bindings}), default=str
     ))
     config.chmod(0o600)
     bindings.chmod(0o600)
+    ConfigurationWorkspace(config, bindings).enroll()
     return CliRunner().invoke(cli, ["--config", str(config), "--bindings", str(bindings), *command])
 
 
@@ -44,6 +64,81 @@ def test_schema_and_sanitized_listing(service):
     result = invoke(service, ["repositories", "list"])
     assert result.exit_code == 0
     assert ".password" not in result.output and "repository" not in json.loads(result.output)["data"][0]
+    help_data = execute_operation("skills", {"name": "service install"})["service install"]
+    assert help_data["ui"]["activate"]["help"].startswith("Enable and start")
+
+
+def test_cli_reports_enrollment_next_action(service):
+    assert invoke(service, ["jobs", "list"]).exit_code == 0
+    config = service.state / "cli-config.json"
+    policy = json.loads(config.read_text())
+    policy["jobs"][0]["overdue_hours"] = 48
+    config.write_text(json.dumps(policy))
+    result = CliRunner().invoke(cli, ["--config", str(config), "--bindings",
+                                      str(service.state / "cli-bindings.json"), "jobs", "list"])
+    assert result.exit_code == 2
+    error = json.loads(result.output)["errors"][0]
+    assert error["code"] == "enrollment_required"
+    assert error["next_action"] == "Review the policy and bindings, then run service enroll"
+
+
+def test_operation_reloads_current_policy_even_when_supplied_stale_service(service):
+    assert invoke(service, ["jobs", "list"]).exit_code == 0
+    config = service.state / "cli-config.json"
+    bindings = service.state / "cli-bindings.json"
+    workspace = ConfigurationWorkspace(config, bindings)
+    original = workspace.read()
+    policy = json.loads(original["document"])
+    policy["jobs"][0]["overdue_hours"] = 48
+    workspace.save(json.dumps(policy), original["revision"])
+    jobs = execute_operation("jobs list", {}, service=service, config_path=config,
+                             bindings_path=bindings)
+    assert jobs[0]["overdue_hours"] == 48
+    assert service.config.jobs[0].overdue_hours == 26
+
+
+def test_operation_refuses_binding_edit_between_snapshot_validation_and_dispatch(service, monkeypatch):
+    from bbackup import production_operations as module
+    assert invoke(service, ["jobs", "list"]).exit_code == 0
+    config = service.state / "cli-config.json"
+    bindings = service.state / "cli-bindings.json"
+    verify = module.verify_bytes
+
+    def edit_after_verify(state, policy_bytes, binding_bytes):
+        verify(state, policy_bytes, binding_bytes)
+        private = json.loads(bindings.read_text())
+        private["repositories"]["copy"]["repository"] += "-unreviewed"
+        bindings.write_text(json.dumps(private))
+
+    monkeypatch.setattr(module, "verify_bytes", edit_after_verify)
+    monkeypatch.setattr(module, "BackupService", lambda *_args: pytest.fail(
+        "service constructed from an unreviewed binding generation"))
+    with pytest.raises(ConfigurationError, match="changed during enrollment validation"):
+        execute_operation("jobs list", {}, config_path=config, bindings_path=bindings)
+
+
+def test_default_paths_prefer_only_verified_v3_pair(service, tmp_path, monkeypatch):
+    assert invoke(service, ["jobs", "list"]).exit_code == 0
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    directory = tmp_path / "bbackup"
+    directory.mkdir()
+    policy = directory / "config.v3.json"
+    bindings = directory / "bindings.v3.json"
+    policy.write_bytes((service.state / "cli-config.json").read_bytes())
+    bindings.write_bytes((service.state / "cli-bindings.json").read_bytes())
+    bindings.chmod(0o600)
+    assert _default_paths() == (policy, bindings)
+    private = json.loads(bindings.read_text())
+    private["repositories"]["copy"]["repository"] += "-unreviewed"
+    bindings.write_text(json.dumps(private))
+    assert _default_paths() == (directory / "config.json", directory / "bindings.json")
+
+
+def test_default_paths_reject_relative_xdg_home(monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", "relative/private")
+    result = CliRunner().invoke(cli, ["skills"])
+    assert result.exit_code == 2
+    assert json.loads(result.output)["errors"][0]["code"] == "invalid_input"
 
 
 
@@ -92,3 +187,42 @@ def test_docker_command_schemas_are_closed_and_require_explicit_identity(service
         assert required <= set(schema["required"])
         acknowledgement = acknowledgements[operation]
         assert schema["properties"][acknowledgement]["default"] is False
+
+
+@pytest.mark.parametrize("mismatch", ["policy", "bindings", "machine", "uid"])
+def test_enrollment_mismatch_refused_before_service_construction(service, monkeypatch, mismatch):
+    assert invoke(service, ["jobs", "list"]).exit_code == 0
+    config = service.state / "cli-config.json"
+    bindings = service.state / "cli-bindings.json"
+    if mismatch == "policy":
+        policy = json.loads(config.read_text())
+        policy["jobs"][0]["overdue_hours"] = 48
+        config.write_text(json.dumps(policy))
+    elif mismatch == "bindings":
+        private = json.loads(bindings.read_text())
+        private["repositories"]["copy"]["repository"] += "-changed"
+        bindings.write_text(json.dumps(private))
+    else:
+        from bbackup import enrollment
+        machine, uid = enrollment.machine_identity()
+        monkeypatch.setattr(enrollment, "machine_identity", lambda: (
+            "f" * 64 if mismatch == "machine" else machine,
+            uid + 1 if mismatch == "uid" else uid,
+        ))
+    monkeypatch.setattr("bbackup.production_operations.BackupService", lambda *_args: pytest.fail(
+        "service constructed before enrollment validation"))
+    with pytest.raises(ConfigurationError, match="enrollment"):
+        execute_operation("jobs list", {}, config_path=config, bindings_path=bindings)
+
+
+def test_doctor_can_explain_missing_enrollment_without_constructing_runtime(service, monkeypatch):
+    assert invoke(service, ["jobs", "list"]).exit_code == 0
+    (service.state / "enrollment.json").unlink()
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Unenrolled doctor must not construct runtime state")
+    monkeypatch.setattr("bbackup.production_operations.BackupService", forbidden)
+    result = execute_operation("doctor", {}, config_path=service.state / "cli-config.json",
+                               bindings_path=service.state / "cli-bindings.json")
+    assert result["enrollment_valid"] is False
+    assert "service enroll" in result["next_action"]
+    assert not (service.state / "enrollment.json").exists()

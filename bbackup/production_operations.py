@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from contextlib import contextmanager
 from pathlib import Path
 import shutil
 from typing import Any
@@ -10,11 +11,12 @@ from .b2 import inspect_b2
 from .cli_metadata import PRODUCTION_COMMANDS, production_schema
 from .cloud import S3CloudAdapter
 from .configuration_workspace import ConfigurationWorkspace, read_document
-from .models import Configuration, ConfigurationError, HostBindings
+from .enrollment import parse_pair, policy_lease, read_pair, verify_bytes
+from .models import ConfigurationError
 from .operations import ReconciliationOutcome, repository_key
 from .recovery import (create_checked_kit, open_kit, verify_checkpoint,
                        verify_reconstructed_repository)
-from .scheduling import job_units
+from .scheduling import install_user_units, job_units
 from .service import BackupService, ServiceError
 from .service_status import operational_status
 
@@ -46,10 +48,25 @@ def validate_operation_input(command: str, values: dict[str, Any]) -> dict[str, 
     return result
 
 
-def _load_service(config_path: Path | None, bindings_path: Path | None) -> BackupService:
+@contextmanager
+def _operation_lease(config_path, bindings_path):
     if config_path is None or bindings_path is None:
         raise ConfigurationError("This operation requires configuration and bindings")
-    return BackupService(Configuration.load(config_path), HostBindings.load(bindings_path))
+    preliminary_policy, preliminary_bindings = read_pair(config_path, bindings_path)
+    configuration, bindings = parse_pair(preliminary_policy, preliminary_bindings)
+    if configuration.schema_version != 3:
+        raise ConfigurationError("Version 2 is inspection and migration only; run config migrate")
+    with policy_lease(bindings.state_dir):
+        policy_bytes, binding_bytes = read_pair(config_path, bindings_path)
+        current_config, current_bindings = parse_pair(policy_bytes, binding_bytes)
+        if current_config.schema_version != 3:
+            raise ConfigurationError("Version 2 is inspection and migration only; run config migrate")
+        if current_bindings.state_dir.resolve() != bindings.state_dir.resolve():
+            raise ConfigurationError("Private state location changed during operation; retry")
+        verify_bytes(current_bindings.state_dir, policy_bytes, binding_bytes)
+        if read_pair(config_path, bindings_path) != (policy_bytes, binding_bytes):
+            raise ConfigurationError("Configuration changed during enrollment validation; review and retry")
+        yield BackupService(current_config, current_bindings)
 
 
 def execute_operation(command: str, values: dict[str, Any], *, service: BackupService | None = None,
@@ -61,26 +78,55 @@ def execute_operation(command: str, values: dict[str, Any], *, service: BackupSe
         name = values.get("name")
         if name is not None and name not in PRODUCTION_COMMANDS:
             raise ConfigurationError("Unknown command schema")
-        return {key: {"summary": item["summary"], "input_schema": production_schema(key)}
+        return {key: {"summary": item["summary"], "input_schema": production_schema(key),
+                      "ui": item.get("ui", {})}
                 for key, item in PRODUCTION_COMMANDS.items() if name is None or key == name}
-    if command == "setup" or command.startswith("config "):
+    if command == "setup" or command.startswith("config ") or command == "service enroll":
         if config_path is None or bindings_path is None:
             raise ConfigurationError("This operation requires configuration and bindings paths")
         workspace = ConfigurationWorkspace(config_path, bindings_path)
         if command == "setup":
+            if values["migrate"] and values["enroll"]:
+                raise ConfigurationError("Choose migration or enrollment")
+            if values["migrate"]:
+                return workspace.migrate()
+            if values["enroll"]:
+                return workspace.enroll()
+            if "configuration_file" not in values or "bindings_file" not in values:
+                raise ConfigurationError("Setup requires policy and binding candidates")
             workspace.setup(read_document(Path(values["configuration_file"])),
                             read_document(Path(values["bindings_file"])))
             return {"configured": True, "repositories_initialized": False, "services_enabled": False}
         if command == "config show":
             return workspace.read()
+        if command == "config migrate":
+            return workspace.migrate()
+        if command == "service enroll":
+            return workspace.enroll()
         return workspace.save(read_document(Path(values["document_file"])), values["revision"])
-    if command.startswith("recovery "):
-        if command == "recovery checkpoint" and service is None:
-            service = _load_service(config_path, bindings_path)
+    if command.startswith("recovery ") and command != "recovery checkpoint":
         return _recovery_dispatch(service, command, values, cancel)
-    if service is None:
-        service = _load_service(config_path, bindings_path)
-    return _service_operation(service, command, values, config_path, bindings_path, cancel)
+    if command == "doctor" and config_path is not None and bindings_path is not None:
+        policy_bytes, binding_bytes = read_pair(config_path, bindings_path)
+        configuration, bindings = parse_pair(policy_bytes, binding_bytes)
+        if configuration.schema_version != 3:
+            return {"restic_available": shutil.which("restic") is not None,
+                    "jobs": len(configuration.jobs), "enrollment_valid": False,
+                    "next_action": "Run config migrate, or open the dashboard to review migration",
+                    "production_qualified": False}
+        try:
+            with policy_lease(bindings.state_dir):
+                verify_bytes(bindings.state_dir, policy_bytes, binding_bytes)
+        except (ConfigurationError, OSError):
+            # Inspection stays available without creating a ledger or approving new authority.
+            return {"restic_available": shutil.which("restic") is not None,
+                    "jobs": len(configuration.jobs), "enrollment_valid": False,
+                    "next_action": "Review the exact local mappings, then run service enroll",
+                    "production_qualified": False}
+    with _operation_lease(config_path, bindings_path) as service:
+        if command == "recovery checkpoint":
+            return _recovery_dispatch(service, command, values, cancel)
+        return _service_operation(service, command, values, config_path, bindings_path, cancel)
 
 
 def _service_operation(service, command, values, config_path, bindings_path, cancel):
@@ -159,6 +205,12 @@ def _service_operation(service, command, values, config_path, bindings_path, can
             raise ConfigurationError("Rendering services requires configuration paths")
         return job_units(service._job(values["name"]), executable=Path(values["executable"]),
                          config=config_path.absolute(), bindings=bindings_path.absolute())
+    if command == "service install":
+        if config_path is None or bindings_path is None:
+            raise ConfigurationError("Installing services requires configuration paths")
+        units = job_units(service._job(values["name"]), executable=Path(values["executable"]),
+                          config=config_path.absolute(), bindings=bindings_path.absolute())
+        return install_user_units(units, activate=values["activate"])
     raise ServiceError("Unsupported command")
 
 

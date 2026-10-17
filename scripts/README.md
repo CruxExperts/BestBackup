@@ -6,7 +6,84 @@
 
 ## Available scripts
 
+### Repository integrity checks
+
+`MANIFEST.in` owns the portable source archive contents: runtime code, locked
+requirements, documentation/artwork, tests, packaging templates, and maintenance
+scripts. Private agent state, environments, keys, and logs are excluded. Build
+source archives with `uv build`; source archives and installed wheels have
+different purposes, so check both before a release.
+
+`uv run python scripts/generate_dashboard_preview.py` captures the real dashboard
+headlessly after a disposable capture/copy/check/restore drill. Capacity is
+explicitly illustrative; no host disk measurements or private paths are published.
+It requires restic and never touches user backup repositories.
+
+- `uv run python scripts/check_assets.py` verifies active PNG checksums, dimensions,
+  required embedded rights metadata, and the provenance manifest.
+- `uv run python scripts/generate_cli_skills.py --check` checks generated command
+  discovery against the shared command registry. Run without `--check` to refresh.
+- `scripts/verify_release_source.py` verifies the signed annotated tag, its exact
+  default-branch commit, and successful trusted push CI before release builds and
+  again before publication. The publisher uploads to a draft, verifies every
+  uploaded asset digest, then publishes the complete release.
+
+
+### Test container and helper images
+
+The test container in [Dockerfile.test](../Dockerfile.test) uses the official
+Python 3.12.15 slim Trixie multiarchitecture index
+`sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1`.
+It installs `uv` 0.11.21 from the wheel and SHA-256 in
+[uv-bootstrap.txt](../.github/uv-bootstrap.txt) with pip hash checking. Docker
+backup, restore, and integration helpers share the official Alpine 3.23.6
+multiarchitecture index
+`sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0`
+through `bbackup/container_images.py`. The corresponding registry manifests
+were checked for amd64 and arm64; pinned indexes must be reviewed deliberately
+when updating Python or Alpine. The shared bootstrap includes the registry-verified amd64 and arm64 wheel
+hashes. The image build and collection were exercised on amd64; accepting the
+arm64 wheel hash is not a native arm64 runtime qualification. `apt-get` and `apk add` still resolve current
+distribution packages at build time, so these recipes are not byte-for-byte
+reproducible. Sources: [Python official image](https://hub.docker.com/_/python),
+[Alpine official image](https://hub.docker.com/_/alpine), and
+[uv on PyPI](https://pypi.org/project/uv/0.11.21/).
+
+### Rebootable systemd qualification
+
+`scripts/qualify_systemd.py` installs an exact wheel and hash-locked dependencies
+in a disposable Ubuntu AMD64 guest. It checks timer capture, an additional
+same-guest repository copy, byte-matched file restore, disabled timers, persistent
+catch-up after a missed schedule, overlap refusal, and an abrupt guest reset
+without automatic replay of an uncertain operation. Both repositories share the
+guest; this does not prove off-host disaster recovery.
+
+The host needs Docker, KVM access, `genisoimage`, `gpgv`, and the Ubuntu cloud-image
+public keyring. Review the script's pinned image/toolchain before running it.
+Supply previously reviewed restic and uv executables, a target-compatible runtime
+wheelhouse, and hash-locked requirements exported from `uv.lock`:
+
+```bash
+uv run python scripts/qualify_systemd.py \
+  --artifact dist/bbackup-2.0.2-py3-none-any.whl \
+  --wheel-sha256 '<SHA-256 of that exact wheel>' \
+  --ubuntu-codename noble \
+  --wheelhouse /path/to/reviewed-runtime-wheels \
+  --requirements /path/to/hash-locked-requirements.txt \
+  --restic /path/to/reviewed-restic \
+  --uv /path/to/reviewed-uv
+```
+
+Use `resolute` and Python 3.14-compatible wheels for Ubuntu 26.04; `noble` uses
+Python 3.12. The harness downloads a signature-verified Canonical cloud image and
+runs QEMU in a task-owned container. It never invokes host systemd. Private logs,
+passwords, guest disks, and machine identifiers remain under ignored
+`.agents/state/repo-review/systemd/`; do not publish these runtime records.
+See [recorded qualification scope](../docs/development/version-2.md) before
+making support claims.
+
 ### Build a native Ubuntu package
+
 
 The `build_deb.py` script builds a `.deb` from the supplied bbackup wheel, this repository's `uv.lock`, and a supplied restic 0.19.1 executable. The builder requires an already installed `uv`, `dpkg-deb`, and the `packaging` module in its Python interpreter; on supported Ubuntu/Mint hosts, install `python3-packaging` and invoke `/usr/bin/python3`. It does not download restic, install packages on the host, update `uv.lock`, or install Python packages into system Python. Run it as an unprivileged user.
 The locked dependency export explicitly uses the same native interpreter that
@@ -159,7 +236,7 @@ Back to [README.md](../README.md).
 
 <p align="center">
 Slavic Kozyuk<br>
-&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/best-backup/blob/main/LICENSE">MIT License</a>
+&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/BestBackup/blob/main/LICENSE">MIT License</a>
 </p>
 
 <!-- project-footer:end -->

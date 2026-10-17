@@ -8,14 +8,18 @@ import json
 import shutil
 import subprocess
 import tarfile
+import io
 from pathlib import Path
 from typing import List, Dict, Optional, Set, Callable
 from datetime import datetime
 import docker
 from docker.errors import DockerException, APIError
 
-from .config import BackupScope, Config
+from .config import BackupScope, Config, ensure_private_directory, open_private_file
 from .logging import get_logger
+from .container_images import ALPINE_HELPER_IMAGE
+from .archive import extract_archive_safely
+from .encryption import EncryptionManager
 
 logger = get_logger('docker_backup')
 
@@ -87,14 +91,14 @@ class DockerBackup:
             inspect_data = container.attrs
             
             config_file = backup_dir / f"{container_name}_config.json"
-            with open(config_file, 'w') as f:
+            with open_private_file(config_file, 'w', encoding="utf-8") as f:
                 json.dump(inspect_data, f, indent=2)
             
             # Also save logs
             try:
                 logs = container.logs(tail=1000).decode('utf-8', errors='replace')
                 log_file = backup_dir / f"{container_name}_logs.txt"
-                with open(log_file, 'w') as f:
+                with open_private_file(log_file, 'w', encoding="utf-8") as f:
                     f.write(logs)
             except Exception:
                 pass  # Logs might not be available
@@ -110,18 +114,28 @@ class DockerBackup:
         """Backup Docker volume using Docker container and rsync."""
         logger.info(f"Backing up volume: {volume_name} (incremental={incremental})")
         try:
-            self.client.volumes.get(volume_name)
+            volume = self.client.volumes.get(volume_name)
+            if self.config.encryption.enabled:
+                try:
+                    mountpoint = volume.attrs.get("Mountpoint") if isinstance(volume.attrs, dict) else None
+                    if not mountpoint or not Path(mountpoint).is_dir():
+                        raise OSError("Cannot inspect original Docker volume attributes before encryption")
+                    EncryptionManager.validate_directory_tree(Path(mountpoint))
+                except OSError as exc:
+                    logger.error("Docker volume source preflight failed for %s: %s", volume_name, exc)
+                    return False
             volume_backup_dir = backup_dir / "volumes" / volume_name
-            volume_backup_dir.mkdir(parents=True, exist_ok=True)
+            ensure_private_directory(volume_backup_dir)
             
             # Use a temporary container to access the volume
             # This avoids permission issues with direct mountpoint access
             temp_container_name = f"bbackup_temp_{volume_name}_{os.getpid()}"
+            temp_tar: Optional[Path] = None
             
             try:
                 # Create temporary container with volume mounted
                 temp_container = self.client.containers.run(
-                    "alpine:latest",
+                    ALPINE_HELPER_IMAGE,
                     command="sleep 3600",  # Keep container running
                     name=temp_container_name,
                     volumes={volume_name: {"bind": "/volume_data", "mode": "ro"}},
@@ -213,7 +227,7 @@ class DockerBackup:
                     if result.returncode == 0:
                         # Copy from container to host
                         copy_result = subprocess.run(
-                            ["docker", "cp", f"{temp_container_name}:/tmp/backup/.", str(volume_backup_dir)],
+                            ["docker", "cp", "-a", f"{temp_container_name}:/tmp/backup/.", str(volume_backup_dir)],
                             capture_output=True,
                             text=True,
                             check=False,
@@ -251,7 +265,7 @@ class DockerBackup:
                             raise RuntimeError(f"docker cp failed for volume {volume_name}")
                         # Extract tar (tarfile imported at module level)
                         with tarfile.open(temp_tar, "r:gz") as tar:
-                            tar.extractall(volume_backup_dir, filter="data")
+                            extract_archive_safely(tar, volume_backup_dir)
                         temp_tar.unlink()
                     else:
                         stderr = getattr(result, "stderr", "")
@@ -283,8 +297,9 @@ class DockerBackup:
                     }
                     mode = mode_map.get(comp_format, "w:gz")
                     
-                    with tarfile.open(tar_file, mode) as tar:
-                        tar.add(volume_backup_dir, arcname=volume_name)
+                    with open_private_file(tar_file, "wb") as archive_file:
+                        with tarfile.open(fileobj=archive_file, mode=mode) as tar:
+                            tar.add(volume_backup_dir, arcname=volume_name)
                     
                     # Remove uncompressed directory
                     shutil.rmtree(volume_backup_dir)
@@ -304,6 +319,8 @@ class DockerBackup:
                         shutil.rmtree(volume_backup_dir)
                     except OSError as cleanup_error:
                         logger.error(f"Error removing failed volume backup artifact: {cleanup_error}")
+                if temp_tar is not None:
+                    temp_tar.unlink(missing_ok=True)
                 logger.error(f"Failed to backup volume {volume_name}: {e}")
                 return False
                 
@@ -336,9 +353,9 @@ class DockerBackup:
             network_data = network.attrs
             
             network_file = backup_dir / "networks" / f"{network_name}.json"
-            network_file.parent.mkdir(parents=True, exist_ok=True)
+            ensure_private_directory(network_file.parent)
             
-            with open(network_file, 'w') as f:
+            with open_private_file(network_file, 'w', encoding="utf-8") as f:
                 json.dump(network_data, f, indent=2)
             
             logger.debug(f"Successfully backed up network: {network_name}")
@@ -360,30 +377,29 @@ class DockerBackup:
             }
             mode = mode_map.get(format, "w:gz")
             
-            with tarfile.open(output_file, mode) as tar:
-                # Add configs
-                configs_dir = backup_dir / "configs"
-                if configs_dir.exists():
-                    tar.add(configs_dir, arcname="configs")
-                
-                # Add networks
-                networks_dir = backup_dir / "networks"
-                if networks_dir.exists():
-                    tar.add(networks_dir, arcname="networks")
-                
-                # Add metadata file
-                metadata = {
-                    "timestamp": datetime.now().isoformat(),
-                    "backup_version": "1.0",
-                    "docker_version": self.client.version().get("Version", "unknown"),
-                }
-                import tempfile
-                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
-                    json.dump(metadata, f, indent=2)
-                    temp_meta = f.name
-                
-                tar.add(temp_meta, arcname="backup_metadata.json")
-                os.unlink(temp_meta)
+            ensure_private_directory(backup_dir)
+            with open_private_file(output_file, "wb") as archive_file:
+                with tarfile.open(fileobj=archive_file, mode=mode) as tar:
+                    # Add configs
+                    configs_dir = backup_dir / "configs"
+                    if configs_dir.exists():
+                        tar.add(configs_dir, arcname="configs")
+
+                    # Add networks
+                    networks_dir = backup_dir / "networks"
+                    if networks_dir.exists():
+                        tar.add(networks_dir, arcname="networks")
+
+                    metadata = {
+                        "timestamp": datetime.now().isoformat(),
+                        "backup_version": "1.0",
+                        "docker_version": self.client.version().get("Version", "unknown"),
+                    }
+                    metadata_bytes = json.dumps(metadata, indent=2).encode("utf-8")
+                    metadata_info = tarfile.TarInfo("backup_metadata.json")
+                    metadata_info.size = len(metadata_bytes)
+                    metadata_info.mode = 0o600
+                    tar.addfile(metadata_info, io.BytesIO(metadata_bytes))
             
             return True
         except Exception:
@@ -401,7 +417,7 @@ class DockerBackup:
             scope = self.config.scope
         
         backup_dir = Path(backup_dir)
-        backup_dir.mkdir(parents=True, exist_ok=True)
+        ensure_private_directory(backup_dir)
         
         results = {
             "containers": {},
@@ -415,7 +431,7 @@ class DockerBackup:
             containers_to_backup = containers or [c["name"] for c in self.get_all_containers()]
             
             configs_dir = backup_dir / "configs"
-            configs_dir.mkdir(parents=True, exist_ok=True)
+            ensure_private_directory(configs_dir)
             
             for container_name in containers_to_backup:
                 if scope.configs:
@@ -427,7 +443,7 @@ class DockerBackup:
         # Backup volumes
         if scope.volumes:
             volumes_dir = backup_dir / "volumes"
-            volumes_dir.mkdir(parents=True, exist_ok=True)
+            ensure_private_directory(volumes_dir)
             
             # Get volumes for selected containers
             if containers:

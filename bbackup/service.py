@@ -36,6 +36,14 @@ class ServiceError(RuntimeError):
     """A sanitized, stable operational failure."""
 
 
+class ReplicaJobError(ServiceError):
+    """A local capture succeeded but one or more required copies failed."""
+
+    def __init__(self, result: dict):
+        self.result = result
+        super().__init__("One or more replica copies failed; review each destination before retrying")
+
+
 def _snapshot_id(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
         raise ServiceError("A complete snapshot ID is required")
@@ -49,9 +57,18 @@ def _overlap(a: Path, b: Path) -> bool:
 class BackupService:
     def __init__(self, config: Configuration, bindings: HostBindings):
         self.config, self.bindings = config, bindings
+        if config.schema_version != bindings.schema_version:
+            raise ServiceError("Policy and private binding versions must match")
         if set(bindings.repositories) != {r.name for r in config.repositories}:
             raise ServiceError("Host bindings must match declared repositories")
-        for source in config.sources:
+        if config.schema_version == 3:
+            if set(bindings.source_bindings) != {source.name for source in config.sources}:
+                raise ServiceError("Private source bindings must match portable sources")
+            self.sources = tuple(bindings.source_bindings[source.name].resolve(source)
+                                 for source in config.sources)
+        else:
+            self.sources = config.sources
+        for source in self.sources:
             if source.kind in ("postgresql", "mysql", "mariadb"):
                 binding = bindings.database_bindings.get(source.connection)
                 if binding is None or binding.kind != source.kind:
@@ -219,6 +236,7 @@ class BackupService:
         finalize: Callable[[OperationPlan, OperationRun], object] | None = None,
         on_stdout=None,
         after_run: Callable[[], None] | None = None,
+        timeout_seconds: int = 3600,
     ):
         if cancel is not None and cancel.is_set():
             raise ServiceError("Operation cancelled before dispatch")
@@ -234,6 +252,7 @@ class BackupService:
                 label=label,
                 argv=tuple(argv),
                 env=env,
+                timeout_seconds=timeout_seconds,
             )
         with ExitStack() as stack:
             leases = []
@@ -252,17 +271,28 @@ class BackupService:
             if on_stdout is not None:
                 run_options["on_stdout"] = on_stdout
             try:
-                result = self.runner.run(plan, **run_options)
-            finally:
-                if after_run is not None:
-                    after_run()
+                try:
+                    result = self.runner.run(plan, **run_options)
+                finally:
+                    if after_run is not None:
+                        after_run()
+                if finalize is not None and result.status is OperationStatus.SUCCEEDED:
+                    finalize(plan, result)
+            except BaseException:
+                # Source is a read-only copy participant. Only the destination
+                # can be uncertain after a failed or interrupted dispatch.
+                for repository, lease in zip(plans, leases):
+                    if repository != name:
+                        lease.finish(OperationStatus.FAILED, None)
+                raise
             if mutating and result.status is not OperationStatus.SUCCEEDED:
                 # These outcomes can leave repository state partially changed.
                 # Exiting with unfinished leases records UNCERTAIN for explicit
                 # reconciliation and prevents an automatic replay.
+                for repository, lease in zip(plans, leases):
+                    if repository != name:
+                        lease.finish(OperationStatus.FAILED, None)
                 raise ServiceError("Repository operation was interrupted; reconcile run status before retrying")
-            if finalize is not None and result.status is OperationStatus.SUCCEEDED:
-                finalize(plan, result)
             for lease in leases:
                 lease.finish(result.status, result.exit_code)
         if result.exit_code != 0 or str(getattr(result.status, "value", result.status)) != "succeeded":
@@ -294,7 +324,7 @@ class BackupService:
 
     def capture(self, job_name, *, cancel=None):
         job = self._job(job_name)
-        sources = tuple(source for source in self.config.sources if source.name in job.sources)
+        sources = tuple(source for source in self.sources if source.name in job.sources)
         protected = [self.state]
         for binding in self.bindings.repositories.values():
             if binding.repository.startswith("/"):
@@ -346,6 +376,7 @@ class BackupService:
                 paths = capture_stack.enter_context(capture_sources(
                     sources,
                     self.state,
+                    timeout=job.timeout_seconds,
                     cancel=cancel,
                     database_bindings=self.bindings.database_bindings,
                     docker_runtime=self.docker_runtime,
@@ -374,6 +405,7 @@ class BackupService:
                     mutating=True,
                     finalize=finalize_capture,
                     after_run=finish_lifecycle,
+                    timeout_seconds=job.timeout_seconds,
                 )
             finally:
                 finish_lifecycle()
@@ -381,7 +413,7 @@ class BackupService:
         return {"operation_id": plan.operation_id, "repository": job.repository, "snapshot_id": snapshot,
                 "local_complete": True, "required_replicas": list(job.replicas), "cloud_complete": not job.replicas}
 
-    def copy(self, source, destination, snapshot, *, cancel=None):
+    def copy(self, source, destination, snapshot, *, cancel=None, timeout_seconds=3600):
         snapshot = _snapshot_id(snapshot)
         if source == destination or self._identity(source) == self._identity(destination):
             raise ServiceError("Copy requires independent repositories")
@@ -448,6 +480,7 @@ class BackupService:
             cancel=cancel,
             mutating=True,
             finalize=finalize_copy,
+            timeout_seconds=timeout_seconds,
         )
         copied = receipt["snapshot"]
         return {"operation_id": plan.operation_id, "source_snapshot_id": snapshot,
@@ -467,7 +500,7 @@ class BackupService:
             raise ServiceError("Restore target cannot traverse symlinks")
         resolved = target.resolve()
         protected = [self.state]
-        protected += [Path(p).resolve() for src in self.config.sources for p in src.paths]
+        protected += [Path(p).resolve() for src in self.sources for p in src.paths]
         for binding in self.bindings.repositories.values():
             if binding.repository.startswith("/"):
                 protected.append(Path(binding.repository).resolve())
@@ -531,7 +564,7 @@ class BackupService:
             raise ServiceError("Docker restore target parent must already exist")
         protected = [self.state]
         protected.extend(Path(path).resolve() for path in self.bindings.sensitive_paths)
-        for source_config in self.config.sources:
+        for source_config in self.sources:
             protected.extend(Path(path).resolve() for path in source_config.paths)
         for binding in self.bindings.repositories.values():
             if binding.repository.startswith("/"):
@@ -1113,7 +1146,24 @@ class BackupService:
 
     def run_job(self, job_name, *, cancel=None):
         result = self.capture(job_name, cancel=cancel)
-        result["replicas"] = [self.copy(result["repository"], destination, result["snapshot_id"], cancel=cancel)
-                              for destination in self._job(job_name).replicas]
-        result["cloud_complete"] = True
+        result["replicas"] = []
+        result["replica_failures"] = []
+        for destination in self._job(job_name).replicas:
+            if cancel is not None and cancel.is_set():
+                result["replica_failures"].append({"destination_repository": destination,
+                                                   "reason": "cancelled_before_dispatch"})
+                break
+            try:
+                result["replicas"].append(self.copy(
+                    result["repository"], destination, result["snapshot_id"], cancel=cancel,
+                    timeout_seconds=self._job(job_name).timeout_seconds,
+                ))
+            except (ServiceError, RuntimeError, OSError, sqlite3.Error, ValueError):
+                result["replica_failures"].append({"destination_repository": destination,
+                                                   "reason": "copy_failed_or_uncertain"})
+                if cancel is not None and cancel.is_set():
+                    break
+        result["cloud_complete"] = not result["replica_failures"]
+        if result["replica_failures"]:
+            raise ReplicaJobError(result)
         return result

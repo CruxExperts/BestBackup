@@ -37,15 +37,26 @@ Use this checklist before changing public project metadata or publishing a relea
 
 - [ ] `git config core.hooksPath .githooks` is set in the active checkout.
 - [ ] `.githooks/commit-msg` validates conventional commit subjects.
-- [ ] `.githooks/pre-push` runs version sync, generated-doc checks, and whitespace checks.
+- [ ] `.githooks/pre-push` runs version sync, generated-doc checks, Markdown/asset provenance, and whitespace checks.
 - [ ] `.github/workflows/ci.yml` runs syntax, tests, CLI docs, Markdown standards, version sync, support doc presence, and publishing readiness checks.
 - [ ] `.github/workflows/release-notes.yml` validates and builds on a pushed `v*` tag; a separate default-branch `workflow_dispatch` verifies the exact successful run, tag commit, artifact inventory, and fixed-fingerprint `SHA256SUMS` signature before publishing.
 - [ ] CI tests Python `3.12`, `3.13`, and `3.14`, matching the supported package classifiers.
 - [ ] CI and release workflows smoke test the installed wheel.
-- [ ] GitHub workflow actions are on current supported major versions.
+- [ ] GitHub workflow actions use verified full commit SHAs; CI verifies hash-pinned bootstrap tooling.
 - [ ] GitHub workflows declare least-privilege `permissions`.
-- [ ] CI installs dependencies with `uv sync --locked` and runs commands with `uv run`.
+- [ ] CI installs dependencies with `uv sync --locked`, collects integration tests across `tests/`, and exposes an aggregate `CI required` result.
 - [ ] Ruff covers the package, selected release scripts, generated CLI skill checker, and tests.
+
+## GitHub enforcement and release provenance
+
+- [ ] Default-branch protection explicitly targets the default branch, requires signatures, pull requests, resolved conversations, and trusted passing CI, with no broad administrator bypass.
+- [ ] Solo maintenance uses zero required human approvals; code ownership routes notifications without creating an impossible second-reviewer requirement.
+- [ ] `v*` tag integrity and administrator creation authority are separate rulesets.
+- [ ] Secret scanning, push protection, private reporting, code scanning, and external-contributor workflow approval are enabled and verified.
+- [ ] SHA enforcement is enabled only after every remote workflow is pinned; required aggregate CI is selected only after that check exists and passes.
+- [ ] Release source has successful exact-commit trusted default-branch CI, default-branch ancestry, and an annotated tag signed by the pinned release key.
+- [ ] Complete signed assets are uploaded and verified in a draft before one publication; immutable releases apply to future releases.
+- [ ] Preserve previous settings privately before mutations. Reconcile uncertain publication or installation results read-only; never replay blindly.
 
 ## Version and release state
 
@@ -75,6 +86,7 @@ Use this checklist before changing public project metadata or publishing a relea
 ```bash
 uv sync --locked
 uv run python scripts/check_markdown_standards.py
+uv run python scripts/check_assets.py
 uv run python scripts/check_version_sync.py
 uv run python scripts/check_publishing_ready.py
 uv run python scripts/generate_cli_skills.py --check

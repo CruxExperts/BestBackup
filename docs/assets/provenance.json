@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "assets": [
+    {
+      "path": "docs/assets/bbackup-banner-v2.png",
+      "purpose": "README banner",
+      "generator": "OpenAI image_gen built-in tool",
+      "created": "2026-10-17",
+      "prompt": "Premium 3:1 GitHub README banner for bbackup: forest-green and jade, bone-white wordmark and exact headline 'Back up with confidence. Restore with clarity.' Supporting line 'Encrypted Linux backups \u00b7 Visual control \u00b7 Automation ready'. Brushed-metal and dark translucent physical snapshot enclosure, additional copy object and restored document on tracks. Restrained studio lighting, safe margins, no cloud/provider/Docker logos, giant locks, fake UI or unqualified claims.",
+      "reference": null,
+      "dimensions": [
+        2172,
+        724
+      ],
+      "original_sha256": "887f373258686c297e490ca4672a956cdf50e41f5aaf0b40e3cbe998ee8da033",
+      "sha256": "04e0d2e31e602e9aa9bf8145d39baa12d1a9d00e133a887ed2c342b4b5f423b8",
+      "copyright": "Copyright \u00a9 2026 Crux Experts LLC",
+      "website": "https://www.cruxexperts.com/",
+      "rights": "Private asset. Property of Crux Experts LLC. Use, reproduction, modification, distribution, or publication without prior written permission is prohibited."
+    },
+    {
+      "path": "docs/assets/bbackup-social-v2.png",
+      "purpose": "GitHub social preview",
+      "generator": "OpenAI image_gen built-in tool",
+      "created": "2026-10-17",
+      "prompt": "Recompose the generated bbackup README banner at 2:1. Preserve forest-green/jade/brushed-metal snapshot sculpture, large bbackup wordmark and exact 'Back up with confidence. Restore with clarity.' tagline. Remove supporting line, safe margins, opaque background, no extra words or logos.",
+      "reference": "bbackup-banner-v2.png",
+      "dimensions": [
+        1774,
+        887
+      ],
+      "original_sha256": "0a774e09aee4fd10c6ee2189795c488423b3d096fe32015b03009543884d559e",
+      "sha256": "1155d921e362899a1bcbc7d5b9eed9e893bf37cc7ed270c365c0985cf7d30b4e",
+      "copyright": "Copyright \u00a9 2026 Crux Experts LLC",
+      "website": "https://www.cruxexperts.com/",
+      "rights": "Private asset. Property of Crux Experts LLC. Use, reproduction, modification, distribution, or publication without prior written permission is prohibited."
+    },
+    {
+      "path": "docs/assets/bbackup-social-v2.jpg",
+      "purpose": "GitHub social upload",
+      "generator": "OpenAI image_gen built-in tool",
+      "created": "2026-10-17",
+      "prompt": "Recompose the generated bbackup README banner at 2:1. Preserve forest-green/jade/brushed-metal snapshot sculpture, large bbackup wordmark and exact 'Back up with confidence. Restore with clarity.' tagline. Remove supporting line, safe margins, opaque background, no extra words or logos.",
+      "reference": "bbackup-social-v2.png",
+      "dimensions": [
+        1774,
+        887
+      ],
+      "original_sha256": "0a774e09aee4fd10c6ee2189795c488423b3d096fe32015b03009543884d559e",
+      "sha256": "9d10b8154df536773d8baa741c738828be5f4bf9973acdfd1731be4970f287d5",
+      "copyright": "Copyright \u00a9 2026 Crux Experts LLC",
+      "website": "https://www.cruxexperts.com/",
+      "rights": "Private asset. Property of Crux Experts LLC. Use, reproduction, modification, distribution, or publication without prior written permission is prohibited.",
+      "encoding": "JPEG quality 2 via FFmpeg; composition and dimensions unchanged; XMP and EXIF rights metadata embedded with ExifTool"
+    }
+  ]
+}

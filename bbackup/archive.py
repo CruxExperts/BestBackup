@@ -8,12 +8,14 @@ Last Updated: 2026-03-04
 
 import gzip
 import os
+import stat
 import tarfile
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .encryption import EncryptionManager
+from .config import ensure_private_directory, open_private_file
 from .logging import get_logger
 
 logger = get_logger("archive")
@@ -27,6 +29,49 @@ SOLID_ARCHIVE_SUFFIXES = (
     ".tar.xz",
     ".tar.xz.enc",
 )
+
+
+def extract_archive_safely(tar: tarfile.TarFile, destination: Path) -> None:
+    """Apply tar's data path checks while retaining supported ownership data."""
+    destination = Path(destination)
+    members = tar.getmembers()
+    for member in members:
+        tarfile.data_filter(member, str(destination))
+        if member.mode & 0o7000:
+            raise OSError(f"Unsupported archive special permission bits: {member.name}")
+        if any(key.lower().startswith(("schily.xattr", "schily.acl", "libarchive.xattr")) for key in member.pax_headers):
+            raise OSError(f"Unsupported archive ACL or extended attribute: {member.name}")
+        if os.geteuid() != 0 and (member.uid != os.geteuid() or member.gid != os.getegid()):
+            raise OSError(f"Cannot restore archive ownership for: {member.name}")
+
+    def _preserve_owner(member: tarfile.TarInfo, target: str) -> tarfile.TarInfo:
+        safe = tarfile.data_filter(member, target)
+        if safe is None:
+            raise OSError("Archive member cannot be extracted safely")
+        return safe.replace(
+            uid=member.uid, gid=member.gid, uname=member.uname, gname=member.gname,
+            mode=member.mode,
+        )
+
+    tar.extractall(destination, members=members, filter=_preserve_owner, numeric_owner=True)
+
+
+def _preflight_archive_source(backup_dir: Path) -> None:
+    entries = EncryptionManager.validate_directory_tree(backup_dir)
+    root = os.path.abspath(backup_dir)
+    for entry in entries:
+        if entry["mode"] & 0o7000:
+            raise OSError(f"Unsupported archive special permission bits: {entry['path']}")
+        if entry["type"] == "symlink":
+            target = entry["target"]
+            if os.path.isabs(target):
+                raise OSError(f"Absolute link cannot be archived safely: {entry['path']}")
+            parent = os.path.dirname(os.path.join(root, entry["path"]))
+            resolved = os.path.abspath(os.path.join(parent, target))
+            if os.path.commonpath((root, resolved)) != root:
+                raise OSError(f"Escaping link cannot be archived safely: {entry['path']}")
+        if os.geteuid() != 0 and (entry["uid"] != os.geteuid() or entry["gid"] != os.getegid()):
+            raise OSError(f"Cannot restore archive ownership for: {entry['path']}")
 
 
 def is_solid_archive_name(name: str) -> bool:
@@ -74,6 +119,12 @@ def create_solid_archive(
     backup_dir = Path(backup_dir)
     if not backup_dir.is_dir():
         raise OSError(f"Not a directory: {backup_dir}")
+    if backup_dir.is_symlink():
+        raise OSError(f"Backup root is a symlink: {backup_dir}")
+    ensure_private_directory(backup_dir)
+    # The caller may remove the plaintext tree after a successful archive. Tar
+    # does not retain every filesystem feature, so reject lossy inputs first.
+    _preflight_archive_source(backup_dir)
 
     fmt = compression_config.get("format", "gzip")
     level = int(compression_config.get("level", 6))
@@ -87,15 +138,16 @@ def create_solid_archive(
             partial_archive_path.unlink()
         if fmt == "gzip" and level != 9:
             # Use gzip level (Gap 6)
-            with open(partial_archive_path, "wb") as f:
+            with open_private_file(partial_archive_path, "wb") as f:
                 with gzip.GzipFile(fileobj=f, mode="wb", compresslevel=level) as gz:
                     with tarfile.open(fileobj=gz, mode="w") as tar:
                         tar.add(backup_dir, arcname=backup_dir.name)
         else:
             # tarfile built-in compression (level not configurable for bz2/xz in same way)
             mode = _tar_mode(fmt)
-            with tarfile.open(partial_archive_path, mode) as tar:
-                tar.add(backup_dir, arcname=backup_dir.name)
+            with open_private_file(partial_archive_path, "wb") as archive_file:
+                with tarfile.open(fileobj=archive_file, mode=mode) as tar:
+                    tar.add(backup_dir, arcname=backup_dir.name)
 
         if encryption_config is not None and getattr(encryption_config, "enabled", False):
             enc_path = archive_path.with_suffix(archive_path.suffix + ".enc")
@@ -151,6 +203,8 @@ def unpack_solid_archive(
 
     if not archive_path.is_file():
         raise OSError(f"Not a file or directory: {archive_path}")
+    if stat.S_ISLNK(os.lstat(archive_path).st_mode):
+        raise OSError(f"Archive path is a symlink: {archive_path}")
 
     temp_tar: Optional[Path] = None
     use_temp_dest = dest_dir is None
@@ -160,8 +214,12 @@ def unpack_solid_archive(
         temp_root_to_remove = dest_dir
 
     dest_dir = Path(dest_dir)
-    dest_dir.mkdir(parents=True, exist_ok=True)
+    was_present = dest_dir.exists()
+    ensure_private_directory(dest_dir)
+    if was_present and any(dest_dir.iterdir()):
+        raise OSError(f"Extraction destination is not empty: {dest_dir}")
 
+    extraction_succeeded = False
     try:
         to_extract: Optional[Path] = archive_path
         if archive_path.suffix == ".enc" or archive_path.name.endswith(".tar.gz.enc") or archive_path.name.endswith(".tar.bz2.enc") or archive_path.name.endswith(".tar.xz.enc"):
@@ -207,12 +265,14 @@ def unpack_solid_archive(
             mode = "r:*"
 
         with tarfile.open(to_extract, mode) as tar:
-            tar.extractall(dest_dir, filter="data")
+            extract_archive_safely(tar, dest_dir)
 
         # Tar typically contains one top-level dir (backup_YYYYMMDD_HHMMSS); return that if present
         items = list(dest_dir.iterdir())
         if len(items) == 1 and items[0].is_dir():
+            extraction_succeeded = True
             return (items[0], temp_root_to_remove)
+        extraction_succeeded = True
         return (dest_dir, temp_root_to_remove)
     finally:
         if temp_tar is not None and temp_tar.exists():
@@ -220,3 +280,6 @@ def unpack_solid_archive(
                 temp_tar.unlink()
             except OSError:
                 pass
+        if not extraction_succeeded and temp_root_to_remove is not None:
+            import shutil
+            shutil.rmtree(temp_root_to_remove, ignore_errors=True)

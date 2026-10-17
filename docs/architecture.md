@@ -369,13 +369,23 @@ best-backup/
 
 Back to [README.md](../README.md).
 
+## Unreleased policy and interaction changes
+
+The development checkout adds schema-3 portable source identities and private source selectors. Host enrollment records bind a canonical policy digest, private-binding digest, machine identity digest, and effective user. This prevents accidental cross-host execution; it does not defend against a hostile process with the same user authority or a cloned machine identity.
+
+CLI and dashboard share the validated operation boundary. It verifies the same bounded bytes that are parsed for dispatch, constructs a fresh service, and holds a shared policy lease throughout the operation. Configuration save uses an exclusive lease and exact candidate bytes. An interrupted two-file policy/enrollment update fails closed rather than authorizing arbitrary changed files.
+
+The Textual setup uses guided forms, persistent labels, field help, inline validation, and an optional expert JSON editor. The dashboard offers clear storage, first-backup, and restore actions. Form adapters call the common validators and operation owner; they do not implement a second backup workflow.
+
+Local timer installation remains explicit. Shared rendering supplies both disabled previews and user-level installation. Captures and replicas retain repository locking, interruption reconciliation, and separately reviewed retention.
+
 <!-- project-footer:start -->
 
 <br><br>
 
 <p align="center">
 Slavic Kozyuk<br>
-&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/best-backup/blob/main/LICENSE">MIT License</a>
+&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/BestBackup/blob/main/LICENSE">MIT License</a>
 </p>
 
 <!-- project-footer:end -->

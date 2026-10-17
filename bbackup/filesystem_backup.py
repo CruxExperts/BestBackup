@@ -7,13 +7,15 @@ Last Updated: 2026-02-26
 """
 
 import re
+import os
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from .config import Config, FilesystemTarget
+from .config import Config, FilesystemTarget, ensure_private_directory
 from .logging import get_logger
+from .encryption import EncryptionManager
 
 logger = get_logger("filesystem_backup")
 
@@ -43,15 +45,31 @@ class FilesystemBackup:
         Returns:
             True on success, False on any failure.
         """
+        target_name = Path(target.name)
+        if target_name.is_absolute() or len(target_name.parts) != 1 or target_name.name in ("", ".", ".."):
+            logger.error("Invalid filesystem backup target name: %s", target.name)
+            return False
         dest = backup_dir / "filesystems" / target.name
-        dest.mkdir(parents=True, exist_ok=True)
 
         exclude_file: Optional[Path] = None
         try:
+            # rsync -a omits ACLs and xattrs. Check the original tree before
+            # those attributes can disappear from the staged copy.
+            EncryptionManager.validate_directory_tree(Path(target.path))
+            ensure_private_directory(dest)
             if target.excludes:
-                tmp = Path(tempfile.mktemp(suffix=".excludes"))
-                tmp.write_text("\n".join(target.excludes))
-                exclude_file = tmp
+                fd, tmp_name = tempfile.mkstemp(prefix="bbackup_excludes_", suffix=".txt")
+                exclude_file = Path(tmp_name)
+                try:
+                    os.fchmod(fd, 0o600)
+                    with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+                        tmp.write("\n".join(target.excludes))
+                except Exception:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    raise
 
             cmd = self._build_rsync_cmd(target, dest, incremental, exclude_file)
             return self._run_rsync(cmd, progress_callback)

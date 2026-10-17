@@ -4,8 +4,8 @@
 
 project:
   name: bbackup
-  description: "Docker Backup Tool with Rich TUI"
-  repository: "https://github.com/CruxExperts/best-backup"
+  description: "Encrypted Linux backups with a visual dashboard and an automation-ready CLI"
+  repository: "https://github.com/CruxExperts/BestBackup"
 
 author:
   name: "Slavic Kozyuk"

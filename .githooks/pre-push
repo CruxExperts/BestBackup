@@ -5,4 +5,5 @@ uv run --locked python scripts/check_version_sync.py
 uv run --locked python scripts/check_publishing_ready.py
 uv run --locked python scripts/generate_cli_skills.py --check
 uv run --locked python scripts/check_markdown_standards.py
+uv run --locked python scripts/check_assets.py
 git diff --check

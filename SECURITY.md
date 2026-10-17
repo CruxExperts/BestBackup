@@ -4,13 +4,13 @@ This policy covers security issues in bbackup's source code and the packaged com
 
 ## Version status
 
-The current stable legacy package version is 1.8.6. Version 2.0.0-alpha.1 is a pre-release; the version 2 operations interface remains a preview and is not production-qualified. Security reports for preview code are still welcome through the private reporting process below.
+The latest published release is v2.0.2. Its supported scope is recorded in [release evidence](docs/development/version-2.md). The development checkout contains unreleased safety and enrollment changes; reports for both published and development code are welcome.
 
 Security fixes are prepared for the latest published release. The project does not promise backports to older versions.
 
 ## Report a vulnerability
 
-Do not post security vulnerabilities in a public issue. Use [GitHub's private vulnerability reporting](https://github.com/CruxExperts/best-backup/security) and include the affected version or commit, impact, and a safe reproduction when available. Redact secrets and customer data. The maintainers will acknowledge reports within five business days and coordinate any public disclosure with the reporter.
+Do not post security vulnerabilities in a public issue. Use [GitHub's private vulnerability reporting](https://github.com/CruxExperts/BestBackup/security) and include the affected version or commit, impact, and a safe reproduction when available. Redact secrets and customer data. The maintainers will acknowledge reports within five business days and coordinate any public disclosure with the reporter.
 
 ## Scope
 
@@ -24,7 +24,7 @@ Do not commit encryption keys, restic passwords, cloud credentials, tokens, host
 
 <p align="center">
 Slavic Kozyuk<br>
-&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/best-backup/blob/main/LICENSE">MIT License</a>
+&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/BestBackup/blob/main/LICENSE">MIT License</a>
 </p>
 
 <!-- project-footer:end -->

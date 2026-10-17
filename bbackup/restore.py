@@ -9,15 +9,21 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import fcntl
+import hashlib
+import secrets
+import stat
+from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
 import docker
-from docker.errors import DockerException, APIError
+from docker.errors import DockerException, APIError, NotFound
 
-from .archive import is_solid_archive_name, strip_solid_archive_suffix, unpack_solid_archive
-from .config import Config
+from .archive import is_solid_archive_name, strip_solid_archive_suffix, unpack_solid_archive, extract_archive_safely
+from .config import Config, ensure_private_directory
 from .logging import get_logger
+from .container_images import ALPINE_HELPER_IMAGE
 from .encryption import EncryptionManager
 from .manifest import verify_backup_manifest
 
@@ -25,6 +31,25 @@ logger = get_logger('restore')
 
 
 VOLUME_ARCHIVE_SUFFIXES = (".tar.gz", ".tar.bz2", ".tar.xz")
+RESTORE_OWNER_LABEL = "com.cruxexperts.bbackup.restore-owner"
+
+
+@contextmanager
+def _volume_restore_lock(name: str):
+    """Serialize local attempts to create the same Docker volume."""
+    root = Path(tempfile.gettempdir()) / f"bbackup-restore-locks-{os.geteuid()}"
+    ensure_private_directory(root)
+    lock_path = root / (hashlib.sha256(name.encode("utf-8")).hexdigest() + ".lock")
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1:
+            raise OSError("Unsafe volume restore lock")
+        os.fchmod(fd, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        os.close(fd)
 
 
 def _strip_volume_archive_suffix(filename: str) -> Optional[str]:
@@ -141,7 +166,13 @@ class DockerRestore:
                     if mount.get("Type") == "volume":
                         mounts.append(f"{mount['Name']}:{mount['Destination']}")
                     elif mount.get("Type") == "bind":
-                        mounts.append(f"{mount['Source']}:{mount['Destination']}")
+                        logger.error(
+                            "Refusing to restore container %s with live bind mount %s; "
+                            "restore the data separately and review the bind target",
+                            container_name,
+                            mount.get("Source", ""),
+                        )
+                        return False
             
             # Get restart policy
             restart_policy = container_config.get("HostConfig", {}).get("RestartPolicy", {}).get("Name", "no")
@@ -151,14 +182,20 @@ class DockerRestore:
             if "NetworkSettings" in container_config and "Networks" in container_config["NetworkSettings"]:
                 networks = list(container_config["NetworkSettings"]["Networks"].keys())
             
-            # Stop and remove existing container if it exists
             target_name = new_name or container_name
             try:
-                existing = self.client.containers.get(target_name)
-                existing.stop()
-                existing.remove()
-            except APIError:
-                pass  # Container doesn't exist
+                self.client.containers.get(target_name)
+            except NotFound:
+                pass
+            except Exception as e:
+                logger.error(f"Could not verify restore container target {target_name}: {e}")
+                return False
+            else:
+                logger.error(
+                    "Refusing to replace existing container %s; choose an unused name with rename_map",
+                    target_name,
+                )
+                return False
             
             # Create new container
             container = self.client.containers.create(
@@ -192,41 +229,64 @@ class DockerRestore:
                 archive_path = self._find_volume_archive(backup_path, volume_name)
                 if archive_path is None:
                     return False
+                if archive_path.is_symlink():
+                    logger.error("Refusing symlinked volume archive: %s", archive_path)
+                    return False
                 temp_extract_dir = Path(tempfile.mkdtemp(prefix=f"bbackup_volume_{volume_name}_"))
+                ensure_private_directory(temp_extract_dir)
                 with tarfile.open(archive_path, self._tar_read_mode(archive_path)) as tar:
-                    tar.extractall(temp_extract_dir, filter="data")
+                    extract_archive_safely(tar, temp_extract_dir)
                 extracted_volume_dir = temp_extract_dir / volume_name
                 volume_backup_dir = extracted_volume_dir if extracted_volume_dir.exists() else temp_extract_dir
 
             if not volume_backup_dir.exists():
                 return False
+            if volume_backup_dir.is_symlink():
+                logger.error("Refusing symlinked volume backup directory: %s", volume_backup_dir)
+                return False
             
             target_volume_name = new_name or volume_name
 
-            existing_volume = None
-            try:
-                existing_volume = self.client.volumes.get(target_volume_name)
-            except APIError:
-                pass  # Volume doesn't exist
-
-            staging_volume = None
-            staging_volume_name = f"bbackup_restore_stage_{target_volume_name}_{os.getpid()}"
-            if existing_volume is not None:
-                staging_volume = self.client.volumes.create(name=staging_volume_name)
-                if not self._copy_backup_dir_to_volume(volume_backup_dir, staging_volume_name, volume_name):
-                    try:
-                        staging_volume.remove()
-                    except Exception:
-                        pass
-                    return False
+            with _volume_restore_lock(target_volume_name):
                 try:
-                    staging_volume.remove()
-                except Exception:
+                    self.client.volumes.get(target_volume_name)
+                except NotFound:
                     pass
-                existing_volume.remove()
+                except Exception as e:
+                    logger.error(f"Could not verify restore volume target {target_volume_name}: {e}")
+                    return False
+                else:
+                    logger.error(
+                        "Refusing to replace existing volume %s; choose an unused name with rename_map",
+                        target_volume_name,
+                    )
+                    return False
 
-            self.client.volumes.create(name=target_volume_name)
-            return self._copy_backup_dir_to_volume(volume_backup_dir, target_volume_name, volume_name)
+                owner_token = secrets.token_hex(24)
+                created_volume = self.client.volumes.create(
+                    name=target_volume_name, labels={RESTORE_OWNER_LABEL: owner_token}
+                )
+                created_volume.reload()
+                attrs = created_volume.attrs
+                if (
+                    not isinstance(attrs, dict)
+                    or attrs.get("Name") != target_volume_name
+                    or attrs.get("Labels", {}).get(RESTORE_OWNER_LABEL) != owner_token
+                ):
+                    logger.error("Docker returned a volume without this restore's ownership label")
+                    return False
+                if self._copy_backup_dir_to_volume(volume_backup_dir, target_volume_name, volume_name):
+                    return True
+                try:
+                    created_volume.reload()
+                    attrs = created_volume.attrs
+                    if isinstance(attrs, dict) and attrs.get("Name") == target_volume_name and attrs.get("Labels", {}).get(RESTORE_OWNER_LABEL) == owner_token:
+                        created_volume.remove()
+                    else:
+                        logger.warning("Incomplete volume no longer has this restore's ownership label; leaving it untouched")
+                except Exception:
+                    logger.warning("Could not remove newly created incomplete volume %s", target_volume_name)
+                return False
                 
         except APIError:
             return False
@@ -250,7 +310,7 @@ class DockerRestore:
         temp_container_name = f"bbackup_restore_{target_volume_name}_{os.getpid()}"
         try:
             temp_container = self.client.containers.run(
-                "alpine:latest",
+                ALPINE_HELPER_IMAGE,
                 command="sleep 3600",
                 name=temp_container_name,
                 volumes={target_volume_name: {"bind": "/volume_data", "mode": "rw"}},
@@ -262,7 +322,7 @@ class DockerRestore:
             time.sleep(1)
 
             copy_result = subprocess.run(
-                ["docker", "cp", str(volume_backup_dir) + "/.", f"{temp_container_name}:/volume_data/"],
+                ["docker", "cp", "-a", str(volume_backup_dir) + "/.", f"{temp_container_name}:/volume_data/"],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -351,12 +411,16 @@ class DockerRestore:
         # Check if backup is encrypted
         metadata_file = backup_path / "encryption_metadata.json"
         if not metadata_file.exists():
+            if (
+                EncryptionManager.contains_versioned_tree_payload(backup_path)
+                or backup_path.name.endswith(".enc")
+            ):
+                raise RuntimeError("Encrypted backup inventory is missing")
             logger.debug("Backup appears to be unencrypted")
             return backup_path
         
         if not self.config.encryption.enabled:
-            logger.warning("Backup is encrypted but encryption is disabled in config")
-            return backup_path
+            raise RuntimeError("Backup is encrypted but encryption is disabled in config")
         
         try:
             logger.info("Decrypting backup directory...")
@@ -367,11 +431,10 @@ class DockerRestore:
                 logger.info(f"Backup decrypted: {decrypted_dir}")
                 return decrypted_dir
             else:
-                logger.error("Decryption failed")
-                return backup_path
+                raise RuntimeError("Decryption failed")
         except Exception as e:
             logger.error(f"Decryption error: {e}")
-            return backup_path
+            raise RuntimeError(f"Decryption failed: {e}") from e
     
     def restore_filesystem_path(
         self,
@@ -427,6 +490,9 @@ class DockerRestore:
 
         destination = Path(destination)
         try:
+            if destination.is_symlink():
+                logger.error("Refusing symlinked filesystem restore destination: %s", destination)
+                return False
             destination.mkdir(parents=True, exist_ok=True)
             cmd = ["rsync", "-av", "--delete", str(src) + "/", str(destination) + "/"]
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -451,6 +517,7 @@ class DockerRestore:
         """Restore complete backup (from directory or solid archive file)."""
         backup_path = Path(backup_path)
         temp_root_to_remove: Optional[Path] = None
+        decrypted_root_to_remove: Optional[Path] = None
 
         if backup_path.is_file() and is_solid_archive_name(backup_path.name):
             if backup_path.name.endswith(".enc") or ".enc" in backup_path.suffixes:
@@ -467,7 +534,24 @@ class DockerRestore:
 
         try:
             # Decrypt backup dir if encrypted (per-file; no-op for unpacked solid archive)
-            backup_path = self.decrypt_backup_directory(backup_path)
+            encrypted_backup_path = backup_path
+            try:
+                backup_path = self.decrypt_backup_directory(backup_path)
+            except Exception as e:
+                return {
+                    "containers": {},
+                    "volumes": {},
+                    "networks": {},
+                    "filesystems": {},
+                    "errors": [f"Backup decryption failed: {e}"],
+                }
+            if backup_path != encrypted_backup_path:
+                candidate_root = backup_path.parent
+                decrypted_root_to_remove = (
+                    candidate_root
+                    if candidate_root.name.startswith("bbackup_decrypted_")
+                    else backup_path
+                )
 
             manifest_errors = verify_backup_manifest(backup_path)
             if manifest_errors:
@@ -532,6 +616,11 @@ class DockerRestore:
 
             return results
         finally:
+            if decrypted_root_to_remove is not None and decrypted_root_to_remove.exists():
+                try:
+                    shutil.rmtree(decrypted_root_to_remove)
+                except OSError:
+                    pass
             if temp_root_to_remove is not None and temp_root_to_remove.exists():
                 try:
                     shutil.rmtree(temp_root_to_remove)

@@ -6,7 +6,14 @@ Last Updated: 2026-02-26
 """
 
 import os
+import json
+import stat
+import tempfile
+import base64
+import hashlib
+import hmac
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -15,7 +22,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
 
 from bbackup.config import EncryptionSettings
-from bbackup.encryption import EncryptionManager
+from bbackup.encryption import EncryptionManager, TREE_FORMAT
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +206,7 @@ class TestGitHubShortcutResolution:
 
         assert mgr.symmetric_key is None
         assert checked_urls
-        assert not any("gist.githubusercontent.com" in url for url in checked_urls)
+        assert all(urlsplit(url).hostname != "gist.githubusercontent.com" for url in checked_urls)
 
     def test_all_404_ssh_fallback(self):
         """All standard URLs 404; SSH keys endpoint checked as fallback."""
@@ -444,6 +451,266 @@ class TestDirectoryEncryption:
         assert (dec_dir / "subdir" / "file2.bin").read_bytes() == b"\x00\x01\x02"
         assert (dec_dir / "subdir" / "file3.txt").read_text() == "content3"
 
+    def test_roundtrip_preserves_modes_ownership_timestamps_and_links(self, tmp_path):
+        mgr, _ = make_manager_with_key(tmp_path)
+        src = tmp_path / "source_tree"
+        src.mkdir(mode=0o750)
+        sub = src / "folder"
+        sub.mkdir(mode=0o751)
+        original = sub / "original.txt"
+        original.write_text("linked data")
+        original.chmod(0o640)
+        hardlink = sub / "hardlink.txt"
+        os.link(original, hardlink)
+        symlink = sub / "symbolic.txt"
+        symlink.symlink_to("original.txt")
+        timestamp = 1_700_000_000_123_456_789
+        os.utime(original, ns=(timestamp, timestamp))
+        os.utime(sub, ns=(timestamp, timestamp))
+        original_stat = original.stat()
+        sub_stat = sub.stat()
+        symlink_stat = symlink.lstat()
+
+        encrypted = tmp_path / "encrypted_tree"
+        decrypted = tmp_path / "decrypted_tree"
+        assert mgr.encrypt_directory(src, encrypted) is True
+        assert mgr.decrypt_directory(encrypted, decrypted) is True
+
+        restored = decrypted / "folder" / "original.txt"
+        restored_hardlink = decrypted / "folder" / "hardlink.txt"
+        restored_link = decrypted / "folder" / "symbolic.txt"
+        restored_stat = restored.stat()
+        assert stat.S_IMODE((decrypted / "folder").stat().st_mode) == stat.S_IMODE(sub_stat.st_mode)
+        assert stat.S_IMODE(restored_stat.st_mode) == stat.S_IMODE(original_stat.st_mode)
+        assert (restored_stat.st_uid, restored_stat.st_gid) == (original_stat.st_uid, original_stat.st_gid)
+        assert restored_stat.st_atime_ns == original_stat.st_atime_ns
+        assert restored_stat.st_mtime_ns == original_stat.st_mtime_ns
+        assert restored_stat.st_ino == restored_hardlink.stat().st_ino
+        assert restored_link.is_symlink()
+        assert os.readlink(restored_link) == "original.txt"
+        assert restored_link.lstat().st_mtime_ns == symlink_stat.st_mtime_ns
+
+    def test_authenticated_tree_inventory_cannot_be_stripped(self, tmp_path):
+        mgr, _ = make_manager_with_key(tmp_path)
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "file.txt").write_text("secret")
+        encrypted = tmp_path / "backup.enc"
+        assert mgr.encrypt_directory(source, encrypted) is True
+        (encrypted / "encryption_metadata.json").unlink()
+        payload = next((encrypted / "payloads").glob("*.bbackup"))
+        payload.write_bytes(payload.read_bytes()[8:])
+
+        destination = tmp_path / "decrypted"
+        assert mgr.decrypt_directory(encrypted, destination) is False
+        assert not destination.exists()
+        with pytest.raises(RuntimeError, match="inventory is missing"):
+            mgr.decrypt_backup(encrypted)
+
+    def test_empty_tree_identity_prevents_inventory_stripping_downgrade(self, tmp_path):
+        mgr, _ = make_manager_with_key(tmp_path)
+        source = tmp_path / "empty-source"
+        source.mkdir()
+        encrypted = tmp_path / "empty-backup"
+        assert mgr.encrypt_directory(source, encrypted) is True
+
+        (encrypted / "encryption_metadata.json").unlink()
+        with pytest.raises(RuntimeError, match="inventory is missing"):
+            mgr.decrypt_backup(encrypted)
+
+    def test_v3_inventory_and_payload_names_hide_source_metadata(self, tmp_path):
+        mgr, _ = make_manager_with_key(tmp_path)
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "private-record-name.txt").write_text("secret")
+        (source / "private-link-name").symlink_to("private-record-name.txt")
+        encrypted = tmp_path / "backup.enc"
+        assert mgr.encrypt_directory(source, encrypted)
+
+        public = (encrypted / "encryption_metadata.json").read_text()
+        names = "\n".join(path.relative_to(encrypted).as_posix() for path in encrypted.rglob("*"))
+        for sensitive in ("private-record-name", "private-link-name", "target", '"uid"', '"gid"'):
+            assert sensitive not in public
+            assert sensitive not in names
+        assert json.loads(public)["version"] == 3
+        assert "entries" not in json.loads(public)
+        restored = tmp_path / "restored"
+        assert mgr.decrypt_directory(encrypted, restored)
+        assert (restored / "private-record-name.txt").read_text() == "secret"
+        assert (restored / "private-link-name").is_symlink()
+
+        (encrypted / "payloads" / ".inventory-v3").unlink()
+        assert not mgr.decrypt_directory(encrypted, tmp_path / "missing-inventory")
+        assert not (tmp_path / "missing-inventory").exists()
+
+    def test_authenticated_v2_tree_remains_readable_with_warning(self, tmp_path, caplog):
+        mgr, _ = make_manager_with_key(tmp_path)
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "file.txt").write_text("old format")
+        entries = mgr.validate_directory_tree(source)
+        encrypted = tmp_path / "v2.enc"
+        payloads = encrypted / "payloads"
+        payloads.mkdir(parents=True, mode=0o700)
+        encrypted.chmod(0o700)
+        salt = os.urandom(16)
+        key = mgr.symmetric_key
+        mac_key = mgr._tree_mac_key(key, salt, 2)
+        marker = b"BBAKTR2\0" + hmac.new(mac_key, b"bbackup-tree-payload-identity-v2", hashlib.sha256).digest()
+        (payloads / ".bbackup-tree-v2").write_bytes(marker)
+        entry = next(entry for entry in entries if entry["type"] == "file")
+        canonical = json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        nonce = os.urandom(12)
+        payload = b"BBAKTR2\0" + nonce + AESGCM(key).encrypt(nonce, b"old format", canonical)
+        (payloads / "file.txt.bbackup").write_bytes(payload)
+        metadata = {
+            "format": TREE_FORMAT, "version": 2, "algorithm": "aes-256-gcm",
+            "salt": base64.b64encode(salt).decode(), "wrapped_key": None, "entries": entries,
+        }
+        metadata["auth"] = mgr._tree_metadata_auth(metadata, mac_key)
+        (encrypted / "encryption_metadata.json").write_text(json.dumps(metadata))
+        for file in (payloads.iterdir()):
+            file.chmod(0o600)
+        (encrypted / "encryption_metadata.json").chmod(0o600)
+
+        output = tmp_path / "restored"
+        assert mgr.decrypt_directory(encrypted, output)
+        assert (output / "file.txt").read_text() == "old format"
+        assert "v2 encrypted tree" in caplog.text
+
+    def test_extra_payload_rejected_and_partial_output_removed(self, tmp_path):
+        mgr, _ = make_manager_with_key(tmp_path)
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "file.txt").write_text("secret")
+        encrypted = tmp_path / "encrypted"
+        assert mgr.encrypt_directory(source, encrypted) is True
+        unexpected = encrypted / "payloads" / "unexpected.bbackup"
+        unexpected.write_bytes(b"extra")
+
+        destination = tmp_path / "decrypted"
+        assert mgr.decrypt_directory(encrypted, destination) is False
+        assert not destination.exists()
+
+    def test_wrong_key_and_tampered_payload_fail_without_leaving_plaintext(self, tmp_path):
+        mgr, _ = make_manager_with_key(tmp_path)
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "file.txt").write_text("secret")
+        encrypted = tmp_path / "encrypted"
+        assert mgr.encrypt_directory(source, encrypted) is True
+
+        wrong_key_file = tmp_path / "wrong.key"
+        wrong_key_file.write_bytes(os.urandom(32))
+        wrong_mgr = EncryptionManager(make_sym_config(key_file=str(wrong_key_file)))
+        created_temps = []
+        original_mkdtemp = tempfile.mkdtemp
+
+        def track_mkdtemp(*args, **kwargs):
+            path = original_mkdtemp(*args, **kwargs)
+            created_temps.append(path)
+            return path
+
+        with patch("bbackup.encryption.tempfile.mkdtemp", side_effect=track_mkdtemp):
+            with pytest.raises(RuntimeError, match="authenticated"):
+                wrong_mgr.decrypt_backup(encrypted)
+        assert created_temps and not os.path.exists(created_temps[0])
+
+        payload = next((encrypted / "payloads").glob("*.bbackup"))
+        payload.write_bytes(payload.read_bytes()[:-1] + b"x")
+        destination = tmp_path / "decrypted"
+        assert mgr.decrypt_directory(encrypted, destination) is False
+        assert not destination.exists()
+
+    def test_partial_legacy_directory_is_rejected(self, tmp_path):
+        mgr, _ = make_manager_with_key(tmp_path)
+        legacy = tmp_path / "legacy.enc"
+        legacy.mkdir()
+        legacy.chmod(0o700)
+        (legacy / "encryption_metadata.json").write_text(json.dumps({"encrypted": True}))
+        (legacy / "plain.txt").write_text("partial plaintext")
+        destination = tmp_path / "decrypted"
+
+        assert mgr.decrypt_directory(legacy, destination) is False
+        assert not destination.exists()
+
+    def test_failed_decryption_preserves_preexisting_destination(self, tmp_path):
+        mgr, _ = make_manager_with_key(tmp_path)
+        encrypted = tmp_path / "broken.enc"
+        encrypted.mkdir()
+        (encrypted / "encryption_metadata.json").write_text(json.dumps({"encrypted": True}))
+        (encrypted / "broken.txt.enc").write_bytes(b"malformed")
+        destination = tmp_path / "existing-output"
+        destination.mkdir(mode=0o700)
+        sentinel = destination / "keep.txt"
+        sentinel.write_text("leave in place")
+
+        assert mgr.decrypt_directory(encrypted, destination) is False
+        assert sentinel.read_text() == "leave in place"
+
+    def test_special_files_fail_before_output_creation(self, tmp_path):
+        if not hasattr(os, "mkfifo"):
+            pytest.skip("named pipes are unavailable")
+        mgr, _ = make_manager_with_key(tmp_path)
+        source = tmp_path / "source"
+        source.mkdir()
+        os.mkfifo(source / "pipe")
+        encrypted = tmp_path / "encrypted"
+
+        assert mgr.encrypt_directory(source, encrypted) is False
+        assert not encrypted.exists()
+
+    def test_legacy_per_file_directory_still_decrypts(self, tmp_path):
+        mgr, _ = make_manager_with_key(tmp_path)
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "message.txt").write_text("legacy content")
+        legacy = tmp_path / "legacy.enc"
+        legacy.mkdir()
+        legacy.chmod(0o700)
+        assert mgr.encrypt_file(source / "message.txt", legacy / "message.txt.enc") is True
+        (legacy / "encryption_metadata.json").write_text(json.dumps({"encrypted": True, "method": "symmetric"}))
+
+        restored = tmp_path / "legacy-restored"
+        assert mgr.decrypt_directory(legacy, restored) is True
+        assert (restored / "message.txt").read_text() == "legacy content"
+
+    @pytest.mark.skipif(not hasattr(os, "setxattr"), reason="extended attributes are unavailable")
+    def test_unsupported_extended_attributes_fail_before_encrypted_output(self, tmp_path):
+        mgr, _ = make_manager_with_key(tmp_path)
+        source = tmp_path / "source"
+        source.mkdir()
+        item = source / "with-xattr"
+        item.write_text("data")
+        try:
+            os.setxattr(item, "user.bbackup-test", b"unsupported")
+        except OSError as exc:
+            pytest.skip(f"extended attributes unavailable on test filesystem: {exc}")
+
+        encrypted = tmp_path / "encrypted"
+        assert mgr.encrypt_directory(source, encrypted) is False
+        assert not encrypted.exists()
+        assert item.read_text() == "data"
+
+    def test_encrypted_outputs_and_decryption_stage_are_private(self, tmp_path):
+        mgr, _ = make_manager_with_key(tmp_path)
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "secret.txt").write_text("secret")
+        encrypted = tmp_path / "encrypted"
+        assert mgr.encrypt_directory(source, encrypted) is True
+        assert stat.S_IMODE(encrypted.stat().st_mode) == 0o700
+        assert stat.S_IMODE((encrypted / "encryption_metadata.json").stat().st_mode) == 0o600
+        assert stat.S_IMODE(next((encrypted / "payloads").glob("*.bbackup")).stat().st_mode) == 0o600
+
+        decrypted = mgr.decrypt_backup(encrypted)
+        private_wrapper = decrypted.parent
+        try:
+            assert stat.S_IMODE(private_wrapper.stat().st_mode) == 0o700
+        finally:
+            import shutil
+            shutil.rmtree(private_wrapper)
+
 
 # ---------------------------------------------------------------------------
 # TestBackupEncryption
@@ -503,3 +770,29 @@ class TestKeyGeneration:
     def test_generate_keypair_ecdsa_unsupported(self):
         with pytest.raises(ValueError, match="Unsupported"):
             EncryptionManager.generate_keypair(algorithm="ecdsa-p384")
+
+
+def test_tree_preflight_refuses_ownership_unrestorable_by_current_user(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    source = tmp_path / "source"
+    source.mkdir()
+    item = source / "foreign-file"
+    item.write_text("preserve original")
+    real_lstat = os.lstat
+    def lstat(path, *args, **kwargs):
+        value = real_lstat(path, *args, **kwargs)
+        if Path(path) == item:
+            fields = {name: getattr(value, name) for name in dir(value) if name.startswith("st_")}
+            fields["st_uid"] = 1001
+            return SimpleNamespace(**fields)
+        if Path(path) == source:
+            fields = {name: getattr(value, name) for name in dir(value) if name.startswith("st_")}
+            fields["st_uid"] = 1000
+            return SimpleNamespace(**fields)
+        return value
+    from pathlib import Path
+    monkeypatch.setattr("bbackup.encryption.os.lstat", lstat)
+    monkeypatch.setattr("bbackup.encryption.os.geteuid", lambda: 1000)
+    with pytest.raises(OSError, match="Cannot restore tree ownership"):
+        EncryptionManager.validate_directory_tree(source)
+    assert item.read_text() == "preserve original"

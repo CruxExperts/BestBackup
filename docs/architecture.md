@@ -1,6 +1,6 @@
 # Architecture
 
-This page describes the selected stable v2.0.1 tested scope and the retained 1.x implementation. The v2 command is `bbackup production`; legacy 1.x Docker/YAML commands remain available.
+This page describes the selected stable v2.0.2 tested scope and the retained 1.x implementation. The v2 command is `bbackup production`; legacy 1.x Docker/YAML commands remain available.
 
 ## Version 2 architecture
 
@@ -22,7 +22,7 @@ Cloud recovery kits inventory exact object versions, bind the provider endpoint 
 
 ### Interfaces and scope
 
-The `bbackup production` CLI is strict and schema-discoverable; the Textual dashboard provides mouse and keyboard job operation. Headless dashboard happy paths are tested. The stable v2.0.1 release scope is local/file capture and restore, the listed live database drills, dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages. B2/AWS, native Docker, ARM64 package outputs, cross-application upgrade/rollback, and systemd boot/reboot remain unqualified or deferred. See [version 2 development](development/version-2.md) for release boundaries, [agent integration](AGENT_INTEGRATION.md) for the JSON contract, and [cloud storage](cloud-storage.md) for B2/S3 limits.
+The `bbackup production` CLI is strict and schema-discoverable; the Textual dashboard provides mouse and keyboard job operation. Headless dashboard happy paths are tested. The stable v2.0.2 release scope is local/file capture and restore, the listed live database drills, dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages. B2/AWS, native Docker, ARM64 package outputs, cross-application upgrade/rollback, and systemd boot/reboot remain unqualified or deferred. See [version 2 development](development/version-2.md) for release boundaries, [agent integration](AGENT_INTEGRATION.md) for the JSON contract, and [cloud storage](cloud-storage.md) for B2/S3 limits.
 
 The remaining module and configuration sections below describe the retained 1.x Docker/filesystem workflow. Their YAML settings, archive model, and AES/RSA file encryption do not configure the v2 implementation.
 

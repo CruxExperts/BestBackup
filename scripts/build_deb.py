@@ -424,6 +424,8 @@ def export_locked_requirements(uv: str, lock_path: Path, requirement_path: Path,
     command = [
         uv,
         "export",
+        "--python",
+        sys.executable,
         "--locked",
         "--no-dev",
         "--no-default-groups",

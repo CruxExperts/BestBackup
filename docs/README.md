@@ -1,6 +1,6 @@
 # Documentation
 
-This index separates the selected stable v2.0.1 tested scope from the retained 1.x management workflow. Start with the root [README](../README.md), then choose the guide for your task.
+This index separates the selected stable v2.0.2 tested scope from the retained 1.x management workflow. Start with the root [README](../README.md), then choose the guide for your task.
 
 ## Start using bbackup
 

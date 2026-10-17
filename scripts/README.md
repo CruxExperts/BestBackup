@@ -9,6 +9,9 @@
 ### Build a native Ubuntu package
 
 The `build_deb.py` script builds a `.deb` from the supplied bbackup wheel, this repository's `uv.lock`, and a supplied restic 0.19.1 executable. The builder requires an already installed `uv`, `dpkg-deb`, and the `packaging` module in its Python interpreter; on supported Ubuntu/Mint hosts, install `python3-packaging` and invoke `/usr/bin/python3`. It does not download restic, install packages on the host, update `uv.lock`, or install Python packages into system Python. Run it as an unprivileged user.
+The locked dependency export explicitly uses the same native interpreter that
+ran the builder, so a repository-level `.python-version` pin cannot force a
+different Python version.
 
 The builder only accepts native environments: Ubuntu 24.04 with CPython 3.12, or Ubuntu 26.04 with CPython 3.14, on amd64 or arm64. The sole ABI-build exception is Linux Mint 22.3 based on noble for an Ubuntu 24.04-targeted candidate; it does not qualify Ubuntu runtime behavior. Cross-release, cross-Python, and cross-architecture builds are refused.
 
@@ -20,7 +23,7 @@ RESTIC_SHA256='<reviewed SHA-256 for that exact executable>'
 
 /usr/bin/python3 scripts/build_deb.py \
   --target-release 24.04 \
-  --wheel dist/bbackup-2.0.1-py3-none-any.whl \
+  --wheel dist/bbackup-2.0.2-py3-none-any.whl \
   --restic "$RESTIC" \
   --restic-sha256 "$RESTIC_SHA256" \
   --output-dir dist/deb
@@ -31,7 +34,7 @@ Use `--target-release 26.04` only from a native Ubuntu 26.04/Python 3.14 environ
 The tag workflow builds all four target combinations on native x86_64/arm64 runners in matching, digest-pinned official Ubuntu containers, installs and checks each package in its disposable target container, and assembles the source archives, four `.deb` files, package manifests/checksums, and a combined `SHA256SUMS` into the immutable `release-inputs` artifact. It does not publish a GitHub release or sign anything. The in-package `/usr/share/doc/bbackup/build-manifest.json` records the package version, target release/architecture/Python, build host release, wheel hash, `uv.lock` hash, dependency-export hash, and bundled restic hash. The adjacent sidecar adds the final `.deb` hash, which cannot be embedded in the package without changing that hash. No hostname, user path, credentials, repository URL, or backup state is included. To review a package without installing it:
 
 ```bash
-PACKAGE=dist/deb/bbackup_2.0.1_ubuntu24.04_amd64.deb
+PACKAGE=dist/deb/bbackup_2.0.2_ubuntu24.04_amd64.deb
 (cd "$(dirname "$PACKAGE")" && sha256sum -c "$(basename "${PACKAGE%.deb}.sha256")")
 dpkg-deb --info "$PACKAGE"
 dpkg-deb --contents "$PACKAGE"
@@ -40,7 +43,7 @@ dpkg-deb --extract "$PACKAGE" "$REVIEW_DIR"
 cat "$REVIEW_DIR/usr/share/doc/bbackup/build-manifest.json"
 ```
 
-Lifecycle tests cover active-client upgrade refusal, marker-based launcher refusal, successful configure cleanup, successful recovery after dpkg abort with restored files, and fail-closed behavior for incomplete restoration. These tests use isolated temporary package roots; they do not exercise Ubuntu's dpkg transaction choreography. Package installation and Ubuntu runtime behavior are not qualified merely by creating or inspecting a `.deb`. See [INSTALL.md](../INSTALL.md#debian-package-installation) for install, removal, upgrade, recovery, and rollback behavior.
+Builder regression coverage exercises locked requirement export with an unavailable `.python-version` pin and disabled Python downloads. Lifecycle tests cover active-client upgrade refusal, marker-based launcher refusal, successful configure cleanup, successful recovery after dpkg abort with restored files, and fail-closed behavior for incomplete restoration. These tests use isolated temporary package roots; they do not exercise Ubuntu's dpkg transaction choreography. Package installation and Ubuntu runtime behavior are not qualified merely by creating or inspecting a `.deb`. See [INSTALL.md](../INSTALL.md#debian-package-installation) for install, removal, upgrade, recovery, and rollback behavior.
 
 Publishing is an explicit two-phase operation. After the tag workflow succeeds, download its exact immutable `release-inputs` artifact and verify it before signing:
 

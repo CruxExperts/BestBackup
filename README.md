@@ -2,14 +2,14 @@
 
 **Local-first, encrypted backup and restore for Linux servers.** Capture to a nearby repository, replicate selected snapshots to independent storage, and restore into a new directory.
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE) [![Version 2.0.1](https://img.shields.io/badge/version-2.0.1-22c55e?style=flat-square)](CHANGELOG.md)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE) [![Version 2.0.2](https://img.shields.io/badge/version-2.0.2-22c55e?style=flat-square)](CHANGELOG.md)
 
 [Quick start](QUICKSTART.md) · [Install](INSTALL.md) · [Cloud storage](docs/cloud-storage.md) · [Agent CLI](docs/AGENT_INTEGRATION.md) · [All documentation](docs/README.md)
 
 ![bbackup local-first capture, independent repositories, and verified restore workflow](docs/assets/bbackup-banner.svg)
 
 > [!WARNING]
-> Stable v2.0.1 covers only the tested paths below. Keep an independent recovery path and verify restores before using real data.
+> Stable v2.0.2 covers only the tested paths below. Keep an independent recovery path and verify restores before using real data.
 
 ## Keep recovery close and independent
 
@@ -20,7 +20,7 @@
 
 ## Production support scope
 
-The v2.0.1 stable support claim is limited to local file capture and restore,
+The v2.0.2 stable support claim is limited to local file capture and restore,
 live PostgreSQL 17.11, MySQL 8.4.12, and MariaDB 11.8.9 capture/restore,
 headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages. B2/AWS,
 native Docker, ARM64 package functionality, cross-application-version upgrades
@@ -29,12 +29,12 @@ unqualified. The release workflow may publish ARM64 package artifacts, but
 artifact availability does not qualify ARM64 backup/restore.
 See [v2 release evidence](docs/development/version-2.md) for exact tests and limits.
 
-## Install v2.0.1
+## Install v2.0.2
 
 Install stable v2 from its pinned source tag:
 
 ```bash
-uv tool install --force 'git+https://github.com/CruxExperts/best-backup.git@v2.0.1'
+uv tool install --force 'git+https://github.com/CruxExperts/best-backup.git@v2.0.2'
 ```
 
 For the retained 1.x command line, install the `v1.8.6` release tag:
@@ -58,7 +58,7 @@ bbackup production --config config.json --bindings bindings.json jobs run --name
 
 ## Cloud destinations
 
-B2 through its S3 API and Amazon S3 can be configured as repositories, but neither provider has a live capture/check/restore qualification for v2.0.1. Native B2 inspection is read-only and does not prove backup transfer or retention. Do not rely on these paths for production backups; see the [cloud storage guide](docs/cloud-storage.md).
+B2 through its S3 API and Amazon S3 can be configured as repositories, but neither provider has a live capture/check/restore qualification for v2.0.2. Native B2 inspection is read-only and does not prove backup transfer or retention. Do not rely on these paths for production backups; see the [cloud storage guide](docs/cloud-storage.md).
 
 ## Choose a guide
 

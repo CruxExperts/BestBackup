@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="480" viewBox="0 0 1280 480" role="img" aria-labelledby="title desc">
 <title id="title">bbackup — Keep a copy close. Keep a copy elsewhere.</title>
-<desc id="desc">Linux backups with encrypted local restic snapshots, implemented but not production-qualified Backblaze B2 or Amazon S3 paths, and verified file restores. Selected stable v2.0.1 tested scope.</desc>
+<desc id="desc">Linux backups with encrypted local restic snapshots, implemented but not production-qualified Backblaze B2 or Amazon S3 paths, and verified file restores. Selected stable v2.0.2 tested scope.</desc>
 <metadata>Copyright © 2026 Crux Experts LLC. https://www.cruxexperts.com/ Private asset. Property of Crux Experts LLC. Use, reproduction, modification, distribution, or publication without prior written permission is prohibited. Original editable vector artwork created for bbackup.</metadata>
 <rect width="1280" height="480" fill="#eef6f0"/>
 <g font-family="Arial,Helvetica,sans-serif" fill="#153b2c">

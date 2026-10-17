@@ -10,7 +10,7 @@ health, updates, and maintenance for the Docker/filesystem workflow.
 `bbman` remains the management command for the 1.x YAML configuration and
 Docker/filesystem workflow. The version 2 command is `bbackup production`, with
 separate strict JSON policy and private host bindings; `bbman setup` does not
-configure it. Stable v2.0.1 qualification covers local/file capture and restore,
+configure it. Stable v2.0.2 qualification covers local/file capture and restore,
 the three recorded live database drills, dashboard happy paths, and AMD64 Ubuntu
 24.04/26.04 packages. Native Docker is implemented but not production-qualified.
 Start with the [v2 quick start](../QUICKSTART.md) or read the [version 2

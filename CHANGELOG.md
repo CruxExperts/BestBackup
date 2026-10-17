@@ -12,6 +12,19 @@ current uv-based install, development, and release instructions.
 
 ---
 
+## [2.0.2] - 2026-10-17
+
+The `v2.0.1` tag passed source validation and both Ubuntu 24.04 native package
+jobs but failed both Ubuntu 26.04 package jobs, so it produced no release assets.
+This patch keeps runtime behavior unchanged and fixes dependency export for the
+Ubuntu 26.04 native build.
+
+### Fixed
+
+- The Debian package builder now runs `uv export` with its validated native
+  interpreter instead of letting the development `.python-version` pin select
+  an unavailable Python 3.12 interpreter on Ubuntu 26.04.
+
 ## [2.0.1] - 2026-10-17
 
 The earlier `v2.0.0` tag did not produce release artifacts because its native
@@ -465,7 +478,8 @@ are still under development. See [implementation status](docs/development/versio
 
 The `Unreleased` comparison is a live `HEAD` link for navigation, not an immutable historical citation.
 
-[Unreleased]: https://github.com/CruxExperts/best-backup/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/CruxExperts/best-backup/compare/v2.0.2...HEAD
+[2.0.2]: https://github.com/CruxExperts/best-backup/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/CruxExperts/best-backup/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/CruxExperts/best-backup/compare/v1.8.6...v2.0.0
 [2.0.0-alpha.1]: https://github.com/CruxExperts/best-backup/compare/v1.8.6...v2.0.0-alpha.1

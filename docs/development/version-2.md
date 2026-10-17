@@ -458,12 +458,36 @@ using the builder's explicit interpreter. Publication requires hosted validation
 with the release workflow's pinned uv 0.11.21 and successful builds of all four
 Ubuntu 24.04/26.04 native packages.
 
+The signed `v2.0.2` tag points to
+`ce36c39a9bf1733d27f4f2e1f1901a9b753ba8f7`. Candidate CI run
+`39047101675` passed all eight jobs. Tag-build run `39047303176` passed source
+validation, all four native package build/install jobs, and release assembly.
+
+Publication run `39047619253` stopped before creating a release because the key
+server could not supply an importable public certificate. Publication-only
+commit `98285816e56eb9970723c6341cd2e7d04213905f` imports the checked-in public
+certificate while retaining fixed-fingerprint verification. Its exact
+verification shell passed locally with a fresh keyring and the original build
+inventory. The tag and build artifacts were not changed.
+
+Publication run `39047848453` succeeded. The stable
+[v2.0.2 release](https://github.com/CruxExperts/BestBackup/releases/tag/v2.0.2)
+contains 16 assets: a wheel, source archive, four native packages with
+manifests/checksums, combined `SHA256SUMS`, and its detached signature. A fresh
+download matched all 14 build-asset hashes and the original checksum inventory;
+the public detached signature verified against the required fingerprint.
+
+Separate main-branch CI run `39047757396` on the publication-only commit failed
+the Python 3.14 dashboard test `test_mouse_keyboard_search_and_small_screen`
+with `NoMatches` for `#event-table`; Python 3.12/3.13 unit jobs and all lint
+jobs passed. This does not replace the successful evidence for the immutable
+release commit; the dashboard code and test were unchanged by the publisher fix.
+
 Historical `v2.0.0` tag run `39037767831` passed source validation but failed all
 four native package jobs: the isolated uv-tools environment's Python was first
 on `PATH` and could not import apt-installed `packaging`. The v2.0.1 fix uses
 system Python for the Debian builder and its uv environment. The existing
-`v2.0.0` and `v2.0.1` tags remain unchanged; the v2.0.2 hosted build must pass
-before publication.
+`v2.0.0` and `v2.0.1` tags remain unchanged.
 
 The earlier full-feature assessment recorded the checkout at
 `ddaede3230a86463d1ebe4efe2caedad30775c5d`, one commit ahead of remote `main`

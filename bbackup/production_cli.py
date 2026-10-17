@@ -50,7 +50,7 @@ class MachineGroup(click.Group):
 @click.option("--bindings", type=click.Path(path_type=Path), required=False)
 @click.pass_context
 def cli(ctx, config, bindings):
-    """Production preview: encrypted local capture and explicit snapshot replication."""
+    """Version 2 backup and restore operations."""
     ctx.ensure_object(dict)
     ctx.obj.update(config=config, bindings=bindings)
 

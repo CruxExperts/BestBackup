@@ -22,14 +22,14 @@ Use this checklist before changing public project metadata or publishing a relea
 - [ ] The homepage links to a maintained standalone site; leave it unset when the README is the canonical landing page.
 - [ ] Each enabled community surface has a maintained purpose: keep Issues for support, enable Discussions only when it will be answered, and disable a blank Wiki rather than duplicate repository docs.
 
-## Version 2 preview claims
+## Version 2 tested-scope claims
 
-- [ ] Identify `2.0.0-alpha.1` as a pre-release preview; do not call it production-ready.
-- [ ] Describe Ubuntu 24.04 and 26.04 on AMD64 and ARM64 as target platforms until packages and upgrade/rollback behavior are tested.
-- [ ] State that Backblaze B2 through S3 and Amazon S3 are configurable destinations and restore sources while provider-specific thirty-day protection and recovery remain unqualified.
+- [ ] Describe stable v2.0.0 as qualified only for local file capture/restore, live PostgreSQL 17.11 / MySQL 8.4.12 / MariaDB 11.8.9 capture/restore, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages.
+- [ ] Keep B2/AWS, native Docker, ARM64 backup/restore, cross-application-version upgrades/rollback, systemd boot/reboot, and cloud/off-host protection explicitly unqualified.
+- [ ] State that ARM64 packages may be built by the release matrix but are not functionally qualified by package-install smoke alone.
 - [ ] Keep native B2 capability inspection distinct from backup transfer; inspection is read-only and always reports `protection_qualified: false`.
 - [ ] Describe the local Garage round trip as S3-compatible test evidence, not B2 or Amazon S3 qualification.
-- [ ] Keep the prior 745-test result identified as prior evidence; rerun the suite for this release payload.
+- [ ] Rerun the full test suite and installed-artifact smoke for the exact release candidate; prior test counts are historical evidence.
 - [ ] Avoid unmeasured comparative performance, ransomware-proof, and unqualified production claims.
 - [ ] Preserve the explicit uncertain-mutation reconciliation and no-automatic-replay behavior in operator guidance.
 
@@ -39,7 +39,7 @@ Use this checklist before changing public project metadata or publishing a relea
 - [ ] `.githooks/commit-msg` validates conventional commit subjects.
 - [ ] `.githooks/pre-push` runs version sync, generated-doc checks, and whitespace checks.
 - [ ] `.github/workflows/ci.yml` runs syntax, tests, CLI docs, Markdown standards, version sync, support doc presence, and publishing readiness checks.
-- [ ] `.github/workflows/release-notes.yml` verifies the tag, Markdown standards, version and publishing checks, builds with `uv build`, and creates a GitHub release from `v*` tags.
+- [ ] `.github/workflows/release-notes.yml` validates and builds on a pushed `v*` tag; a separate default-branch `workflow_dispatch` verifies the exact successful run, tag commit, artifact inventory, and fixed-fingerprint `SHA256SUMS` signature before publishing.
 - [ ] CI tests Python `3.12`, `3.13`, and `3.14`, matching the supported package classifiers.
 - [ ] CI and release workflows smoke test the installed wheel.
 - [ ] GitHub workflow actions are on current supported major versions.
@@ -50,7 +50,7 @@ Use this checklist before changing public project metadata or publishing a relea
 ## Version and release state
 
 - [ ] `VERSION` contains the intended semantic version.
-- [ ] Prerelease versions and tags match the package metadata, release workflow, README badge, and matching changelog section.
+- [ ] Stable or prerelease version and tag match package metadata, release workflow, README badge, and dated changelog section.
 - [ ] `bbackup/__init__.py`, `pyproject.toml`, README badge, `CHANGELOG.md`, and generated CLI skills docs match `VERSION`.
 - [ ] `pyproject.toml` requires Python `>=3.12`.
 - [ ] `.python-version` pins the local baseline to `3.12`.

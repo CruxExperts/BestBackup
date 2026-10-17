@@ -1,6 +1,6 @@
 # Agent integration
 
-The version 2 command line is designed for agents and other noninteractive clients. It accepts strict JSON input, publishes a schema for each operation, and emits sanitized versioned results. The `bbackup production` interface is a preview; follow the same read-before-write and no-replay rules you would use for an operator.
+The version 2 command line is designed for agents and other noninteractive clients. It accepts strict JSON input, publishes a schema for each operation, and emits sanitized versioned results. Stable v2.0.0 qualification is limited to the tested local/file, selected live database, headless dashboard, and AMD64 Ubuntu paths listed below. B2/AWS and native Docker are not production-qualified; follow the same read-before-write and no-replay rules you would use for an operator.
 
 ## Discover commands and schemas
 
@@ -46,7 +46,7 @@ bbackup production \
   --target "$HOME/restore-test"
 ```
 
-Restore requires a new target directory and verifies file data. It does not validate application startup or database behavior. For databases, the preview only restores trusted PostgreSQL exports into a new database; the caller must set the explicit `trusted_archive` acknowledgement. See [the v2 preview limits](development/version-2.md#native-database-capture-preview).
+Restore requires a new target directory and verifies file data. It does not validate application startup or database behavior. Database restores accept trusted PostgreSQL, MySQL, and MariaDB archives with database-specific destination safeguards: PostgreSQL creates a new database using snapshot-time locale metadata; MySQL/MariaDB require the original database name on a separate empty recovery server with only built-in schemas. Set the explicit `trusted_archive` acknowledgement. Never restore untrusted archives: database restores execute archived SQL. See [the v2 database restore limits](development/version-2.md#native-database-capture-and-restore).
 
 ## Read bounded operation records
 

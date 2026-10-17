@@ -10,6 +10,21 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+---
+
+## [2.0.0] - 2026-10-17
+
+**Stable tested scope:** local file capture and restore; live PostgreSQL
+17.11, MySQL 8.4.12, and MariaDB 11.8.9 capture/restore; headless dashboard
+happy paths; and AMD64 Ubuntu 24.04/26.04 packages. B2/AWS, native Docker,
+ARM64 backup/restore, ordinary cross-application-version upgrades or rollback,
+systemd boot/reboot, and cloud/off-host retention remain unqualified. The
+release workflow builds ARM64 packages, but package availability and install
+smoke do not qualify ARM64 backup/restore.
+
+Only the paths in this tested-scope statement are production-qualified; the
+feature notes below also describe implemented but unqualified functionality.
+
 ### Added
 
 - Local retention now uses immutable capture-time replica requirements and
@@ -27,13 +42,13 @@ current uv-based install, development, and release instructions.
   explicitly acknowledged empty recovery server, using the original database
   name. Pinned connection settings and shared uncertainty tracking prevent
   automatic replay after ambiguous mutations.
-- Version-two native Docker capture now preserves daemon-provided mask/read-only
-  paths, validates typed bind/local-volume declarations, and ignores only added
-  writable-layer entries exactly at mount destinations rebuilt by restore.
-  It quiesces only selected running containers, then restores into a new
-  directory and container using an already-local pinned image. Durable restart
-  intentions require explicit recovery; Docker restore reconciliation records
-  reviewed ledger outcomes without replay.
+- An experimental, unqualified version-two native Docker path now preserves
+  daemon-provided mask/read-only paths, validates typed bind/local-volume
+  declarations, and ignores only added writable-layer entries exactly at mount
+  destinations rebuilt by restore. It quiesces only selected running containers,
+  then restores into a new directory and container using an already-local pinned
+  image. Durable restart intentions require explicit recovery; Docker restore
+  reconciliation records reviewed ledger outcomes without replay.
 - Overview and machine diagnostics now report actual backup/copy/check/restore
   observations, operation outcomes, local capacity, observed active timers, and
   signed-checkpoint expiry without treating them as application or cloud proof.
@@ -115,6 +130,7 @@ sources; provider-specific recovery-protection qualification is still underway.
   incorporating the upstream fixes for CVE-2026-49264 and CVE-2026-49265.
 - Preview features remain under `bbackup production`. Existing 1.x commands and
   configuration remain available while their replacements are completed.
+
 
 ### Release status
 
@@ -437,7 +453,8 @@ are still under development. See [implementation status](docs/development/versio
 
 The `Unreleased` comparison is a live `HEAD` link for navigation, not an immutable historical citation.
 
-[Unreleased]: https://github.com/CruxExperts/best-backup/compare/v2.0.0-alpha.1...HEAD
+[Unreleased]: https://github.com/CruxExperts/best-backup/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/CruxExperts/best-backup/compare/v1.8.6...v2.0.0
 [2.0.0-alpha.1]: https://github.com/CruxExperts/best-backup/compare/v1.8.6...v2.0.0-alpha.1
 [1.8.6]: https://github.com/CruxExperts/best-backup/compare/v1.8.5...v1.8.6
 [1.8.5]: https://github.com/CruxExperts/best-backup/compare/v1.8.4...v1.8.5

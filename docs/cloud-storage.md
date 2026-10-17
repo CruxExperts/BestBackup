@@ -1,21 +1,23 @@
 # Cloud storage: Backblaze B2 and Amazon S3
 
-Keep your first recovery point on local storage. Then copy that exact successful
-snapshot into an independently encrypted Backblaze B2 or Amazon S3 repository.
-Either repository can supply a restore, so a failed host does not have to be the
-machine that brings your files back.
+Keep your first recovery point on local storage. The v2.0.0 tested stable-release
+scope includes local/file capture and restore, selected live database drills,
+headless dashboard happy paths, and AMD64 Ubuntu packages.
 
-**B2 and S3 backup/restore support is implemented.** Live provider qualification
-and the thirty-day host-compromise protection checks are separate release gates.
-The local Garage S3 test has passed capture, copy, full-data checking, and restore.
+**Backblaze B2 and Amazon S3 are implemented but not production-qualified.**
+No live B2 or AWS capture/check/restore result is recorded. The local Garage S3
+test passed capture, copy, full-data checking, and restore, but does not qualify
+B2 or Amazon S3.
+Treat the provider setup below as experimental; do not use B2/AWS as a
+production recovery path until live provider capture/check/restore drills pass.
 
 ## Choose a connection
 
-| Storage | Repository binding | Credential variables | Recovery checkpoints |
+| Storage | Repository binding | Credential variables | Qualification status |
 |:--|:--|:--|:--|
-| Backblaze B2, recommended S3 route | `s3:https://s3.REGION.backblazeb2.com/BUCKET/restic` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Implemented S3 inventory path |
-| Amazon S3 | `s3:https://s3.REGION.amazonaws.com/BUCKET/restic` | AWS credential provider chain | Implemented S3 inventory path |
-| Backblaze B2, native restic route | `b2:BUCKET:restic` | `B2_ACCOUNT_ID`, `B2_ACCOUNT_KEY` | Native B2 inspection; use S3 route for checkpoint creation |
+| Backblaze B2, S3 route | `s3:https://s3.REGION.backblazeb2.com/BUCKET/restic` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Implemented; not production-qualified |
+| Amazon S3 | `s3:https://s3.REGION.amazonaws.com/BUCKET/restic` | AWS credential provider chain | Implemented; not production-qualified |
+| Backblaze B2, native restic route | `b2:BUCKET:restic` | `B2_ACCOUNT_ID`, `B2_ACCOUNT_KEY` | Implemented; not production-qualified; use S3 route for checkpoint creation |
 
 Use the actual endpoint shown for your bucket, rather than the literal `REGION`
 placeholder. Keep buckets private and choose a dedicated repository prefix.
@@ -101,7 +103,7 @@ bbackup production --config config.json --bindings bindings.json restore \
   --repository cloud --snapshot FULL_DESTINATION_SNAPSHOT_ID --target /srv/cloud-drill
 ```
 
-Keep local snapshots awaiting required replication. The preview does not prune
+Keep local snapshots awaiting required replication. A job run does not prune
 them automatically. A failed copy remains a failure even when local capture
 succeeded; reconcile uncertain operations before retrying.
 
@@ -126,10 +128,12 @@ operation. Follow the [operation reconciliation guide](development/version-2.md#
 
 ## Storage support and recovery protection
 
-A working destination establishes where a backup can be stored. Thirty-day
+A working destination establishes where a backup can be stored, not production
+qualification. B2 and AWS remain outside the selected stable-release support
+boundary until live provider capture/check/restore drills are recorded. Thirty-day
 recovery after host compromise additionally depends on credentials, version
 retention, lifecycle overlaps, an independent signed checkpoint, and an actual
-historical-version restore drill.
+historical-version restore drill; each remains deferred.
 
 Keep current repository objects indefinitely: old deduplicated packs can still
 be required by recent snapshots. Retain hidden or overwritten versions for at
@@ -138,11 +142,12 @@ Backup-host credentials must not permanently delete versions or administer the
 bucket, lifecycle rules, keys, or retention. Test lock cleanup with the exact
 restricted credentials before scheduling backups.
 
-The preview reports `protection_qualified: false` until the necessary evidence
-exists. It does not claim immutable storage or unrestricted ransomware protection.
+Native provider checks report `protection_qualified: false` until the necessary
+evidence exists. They do not claim immutable storage or unrestricted ransomware
+protection.
 See [independent recovery](development/version-2.md#independent-recovery-artifacts)
-for checkpoint creation and recovery without the original host.
-
+for checkpoint creation and recovery without the original host. Off-host custody
+is also deferred; a local escrow drill is not independent custody.
 <!-- project-footer:start -->
 
 <br><br>

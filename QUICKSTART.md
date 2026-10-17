@@ -1,13 +1,13 @@
-# Version 2 preview quick start
+# Version 2 stable quick start
 
-This guide creates an encrypted local restic repository, copies a successful snapshot to an independent repository, and verifies a restore into a new directory. It uses strict JSON policy and private host bindings. Version 2.0.0-alpha.1 is a pre-release preview; review the [preview limits](docs/development/version-2.md) before using real data.
+This guide creates an encrypted local restic repository, copies a successful snapshot to an independent repository, and verifies a restore into a new directory. It uses strict JSON policy and private host bindings. Stable v2.0.0 covers the tested local/file, selected database, headless dashboard, and AMD64 Ubuntu paths; review the [release evidence and limits](docs/development/version-2.md) before using real data.
 
 ## Requirements
 
 - Python 3.12 or newer and `restic` on `PATH`.
 - Read access to the source paths and write access to the repository and state locations.
 - `openssl` for the example password generation.
-- A second storage location for an independent replica. Backblaze B2 through the S3 API and Amazon S3 are supported configurations; provider qualification is still pending.
+- A second local storage location for an independent replica. B2/AWS configurations are available but not production-qualified.
 
 Docker, `rsync`, and `tar` are needed only for the retained 1.x Docker/filesystem commands. Native database capture and restore have separate client requirements; see [version 2 details](docs/development/version-2.md).
 
@@ -79,7 +79,7 @@ chmod 600 "$HOME/.config/bbackup/bindings.json"
 
 Bindings are machine-specific and must remain private. The state directory must be private to its owner. Use the same state directory for every bbackup process that accesses these repositories.
 
-For a cloud replica, replace its `repository` value with the provider's restic repository identifier and provide credentials through the supervised process environment. Keep credentials out of the JSON file and URL. Follow the [cloud storage guide](docs/cloud-storage.md) for B2/S3 configuration, B2 inspection, and provider qualification limits.
+For an unqualified cloud replica, replace its `repository` value with the provider's restic repository identifier and provide credentials through the supervised process environment. Keep credentials out of the JSON file and URL. Do not rely on B2/AWS for production backups; see the [cloud storage guide](docs/cloud-storage.md).
 
 ## Initialize and run a job
 
@@ -141,7 +141,7 @@ For unattended jobs and agents, use the strict `--input-json` interface. It reje
 
 ## Legacy 1.x commands
 
-The 1.x command family remains available for existing Docker and YAML configurations. Use `bbman setup` and `bbackup backup` only for that retained workflow. Its configuration and encryption settings do not configure the v2 production preview. See [legacy management](docs/management.md).
+The 1.x command family remains available for existing Docker and YAML configurations. Use `bbman setup` and `bbackup backup` only for that retained workflow. Its configuration and encryption settings do not configure the v2 production interface. See [legacy management](docs/management.md).
 
 <!-- project-footer:start -->
 

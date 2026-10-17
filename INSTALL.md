@@ -1,20 +1,20 @@
 # Install bbackup
 
-This guide separates the version 2.0.0-alpha.1 preview from the retained 1.x command line. The alpha is a pre-release and is not production-qualified; the legacy 1.x tag remains available as v1.8.6.
+This guide covers stable v2.0.0 for its tested file, database, dashboard, and AMD64 package scope. B2/AWS, native Docker, ARM64 package functionality, and broader recovery guarantees remain unqualified; the retained 1.x tag remains available as v1.8.6.
 
-## Version 2 preview
+## Version 2 stable release
 
-The preview uses Python 3.12 or newer and the `restic` executable. Install `restic` with your Linux distribution's package manager or from the [restic installation guide](https://restic.readthedocs.io/en/stable/020_installation.html).
+The stable release uses Python 3.12 or newer and the `restic` executable. Install `restic` with your Linux distribution's package manager or from the [restic installation guide](https://restic.readthedocs.io/en/stable/020_installation.html).
 
-Install the pinned preview with uv:
+Install the pinned stable release with uv:
 
 ```bash
-uv tool install --force 'git+https://github.com/CruxExperts/best-backup.git@v2.0.0-alpha.1'
+uv tool install --force 'git+https://github.com/CruxExperts/best-backup.git@v2.0.0'
 bbackup --version
 bbackup production --help
 ```
 
-The command is pinned to the `v2.0.0-alpha.1` source tag. To inspect or modify the source, use the development checkout below.
+The command is pinned to the `v2.0.0` source tag. To inspect or modify the source, use the development checkout below.
 
 ### Optional native database clients
 
@@ -22,11 +22,11 @@ PostgreSQL capture requires `pg_dump` and `psql` for source metadata; restoring 
 
 ### Optional systemd scheduling
 
-The preview can render user-level systemd service and timer unit files. Rendering does not install or enable them. Review [the quick start](QUICKSTART.md) and generated unit contents before enabling a schedule.
+The release can render user-level systemd service and timer unit files. Rendering does not install or enable them. Systemd boot and reboot behavior is not qualified; review [the quick start](QUICKSTART.md) and generated unit contents before enabling a schedule.
 
 ### Cloud repositories
 
-Restic repositories can use local storage, Backblaze B2 through the S3 API, or Amazon S3. Configure cloud credentials in the supervised process environment. Do not place credentials in portable JSON policy or a repository URL. See [cloud storage](docs/cloud-storage.md) for provider setup, inspection, and qualification limits.
+Restic repositories can use local storage, Backblaze B2 through the S3 API, or Amazon S3. Cloud providers are configurable but not production-qualified in v2.0.0. Configure credentials in the supervised process environment. Do not place credentials in portable JSON policy or a repository URL. See [cloud storage](docs/cloud-storage.md) for experimental provider setup and limits.
 
 ## Existing 1.x release
 
@@ -52,7 +52,7 @@ See [docs/management.md](docs/management.md) for legacy setup, health, remote, a
 
 ## Development checkout
 
-Use a checkout when you want to run the preview from source or contribute changes:
+Use a checkout when you want to run stable v2 from source or contribute changes:
 
 ```bash
 git clone https://github.com/CruxExperts/best-backup.git
@@ -81,7 +81,7 @@ sudo env \
   UV_TOOL_DIR=/opt/uv/tools \
   UV_TOOL_BIN_DIR=/usr/local/bin \
   "$UV" tool install --force \
-  'git+https://github.com/CruxExperts/best-backup.git@v2.0.0-alpha.1'
+  'git+https://github.com/CruxExperts/best-backup.git@v2.0.0'
 
 bbackup --version
 ```
@@ -113,12 +113,12 @@ Install a newer release tag with `uv tool install --force` and the exact tag. Pr
 
 ## Debian package installation
 
-Native Ubuntu packages target Ubuntu 24.04 with Python 3.12 and Ubuntu 26.04 with Python 3.14, on amd64 or arm64. Use a package built natively for the target release, architecture, and Python version; the package builder refuses cross-build labels.
+Native Ubuntu packages target Ubuntu 24.04 with Python 3.12 and Ubuntu 26.04 with Python 3.14, on amd64 or arm64. The v2.0.0 production-qualified package scope is amd64 only; ARM64 artifacts, if built, are unqualified pending functional capture/restore smoke tests. Use a package built natively for the target release, architecture, and Python version; the package builder refuses cross-build labels.
 
-Inspect the package, contents, manifest, and checksum before installing. For the current preview's amd64 artifact:
+Inspect the package, contents, manifest, and checksum before installing. For the Ubuntu 24.04 AMD64 artifact:
 
 ```bash
-PACKAGE=dist/deb/bbackup_2.0.0~a1_ubuntu24.04_amd64.deb
+PACKAGE=dist/deb/bbackup_2.0.0_ubuntu24.04_amd64.deb
 (cd "$(dirname "$PACKAGE")" && sha256sum -c "$(basename "${PACKAGE%.deb}.sha256")")
 dpkg-deb --info "$PACKAGE"
 dpkg-deb --contents "$PACKAGE"
@@ -130,12 +130,13 @@ cat "$REVIEW_DIR/usr/share/doc/bbackup/build-manifest.json"
 Install only after reviewing that output:
 
 ```bash
-sudo apt install ./dist/deb/bbackup_2.0.0~a1_ubuntu24.04_amd64.deb
+sudo apt install ./dist/deb/bbackup_2.0.0_ubuntu24.04_amd64.deb
 bbackup --version
 bbman --help
 ```
 
 The release build matrix targets four uniquely named native packages: `bbackup_<version>_ubuntu24.04_amd64.deb`, `bbackup_<version>_ubuntu24.04_arm64.deb`, `bbackup_<version>_ubuntu26.04_amd64.deb`, and `bbackup_<version>_ubuntu26.04_arm64.deb`. A configured matrix is not evidence that all four artifacts have been built or qualified. Each package contains the versioned Python package, its locked dependencies, and the verified restic binary. Installation does not install Python packages into system Python, access a package index at runtime, enable or start services, or remove configuration, private bindings, credentials, repositories, or backup state.
+The v2.0.0 release workflow also builds ARM64 packages, but its install smoke does not qualify backup/restore functionality on ARM64. Treat those packages as experimental.
 
 Package upgrades and removals refuse while either command is active. A root-owned marker blocks both launchers while package files are changing. Successful configuration verifies the installed payload checksum manifest before clearing the marker. On abort, a marker requires the exclusive process lock and complete payload validation before removal. Without a marker, the abort hook takes a shared lock, verifies the payload and launchers, and returns without clearing anything; existing clients can continue while transition writers remain excluded.
 
@@ -172,7 +173,7 @@ See [scripts/README.md](scripts/README.md#build-a-native-ubuntu-package) for the
 
 ## Linux platform status
 
-Ubuntu 24.04/26.04, Python 3.12/3.14 respectively, and amd64/arm64 remain the intended package targets. Native AMD64 Ubuntu-container checks passed fresh installation, actual installed-command capture/check/restore, refusal while the installed dashboard was running, interrupted-unpack launcher blocking, damaged-payload refusal, and recovery by reinstalling the verified same-version package. Configuration, password files, and SQLite state were preserved. These bounded checks do not qualify ARM64, cross-application-version rollback, systemd boot/reboot behavior, B2, or Amazon S3. See [qualification and remaining work](docs/development/version-2.md#qualification-and-remaining-work) for the evidence and open release gates.
+Ubuntu 24.04/26.04 with Python 3.12/3.14 is production-qualified only on AMD64. Native AMD64 Ubuntu-container checks passed fresh installation, installed-command capture/check/restore, refusal while the installed dashboard was running, interrupted-unpack launcher blocking, damaged-payload refusal, and verified same-version repair with configuration, passwords, and SQLite state preserved. ARM64 backup/restore, ordinary cross-application-version upgrades, rollback, systemd boot/reboot, B2, and Amazon S3 remain unqualified. See [qualification and remaining work](docs/development/version-2.md#qualification-and-remaining-work).
 
 <!-- project-footer:start -->
 

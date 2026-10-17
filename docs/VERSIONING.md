@@ -1,8 +1,9 @@
 # Versioning
 
-`VERSION` is the canonical release version. The current
-version is `2.0.0-alpha.1`, a preview release; the retained legacy line is
-`1.8.6`. The alpha is not production-qualified.
+`VERSION` is the canonical release version. The current version is `2.0.0`,
+the first stable release of the version 2 line; the retained legacy line is
+`1.8.6`. Stable support is limited to the tested scope in
+[`docs/development/version-2.md`](development/version-2.md).
 
 Release-facing references must match it before publishing:
 
@@ -15,9 +16,9 @@ Release-facing references must match it before publishing:
 - GitHub-facing Markdown standards and provenance checks
 
 The release workflow accepts alpha, beta, and release-candidate suffixes. A
-tag such as `v2.0.0-alpha.1` creates a GitHub prerelease and does not mark it as
-the latest stable release. Release tags still have to match `VERSION`, and
-their changelog section and generated schemas must be present before publishing.
+prerelease tag such as `v2.0.0-alpha.1` is marked as a GitHub prerelease; a
+stable tag such as `v2.0.0` is not. Every tag must match `VERSION`, its dated
+changelog section, and generated schemas before release validation.
 
 Normal release batches use a patch bump by default, including commits with
 `feat:` subjects. Use a `Release-Type: major|minor|patch|none` trailer in the
@@ -78,13 +79,16 @@ uv run pytest
 git diff --check
 ```
 
-6. Commit with a conventional commit message.
-7. Tag the release as `v<VERSION>` (for example, `v2.0.0-alpha.1`) and push the tag after CI is green.
-
-Pushing a tag that matches `v*` runs `.github/workflows/release-notes.yml`.
-The release job verifies that the tag matches `VERSION`, runs the version and
-publishing checks, runs Ruff across the package, selected release scripts, and
-tests, runs py_compile, generated-doc checks, pytest, builds release artifacts
-with `uv build`, smoke tests the built wheel, and creates a GitHub release from
-the matching `CHANGELOG.md` section. The release job fails if the matching
-changelog section is missing.
+6. Create a signed conventional commit for the release candidate.
+7. Push the candidate commit to `main` only after branch checks pass.
+8. Create a signed annotated tag `v<VERSION>` at that exact commit and push the
+   tag. The tag-triggered workflow validates the source, builds the wheel and
+   source archive, creates native package artifacts, and uploads checksummed
+   release inputs; it does not publish a GitHub release.
+9. After that exact tag run succeeds, sign its `SHA256SUMS` with the project
+   release key. Dispatch `release-notes.yml` on the default branch with the
+   successful `build_run_id`, exact tag, and detached signature. The workflow
+   binds the run to the tag commit, verifies the complete artifact inventory
+   and fixed-fingerprint signature, then creates the release.
+10. Verify the published tag, assets, checksum manifest, and signature. Never
+    replace an existing tag or replay a publication after an uncertain result.

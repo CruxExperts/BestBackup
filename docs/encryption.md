@@ -4,9 +4,9 @@ This guide separates version 2 restic repository encryption from the retained 1.
 
 ## Version 2 restic repositories
 
-Restic encrypts repository data and metadata using the password file bound to that repository. The preview does not store the password in portable configuration, a repository URL, or its operation ledger.
+Restic encrypts repository data and metadata using the password file bound to that repository. The v2 interface keeps passwords outside portable configuration, repository URLs, and its operation ledger.
 
-Create independent high-entropy password files for the local repository and each replica. Protect the containing directory and files with owner-only access. Keep a recoverable copy away from the host and repository it unlocks. A signed recovery kit can contain the restic password, but creating the kit on the protected host does not establish off-host custody.
+Create independent high-entropy password files for the local repository and each replica. Protect the containing directory and files with owner-only access. Keep a recoverable copy away from the host and repository it unlocks. A signed recovery kit can contain the restic password, but creating the kit on the protected host does not establish off-host custody, which remains deferred. B2/AWS backup paths and thirty-day cloud protection are not production-qualified.
 
 ```bash
 install -d -m 700 "$HOME/.local/share/bbackup-credentials"
@@ -18,7 +18,7 @@ chmod 600 "$HOME/.local/share/bbackup-credentials/"*.password
 
 The host bindings file points to these paths; it contains no password values and must itself be private. Keep credential files outside every capture source. Restic cloud access keys are a separate credential and belong in the supervised process environment. See [cloud storage](cloud-storage.md) for B2/S3 setup and the current inspection boundary.
 
-Independent recovery kits also require a trusted OpenPGP signing fingerprint, a recipient key, and access to the independent restic password. Keep signing/decryption keys and the sealed kit separate from the protected host. The [recovery guide](development/version-2.md#independent-recovery-artifacts) describes the preview checks and limitations; a signed kit does not establish provider retention or a successful application recovery.
+Independent recovery kits also require a trusted OpenPGP signing fingerprint, a recipient key, and access to the independent restic password. Keep signing/decryption keys and the sealed kit separate from the protected host. The [recovery guide](development/version-2.md#independent-recovery-artifacts) describes experimental recovery-kit checks and limitations; a signed kit does not establish provider retention, off-host custody, or a successful application recovery.
 
 ## Legacy 1.x file encryption
 

@@ -1,22 +1,29 @@
 # Version 2 development
 
-> Status: 2.0.0-alpha.1 prerelease. Production release is not ready; see the
-> 2026-10-17 qualification record below.
+> Stable v2.0.0 production qualification is limited to the tested scope
+> recorded below. Other implemented paths remain unqualified or deferred.
+> See the 2026-10-17 qualification record for exact evidence and limits.
 
 ## Direction and delivery order
 
-The target is a restic-centered backup and recovery product for independent
-Ubuntu 24.04 and 26.04 hosts on AMD64 and ARM64. Daily local encrypted capture
-precedes replication into an independently encrypted B2 or AWS S3 repository.
+The selected stable v2.0.0 release scope is local/file capture and restore,
+live capture-restore drills for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB
+11.8.9, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages.
 The CLI and Textual dashboard share one operations service. Existing 1.x commands
-remain available during development; the preview is exposed under
-`bbackup production` until replacement capabilities and release evidence exist.
+remain available. This is a bounded tested-scope release, not qualification of
+every implemented feature.
+
+Earlier qualification assessed the wider implemented feature scope, including
+B2/AWS, native Docker, ARM64 outputs, ordinary cross-application upgrades and
+rollback, and systemd boot/reboot behavior. Those paths did not have the
+required acceptance evidence and are not included in the selected stable
+support boundary.
 
 Delivery proceeds through core/configuration, capture/restore, cloud protection
 and independent escrow, CLI/TUI, then packages/documentation/release qualification.
-A preview capability does not establish completion of its entire delivery slice.
+An implemented capability does not establish completion of its entire delivery slice.
 
-## Implemented preview
+## Implemented capabilities
 
 - Strict version-2 JSON configuration rejects duplicate keys, unknown fields,
   unsupported source types, and inconsistent repository references. Private host
@@ -34,7 +41,8 @@ A preview capability does not establish completion of its entire delivery slice.
 
 ### Native Docker capture and recovery
 
-Docker capture is opt-in and requires a local Docker Unix socket in the private
+This implemented path is not production-qualified and is outside the selected
+stable v2.0.0 release scope. Docker capture is opt-in and requires a local Docker Unix socket in the private
 host bindings. The portable source policy names one container and requires an
 explicit stop-and-restart window:
 
@@ -61,7 +69,7 @@ restarted before the capture receipt or successful ledger outcome is committed.
 If restart is uncertain, no successful receipt is created and a private durable
 intention remains in service state.
 
-The preview refuses deployment features and container state it cannot restore
+The unqualified native Docker path refuses deployment features and container state it cannot restore
 faithfully. It ignores only added writable-layer entries exactly at persistent
 mount destinations, whose mountpoint directories are recreated by the restored
 mounts; siblings, descendants, modified/deleted entries, and other writable-layer
@@ -111,7 +119,7 @@ capture or restore.
 - Restore requires a new directory outside source paths, repositories, credentials,
   and runtime state, and asks restic to verify restored files. This does not prove
   application startup or database recovery.
-- The preview CLI emits a version-2 JSON envelope, accepts strict JSON or flags,
+- The v2 CLI emits a version-2 JSON envelope, accepts strict JSON or flags,
   rejects duplicate inputs, and exposes bounded pagination. The Textual dashboard
   supports mouse/keyboard job selection, search, table sorting, and systemd start
   and cancel requests. Its Restore tab accepts a repository, full snapshot ID,
@@ -122,9 +130,9 @@ capture or restore.
 - Generated systemd timers use daily scheduling and persistent missed-run handling.
   Rendering does not install or enable units.
 
-![Real preview dashboard with no configured jobs](../assets/bbackup-dashboard-preview.svg)
+![Textual dashboard with no configured jobs](../assets/bbackup-dashboard-preview.svg)
 
-## Trying the preview
+## Trying version 2 locally
 
 Use a disposable local directory and private password files. Keep state and
 repositories outside every source tree. The following paths are examples, not
@@ -282,7 +290,7 @@ another host using a different ledger. Restic provides its own repository locks,
 but independent recovery checkpoints additionally need a coordinated quiescent
 window across all writers.
 
-The preview has no automatic deletion or pruning schedule. Local retention can
+The v2 retention workflow has no automatic deletion or pruning schedule. Local retention can
 forget explicitly reviewed snapshots using restic's daily selection policy,
 grouped by host and filtered by the job tag. Seven local daily recovery points
 is the default; this is not a count of the last seven captures. Cloud defaults
@@ -317,7 +325,7 @@ replaying the command. Review the repository first; the command does not
 synthesize missing snapshot receipts or remove repository locks. Failed restore output is retained for inspection; empty targets
 from a refused dispatch are removed when possible.
 
-## Native database capture preview
+## Native database capture and restore
 
 PostgreSQL sources use `kind: "postgresql"`, a safe `database` name, and a
 `connection` reference instead of `paths`. The corresponding private
@@ -328,7 +336,7 @@ PostgreSQL custom-archive signature before it becomes eligible for backup.
 
 MySQL and MariaDB sources use `kind: "mysql"` or `"mariadb"`, `database`,
 `connection`, and explicitly `quiesce: "read-lock"`. Their private binding uses
-matching `kind` and an absolute `options_file`. The preview refuses non-InnoDB
+matching `kind` and an absolute `options_file`. The native MySQL/MariaDB path refuses non-InnoDB
 tables and uses a native global read lock for the dump, blocking writes while it
 runs. This explicit policy prevents concurrent schema changes from invalidating
 the export. It requires the database account's corresponding lock privileges;
@@ -347,7 +355,7 @@ bbackup production --config config.json --bindings bindings.json databases resto
   --target-database recovered_app --trusted-archive
 ```
 
-This preview requires PostgreSQL 15 or newer and libc locale databases. Capture
+PostgreSQL restore requires PostgreSQL 15 or newer and libc locale databases. Capture
 records the source encoding, collation, and character classification; restore
 creates the destination from the pristine `template0` with those exact settings.
 The matching locales must be installed on the destination server. ICU and other
@@ -383,7 +391,7 @@ and unsafe overrides, included configuration files, login paths, reconnects,
 and local-file imports are disabled or refused. An ambiguous import retains its
 partial state and blocks further MySQL-family restores in that state directory.
 Inspect the entire recovery server before reconciliation; changing the binding
-name or target is not permission to retry. The preview neither drops a failed
+name or target is not permission to retry. Database restore neither drops a failed
 database nor provisions or switches application traffic. A Unix-socket-only
 server may report port zero; configured TCP connections still require a valid
 nonzero port.
@@ -403,7 +411,7 @@ snapshot identity under the local operation lease. An administrator must also
 coordinate a quiescent window across every external writer. It rejects missing
 versioning, current-object expiration, and noncurrent expiration under thirty
 days. An observed lifecycle policy does not prove backup credential restrictions
-or provider behavior, so the preview never returns a production protection claim.
+or provider behavior, so the unqualified cloud-recovery path never returns a production protection claim.
 
 `recovery open` authenticates a kit into a new private directory. It works without
 the original host configuration or ledger. `recovery restore` authenticates the
@@ -421,19 +429,24 @@ creating a kit on that host does not establish independent custody.
 
 ## Qualification and remaining work
 
-### Production release status — 2026-10-17
+### Qualification record — 2026-10-17
 
-**Not ready to claim the full current feature scope.** On October 17, the full
-`uv run pytest -n 8` suite passed 842 tests; a fresh wheel built and passed the
-isolated installed-artifact smoke. These are local functional checks, not live
-B2/AWS or native Docker acceptance.
+**The selected stable v2.0.0 support boundary is** local/file capture and
+restore; live PostgreSQL 17.11, MySQL 8.4.12, and MariaDB 11.8.9 capture/restore
+drills; headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04 packages.
+The release-candidate implementation passed 842 pytest tests with eight
+workers. `uv sync --locked`, version and publishing checks, generated CLI
+validation, Ruff, Python compilation, `uv build`, and smoke of the exact
+`2.0.0` wheel all passed. The signed candidate commit must still pass the
+tag-triggered workflow before publication.
 
-As checked on October 17, 2026, local `main` was at
+The earlier full-feature assessment recorded the checkout at
 `ddaede3230a86463d1ebe4efe2caedad30775c5d`, one commit ahead of remote `main`
-at `8f2807887fd90771f57107a436c62eb485ea6947`. Local `VERSION` remains
-`2.0.0-alpha.1`. GitHub's current `v2.0.0-alpha.1` release is a prerelease
-published October 3; `v1.8.6` remains the latest stable release, and the
-remote has no non-alpha 2.x tag.
+at `8f2807887fd90771f57107a436c62eb485ea6947`. At that assessment the local
+`VERSION` was `2.0.0-alpha.1`; the published `v2.0.0-alpha.1` release was a
+prerelease, `v1.8.6` was the latest stable release, and the remote had no
+non-alpha 2.x tag. This is historical release-state evidence and does not
+change the selected-scope support boundary documented here.
 
 The release assets include `SHA256SUMS` and detached `SHA256SUMS.asc`. GitHub's
 release API reports the wheel digest as
@@ -444,20 +457,25 @@ This signature authenticates the checksum list, not build provenance. On
 October 17, an authenticated `gh api` query to
 `/repos/CruxExperts/best-backup/attestations/sha256:<digest>` returned HTTP
 404. No artifact attestation could be retrieved or verified; this response
-does not prove that none exists. The tag-triggered release workflow can build
-and publish artifacts, but that alone establishes neither production
-qualification nor a build-provenance attestation.
+does not prove that none exists. The tag-triggered workflow builds checksummed
+artifacts; publication requires the separate signed `workflow_dispatch`. Neither
+step establishes production qualification or a build-provenance attestation.
 
 The attestation lookup is recorded for transparency, not as a functional release
 blocker.
 
-The initial release bar is functional, not enterprise-scale: pass the normal
-test suite and isolated installed-wheel smoke; exercise standard command and
-dashboard paths; and record one basic capture/check/restore path for every
-provider, backup engine, and package platform included in production claims.
-Keep any path without that evidence preview-only. Do not require large-scale,
-long-retention, off-host-custody, or exhaustive failure-injection qualification
-for the initial release.
+The earlier assessment covered the full implemented feature scope, not the
+user-selected tested-scope release. Its local suite, wheel, and installed smoke
+were functional checks, not live B2/AWS or native Docker acceptance. The
+previously assessed wider scope also included cloud protection, ARM64, ordinary
+cross-application upgrade/rollback, and systemd lifecycle guarantees; those
+remain excluded or deferred as specified below.
+
+The stable-release bar for the selected scope includes the normal test suite and
+installed-artifact smoke; standard command and dashboard paths; the listed live
+database recovery drills; and fresh-install plus capture/check/restore paths on
+AMD64 Ubuntu 24.04 and 26.04. Paths without that evidence remain outside
+production-qualified support.
 
 ### Resumed implementation
 
@@ -476,14 +494,13 @@ A disposable real-restic capture, independent-password replication, full-data
 check, and restore preserved exact file bytes, mode 0640, and a symbolic link.
 These local checks do not qualify a cloud provider or application recovery.
 
-The previous implementation recorded unavailable B2 credentials and a user
-instruction to proceed with local Garage testing instead. That substitution
-does not close B2 or AWS qualification. Live provider tests need disposable
-authorized resources; supported-platform and scale claims need their actual
-test environments. Do not replay uncertain backup mutations or change live
-provider policy while resuming development.
+No live B2/AWS provider qualification is recorded. A local Garage S3-compatible
+test does not qualify those providers. Provider checks require disposable
+authorized resources; without such evidence, B2/AWS remain outside the stable
+support scope. Do not replay uncertain backup mutations or change live provider
+policy during a recovery.
 
-The signed [2.0.0-alpha.1 prerelease](https://github.com/CruxExperts/BestBackup/releases/tag/v2.0.0-alpha.1) was published on October 3, 2026 from commit `b10ed84`. GitHub CI passed on Python 3.12, 3.13, and 3.14, and the release workflow built and smoke-tested its wheel and source archive. `SHA256SUMS` and its OpenPGP signature cover the exact downloadable artifacts. The release remains explicitly marked as a prerelease; it does not establish production qualification.
+The signed [2.0.0-alpha.1 prerelease](https://github.com/CruxExperts/best-backup/releases/tag/v2.0.0-alpha.1) was published on October 3, 2026 from commit `b10ed84`. GitHub CI passed on Python 3.12, 3.13, and 3.14, and the release workflow built and smoke-tested its wheel and source archive. `SHA256SUMS` and its OpenPGP signature cover the exact downloadable artifacts. The release remains explicitly marked as a prerelease; it does not establish production qualification.
 
 On October 3, 2026, the combined checkout passed 753 tests with eight workers,
 including native-client fixtures and a real restic snapshot-manifest round trip
@@ -556,8 +573,9 @@ Native AMD64 package drills used Ubuntu 24.04 with Python 3.12.3 and Ubuntu
 26.04 with Python 3.14.4 in isolated containers. Both targets built locked
 packages and exercised the installed commands through encrypted capture,
 full-data check, and verified restore after removing the source files.
-Fresh-install checks passed, and an older half-configured candidate was also
-recovered by ordinary package installation.
+Fresh-install checks passed. An older half-configured candidate was recovered by
+ordinary package installation; that repair drill does not qualify ordinary
+cross-application upgrades.
 
 The live installed dashboard held the package lock while dpkg refused an
 upgrade. That drill exposed a real abort-hook error: refusal before a transition
@@ -582,36 +600,36 @@ rebuilt wheel passed isolated installed-command checks. Release-workflow YAML,
 twelve shell steps, and fixed-revision action references passed local structural
 checks; no hosted workflow or publication was dispatched.
 
-### Open functional release checks
+### Implemented paths outside the selected release scope
 
 The local file, selected database, dashboard, and AMD64 package happy paths have
-recorded passing evidence. Only basic checks for unverified production claims
-remain:
+recorded passing evidence. The following paths are not production-qualified or
+remain deferred; their implementation does not expand the selected support
+boundary:
 
-- **B2/AWS:** No live provider capture/check/restore result is recorded. Run one
-  disposable round trip for each provider included in production support;
-  otherwise keep that provider preview-only.
-- **Docker:** The latest recorded native attempt stopped before capture at
-  safety preflight because an existing volume was unreadable. Run one isolated
-  capture/restore happy path only if native Docker is included in production
-  support; crash and interruption drills are not required for this bar.
+- **B2/AWS:** No live provider capture/check/restore result is recorded. These
+  implemented paths are not production-qualified and remain outside the selected
+  stable support boundary. Garage S3 testing is not provider qualification.
+- **Native Docker:** Implemented, but no qualifying capture/restore happy path is
+  recorded. It is not production-qualified and remains outside the selected
+  stable support boundary.
 - **Packages:** Fresh-install and capture/check/restore drills passed on AMD64
-  Ubuntu 24.04 and 26.04. A normal cross-version upgrade and native ARM64 smoke
-  are not recorded. Test the routine upgrade path if offered; include ARM64 only
-  after a basic smoke. Rollback and boot/reboot drills are deferred.
-- **Database and dashboard:** PostgreSQL 17.11, MariaDB 11.8.9, and MySQL 8.4.12
-  data-recovery checks passed. Headless setup, settings save/backup, file
+  Ubuntu 24.04 and 26.04. ARM64 package outputs are unqualified. Ordinary
+  cross-application upgrades and rollback are deferred; systemd boot/reboot is
+  also deferred.
+- **Database and dashboard:** Live PostgreSQL 17.11, MariaDB 11.8.9, and MySQL
+  8.4.12 data-recovery checks passed. Headless setup, settings save/backup, file
   restore, repository check, and progress paths passed. Full application
   startup/failover and exhaustive UI-state coverage are not release gates.
 
 ### Deferred assurance, not release blockers
 
 Thirty-day cloud-lifecycle boundaries, aged or overwritten object cases,
-protected pruning, provider historical-version recovery, off-host escrow,
-representative 1–10 TB runs, broad failure-injection, full rollback/reboot
-qualification, and an exhaustive security audit are deferred. They remain
-unverified; do not make the corresponding guarantees. Fix any discovered
-data-loss or security defects before release.
+protected pruning, provider historical-version recovery, off-host custody,
+representative 1–10 TB runs, broad failure-injection, ordinary cross-application
+rollback, systemd boot/reboot qualification, and an exhaustive security audit
+are deferred. They remain unverified; do not make the corresponding guarantees.
+Fix any discovered data-loss or security defects before release.
 
 The offline recovery-kit drill and local retention tests passed, but do not prove
 off-host custody or cloud-protected retention. No legacy implementation has

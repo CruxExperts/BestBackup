@@ -1,26 +1,26 @@
 # Documentation
 
-This index separates the version 2 operations preview from the retained 1.x management workflow. Start with the root [README](../README.md), then choose the guide for your task.
+This index separates the selected stable v2.0.0 tested scope from the retained 1.x management workflow. Start with the root [README](../README.md), then choose the guide for your task.
 
 ## Start using bbackup
 
 | Guide | Use it for |
 |:--|:--|
 | [QUICKSTART.md](../QUICKSTART.md) | Strict v2 configuration, private bindings, local capture, replicas, and restore |
-| [INSTALL.md](../INSTALL.md) | Prerequisites, pinned releases, preview install status, and development setup |
-| [cloud-storage.md](cloud-storage.md) | Backblaze B2 and Amazon S3 repository setup, native inspection, and qualification limits |
-| [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) | Machine-readable command schemas, JSON envelopes, bounded run records, and reconciliation |
-| [management.md](management.md) | Retained 1.x `bbman`, Docker, and YAML management commands |
-| [encryption.md](encryption.md) | Restic password custody and legacy file encryption |
+| [INSTALL.md](../INSTALL.md) | Prerequisites, pinned releases, current release status, and development setup |
+| [cloud-storage.md](cloud-storage.md) | Implemented B2/AWS paths, not production-qualified; provider and protection limits |
+| [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) | Machine-readable schemas, JSON envelopes, bounded run records, and safe restore/reconciliation |
+| [management.md](management.md) | Retained 1.x `bbman`, Docker, and YAML management commands; native v2 Docker unqualified |
+| [encryption.md](encryption.md) | Restic password custody, deferred off-host custody, and legacy file encryption |
 | [cli-skills.md](cli-skills.md) | Generated command and agent skills catalog |
 
 ## Architecture and release evidence
 
 | Reference | Contents |
 |:--|:--|
-| [development/version-2.md](development/version-2.md) | Preview capabilities, tested evidence, operational limits, and release gates |
+| [development/version-2.md](development/version-2.md) | Selected stable-release scope, qualification evidence, deferred assurances, and historical alpha1 record |
 | [production-cli.md](production-cli.md) | Generated v2 command reference and input schemas |
-| [architecture.md](architecture.md) | v2 operation service, storage model, and retained 1.x implementation |
+| [architecture.md](architecture.md) | v2 operation service, tested support boundary, storage model, and retained 1.x implementation |
 | [VERSIONING.md](VERSIONING.md) | Canonical package version, release tags, and validation |
 | [PUBLISHING_CHECKLIST.md](PUBLISHING_CHECKLIST.md) | Community files and release readiness checks |
 | [assets/README.md](assets/README.md) | Documentation asset inventory and visual standards |

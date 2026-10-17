@@ -70,31 +70,32 @@
     "license_handling": "The supplied files remain license-unspecified; adaptation does not relicense them."
   },
   "publication_refresh": {
-    "reviewed_at": "2026-10-03",
-    "release": "2.0.0-alpha.1",
-    "source_revision": "d9e6bc7409e5d83bf4f242977e0f17b51282f881",
+    "reviewed_at": "2026-10-17",
+    "release": "2.0.0",
+    "source_revision": "85396fae8207bac1c807e39818a3b3710fc65616",
     "changes": [
-      "Replaced the long feature inventory with a customer-focused README and local-to-cloud recovery story.",
-      "Separated v2 setup, storage, agent integration, implementation status, and retained legacy management.",
-      "Added original editable artwork and preserved third-party notices and asset provenance."
+      "Reconciled the stable v2.0.0 version, install instructions, dated changelog, and generated CLI references.",
+      "Separated the tested support boundary from implemented but unqualified work across B2/AWS, native Docker, ARM64, systemd, and off-host retention.",
+      "Refreshed the banner's accessible description, asset catalog, and checksummed documentation outputs."
     ],
     "validation": [
-      "GitHub Markdown API rendered the README successfully.",
-      "Local heading, link, fence, alert, version, and generated-artifact checks passed.",
-      "Banner inspected through a headless browser; no host data used."
+      "Local checks passed: version sync, publishing readiness, Markdown standards across 31 public files, CLI generator check, Ruff, Python bytecode compilation, and git diff --check.",
+      "The release-candidate full suite passed 842 pytest tests with eight workers; uv sync --locked passed.",
+      "uv build produced the v2.0.0 wheel and source archive; installed-wheel smoke passed using the exact dist/bbackup-2.0.0-py3-none-any.whl.",
+      "The README vector banner was rendered and visually inspected; its embedded metadata includes the copyright, company URL, and private-asset notice."
     ],
     "outputs": [
       {
         "path": "README.md",
-        "sha256": "84640977a7628afb253c4d2bc01ca3af722ccf303d6b6a478b0c4293ed55fd07"
+        "sha256": "cd9078e14a359b92e06fc06221c7796f70f1fdcfb1ed8270e35a472bc7282817"
       },
       {
         "path": "INSTALL.md",
-        "sha256": "5474b6a94068a941b060480d7cfaf2ad203763b4da8f3b55a424e7e4438d881d"
+        "sha256": "2dd31efe51df07c97c6729c802cd2b4566c9022373c61e70ed1a03c6e0dae2e6"
       },
       {
         "path": "QUICKSTART.md",
-        "sha256": "9880a814add7c448df7c69a628ee2265ac5af0748b4c25e200dc8344bcaac779"
+        "sha256": "b0b2dbdbf1d14640b17334e9e3344a7217910d97b056342f59058766b72d532c"
       },
       {
         "path": "SECURITY.md",
@@ -109,32 +110,68 @@
         "sha256": "aedf521867b1b8565a8065fb97131094f91eb5411d132a11ed50d10130287094"
       },
       {
+        "path": "CHANGELOG.md",
+        "sha256": "179323871d9ac77cd9d06536a0add59acd2e96daf2a5d8ee05295e37c28c1a21"
+      },
+      {
         "path": "docs/README.md",
-        "sha256": "844cdefbbbd2fb74dcc5e862a39247c1c59c166d8c404c299d7076d824323924"
+        "sha256": "c6c93f8e32cb15a3d43dbc9b9e09a208b73d8b0de474ba130b4be7e634ce6ee3"
       },
       {
         "path": "docs/AGENT_INTEGRATION.md",
-        "sha256": "b9be092485ecc53cc42729c97a3201bcb73522f2b2c144f99062aabd430e80df"
+        "sha256": "0a40d8614a9be693735c64d69ef2d9c41019881f04dcbfe36084cfe94790ff67"
       },
       {
         "path": "docs/cloud-storage.md",
-        "sha256": "3b4706a30e87eb9cf5ca79296084bc125c997ad503e0e01fe127bf1d7c79cefc"
+        "sha256": "52c35a23f1dc32640433373c14963b451e692c7533aa32ce3b5440a0f603da1f"
       },
       {
         "path": "docs/architecture.md",
-        "sha256": "2f66acfcb1d33661761c681c49c43024d7a4231e7c5affd82010154e90f88022"
+        "sha256": "122d766d661a25b64d05b1b5e22bfae82deca6108e4dbc10d3160c30afea1c3e"
       },
       {
         "path": "docs/encryption.md",
-        "sha256": "840b73cd7907484ec25fb66a35564a7a534c24bd57a69e6604a6192a5a5c493a"
+        "sha256": "49685a4aff108765e6463f865ccd1a416cad391087349b3a76099723bbfed826"
       },
       {
         "path": "docs/management.md",
-        "sha256": "3c4b5fa8746dfe9b8b5a0fbbf447d8f57dfa8496e4e2a22eb1bf78c5b60d762c"
+        "sha256": "cf3e90a0a0d9ce2005517213b367722c89d44912fa9811447bd8aef1db647bb1"
+      },
+      {
+        "path": "docs/assets/README.md",
+        "sha256": "bd28023a49fd1e670361363381c1ee89b99442bfa27fc390dd3c12647296259d"
       },
       {
         "path": "docs/assets/bbackup-banner.svg",
-        "sha256": "d7c33b217960d3736d40a9a212cf9a07a73cc843eaa58d0a454989051841779a"
+        "sha256": "1e59f2710917a20ddd225c35fb2e21cd19b0a82a2c305948f289b7e41b47a42c"
+      },
+      {
+        "path": "docs/VERSIONING.md",
+        "sha256": "8e201d6cd3b3b056848cdb56e8f576bcaeac87bf80de98c44f0b5828ca23f3a6"
+      },
+      {
+        "path": "docs/PUBLISHING_CHECKLIST.md",
+        "sha256": "d7cda5b5def37a398f9ee7a43732840f20d6ef765ca646090dd9fb4f53b31c94"
+      },
+      {
+        "path": "docs/development/version-2.md",
+        "sha256": "56c21c14ed562da3dd0743300bb9af91fe2c3651cfdf808520d480a2512f9faa"
+      },
+      {
+        "path": "docs/production-cli.md",
+        "sha256": "3444552dd528c35f31436ede44cb697164c6f99e8ec90ac524baa081bb1a83c2"
+      },
+      {
+        "path": "docs/cli-skills.md",
+        "sha256": "843f3bdd0d64361d4fe73bbdc8827f2bec12faba4b616952a7a9568b7c9a156e"
+      },
+      {
+        "path": "bbackup/data/cli-skills.md",
+        "sha256": "843f3bdd0d64361d4fe73bbdc8827f2bec12faba4b616952a7a9568b7c9a156e"
+      },
+      {
+        "path": "scripts/README.md",
+        "sha256": "cb1797920893c88b806c38091f844946459e158a903a488b355bc711285ddbaa"
       }
     ]
   }

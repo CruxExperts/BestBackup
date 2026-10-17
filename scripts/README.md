@@ -20,7 +20,7 @@ RESTIC_SHA256='<reviewed SHA-256 for that exact executable>'
 
 /usr/bin/python3 scripts/build_deb.py \
   --target-release 24.04 \
-  --wheel dist/bbackup-2.0.0-py3-none-any.whl \
+  --wheel dist/bbackup-2.0.1-py3-none-any.whl \
   --restic "$RESTIC" \
   --restic-sha256 "$RESTIC_SHA256" \
   --output-dir dist/deb
@@ -31,7 +31,7 @@ Use `--target-release 26.04` only from a native Ubuntu 26.04/Python 3.14 environ
 The tag workflow builds all four target combinations on native x86_64/arm64 runners in matching, digest-pinned official Ubuntu containers, installs and checks each package in its disposable target container, and assembles the source archives, four `.deb` files, package manifests/checksums, and a combined `SHA256SUMS` into the immutable `release-inputs` artifact. It does not publish a GitHub release or sign anything. The in-package `/usr/share/doc/bbackup/build-manifest.json` records the package version, target release/architecture/Python, build host release, wheel hash, `uv.lock` hash, dependency-export hash, and bundled restic hash. The adjacent sidecar adds the final `.deb` hash, which cannot be embedded in the package without changing that hash. No hostname, user path, credentials, repository URL, or backup state is included. To review a package without installing it:
 
 ```bash
-PACKAGE=dist/deb/bbackup_2.0.0_ubuntu24.04_amd64.deb
+PACKAGE=dist/deb/bbackup_2.0.1_ubuntu24.04_amd64.deb
 (cd "$(dirname "$PACKAGE")" && sha256sum -c "$(basename "${PACKAGE%.deb}.sha256")")
 dpkg-deb --info "$PACKAGE"
 dpkg-deb --contents "$PACKAGE"
@@ -47,7 +47,7 @@ Publishing is an explicit two-phase operation. After the tag workflow succeeds, 
 ```bash
 read -r -p 'Successful tag-build workflow run ID: ' BUILD_RUN_ID
 read -r -p 'Exact v-prefixed tag: ' TAG
-gh run download "$BUILD_RUN_ID" --repo CruxExperts/best-backup \
+gh run download "$BUILD_RUN_ID" --repo CruxExperts/BestBackup \
   --name release-inputs --dir release-inputs
 (cd release-inputs && sha256sum --check SHA256SUMS)
 FINGERPRINT=AF7968466B5B39C5E928FEFE716342D3EFBA5522
@@ -58,7 +58,7 @@ gpg --verify release-inputs/SHA256SUMS.asc release-inputs/SHA256SUMS
 jq -n --arg build_run_id "$BUILD_RUN_ID" --arg tag "$TAG" \
   --rawfile detached_signature release-inputs/SHA256SUMS.asc \
   '{build_run_id:$build_run_id,tag:$tag,detached_signature:$detached_signature}' |
-  gh workflow run release-notes.yml --repo CruxExperts/best-backup --ref main --json
+  gh workflow run release-notes.yml --repo CruxExperts/BestBackup --ref main --json
 ```
 
 The dispatched publisher accepts only the detached signature and successful build run ID. It verifies every checksum, the full pinned Crux signing fingerprint, the exact successful tag-build workflow, and the tag-to-commit binding before publishing. Keep the signing private key and passphrase in the operator's local key store; NEVER export, copy, upload, or enter them into GitHub Actions. Missing or invalid signatures fail closed; there is no unsigned release path.

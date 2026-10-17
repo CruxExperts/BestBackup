@@ -1,12 +1,12 @@
 # Version 2 development
 
-> Stable v2.0.0 production qualification is limited to the tested scope
+> Stable v2.0.1 production qualification is limited to the tested scope
 > recorded below. Other implemented paths remain unqualified or deferred.
 > See the 2026-10-17 qualification record for exact evidence and limits.
 
 ## Direction and delivery order
 
-The selected stable v2.0.0 release scope is local/file capture and restore,
+The selected stable v2.0.1 release scope is local/file capture and restore,
 live capture-restore drills for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB
 11.8.9, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages.
 The CLI and Textual dashboard share one operations service. Existing 1.x commands
@@ -42,7 +42,7 @@ An implemented capability does not establish completion of its entire delivery s
 ### Native Docker capture and recovery
 
 This implemented path is not production-qualified and is outside the selected
-stable v2.0.0 release scope. Docker capture is opt-in and requires a local Docker Unix socket in the private
+stable v2.0.1 release scope. Docker capture is opt-in and requires a local Docker Unix socket in the private
 host bindings. The portable source policy names one container and requires an
 explicit stop-and-restart window:
 
@@ -431,14 +431,22 @@ creating a kit on that host does not establish independent custody.
 
 ### Qualification record — 2026-10-17
 
-**The selected stable v2.0.0 support boundary is** local/file capture and
+**The selected stable v2.0.1 support boundary is** local/file capture and
 restore; live PostgreSQL 17.11, MySQL 8.4.12, and MariaDB 11.8.9 capture/restore
 drills; headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04 packages.
-The release-candidate implementation passed 842 pytest tests with eight
-workers. `uv sync --locked`, version and publishing checks, generated CLI
-validation, Ruff, Python compilation, `uv build`, and smoke of the exact
-`2.0.0` wheel all passed. The signed candidate commit must still pass the
-tag-triggered workflow before publication.
+Candidate v2.0.1 passed all 842 pytest tests with eight workers. `uv sync
+--locked`, version and publishing checks, Markdown standards, generated CLI
+validation, Ruff, Python compilation, `uv build`, and isolated smoke of the
+exact `2.0.1` wheel all passed. The tag-triggered hosted workflow remains
+required before release publication.
+
+Historical `v2.0.0` tag run `39037767831` passed source validation but failed all
+four native package jobs: the isolated uv-tools environment's Python was first
+on `PATH` and could not import apt-installed `packaging`. Assembly and
+publication were skipped; no release assets were published. The v2.0.1 workflow
+fix uses system Python for the Debian builder and its uv environment. The
+existing `v2.0.0` tag remains unchanged; the v2.0.1 hosted build must pass before
+publication.
 
 The earlier full-feature assessment recorded the checkout at
 `ddaede3230a86463d1ebe4efe2caedad30775c5d`, one commit ahead of remote `main`

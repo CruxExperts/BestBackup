@@ -1,6 +1,6 @@
 # Cloud storage: Backblaze B2 and Amazon S3
 
-Keep your first recovery point on local storage. The v2.0.0 tested stable-release
+Keep your first recovery point on local storage. The v2.0.1 tested stable-release
 scope includes local/file capture and restore, selected live database drills,
 headless dashboard happy paths, and AMD64 Ubuntu packages.
 

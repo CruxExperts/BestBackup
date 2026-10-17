@@ -5,8 +5,8 @@ maintenance tooling.
 
 ## Operating Model
 
-- Treat `/mnt/data/devzone/bbackup` as the active development checkout.
-- Treat `origin` as `https://github.com/CruxExperts/best-backup.git`.
+- Treat the selected repository checkout as the active development checkout.
+- Treat `origin` as `https://github.com/CruxExperts/BestBackup.git`.
 - Keep repo policy in this file and durable user-facing docs under `docs/` or
   root entry points such as `README.md`, `INSTALL.md`, and `QUICKSTART.md`.
 - Keep runtime state, logs, caches, and agent run ledgers out of Git.
@@ -27,13 +27,13 @@ maintenance tooling.
 This checkout uses a Localsetup-managed Codex skills adapter. Inspect it with:
 
 ```bash
-localsetup adapters --target-directory /mnt/data/devzone/bbackup --platforms codex
+localsetup adapters --target-directory . --platforms codex
 ```
 
 Run the repo-level doctor with:
 
 ```bash
-localsetup doctor --target-directory /mnt/data/devzone/bbackup --global-preset core --repo-preset core --platforms codex --dependency-mode uv-sync --json
+localsetup doctor --target-directory . --global-preset core --repo-preset core --platforms codex --dependency-mode uv-sync --json
 ```
 
 If adapter shape needs to change, use `localsetup install`, `localsetup plan`,

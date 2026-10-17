@@ -12,6 +12,18 @@ current uv-based install, development, and release instructions.
 
 ---
 
+## [2.0.1] - 2026-10-17
+
+The earlier `v2.0.0` tag did not produce release artifacts because its native
+package jobs failed. This patch keeps runtime behavior unchanged and fixes the
+native-package build environment.
+
+### Fixed
+
+- Native package jobs now run the builder with system Python, making the
+  distribution-provided `packaging` module available despite the pinned `uv`
+  tool virtual environment appearing first on `PATH`.
+
 ## [2.0.0] - 2026-10-17
 
 **Stable tested scope:** local file capture and restore; live PostgreSQL
@@ -453,7 +465,8 @@ are still under development. See [implementation status](docs/development/versio
 
 The `Unreleased` comparison is a live `HEAD` link for navigation, not an immutable historical citation.
 
-[Unreleased]: https://github.com/CruxExperts/best-backup/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/CruxExperts/best-backup/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/CruxExperts/best-backup/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/CruxExperts/best-backup/compare/v1.8.6...v2.0.0
 [2.0.0-alpha.1]: https://github.com/CruxExperts/best-backup/compare/v1.8.6...v2.0.0-alpha.1
 [1.8.6]: https://github.com/CruxExperts/best-backup/compare/v1.8.5...v1.8.6

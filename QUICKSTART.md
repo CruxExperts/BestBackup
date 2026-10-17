@@ -1,6 +1,6 @@
 # Version 2 stable quick start
 
-This guide creates an encrypted local restic repository, copies a successful snapshot to an independent repository, and verifies a restore into a new directory. It uses strict JSON policy and private host bindings. Stable v2.0.0 covers the tested local/file, selected database, headless dashboard, and AMD64 Ubuntu paths; review the [release evidence and limits](docs/development/version-2.md) before using real data.
+This guide creates an encrypted local restic repository, copies a successful snapshot to an independent repository, and verifies a restore into a new directory. It uses strict JSON policy and private host bindings. Stable v2.0.1 covers the tested local/file, selected database, headless dashboard, and AMD64 Ubuntu paths; review the [release evidence and limits](docs/development/version-2.md) before using real data.
 
 ## Requirements
 

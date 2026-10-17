@@ -1,6 +1,6 @@
 # Agent integration
 
-The version 2 command line is designed for agents and other noninteractive clients. It accepts strict JSON input, publishes a schema for each operation, and emits sanitized versioned results. Stable v2.0.0 qualification is limited to the tested local/file, selected live database, headless dashboard, and AMD64 Ubuntu paths listed below. B2/AWS and native Docker are not production-qualified; follow the same read-before-write and no-replay rules you would use for an operator.
+The version 2 command line is designed for agents and other noninteractive clients. It accepts strict JSON input, publishes a schema for each operation, and emits sanitized versioned results. Stable v2.0.1 qualification is limited to the tested local/file, selected live database, headless dashboard, and AMD64 Ubuntu paths listed below. B2/AWS and native Docker are not production-qualified; follow the same read-before-write and no-replay rules you would use for an operator.
 
 ## Discover commands and schemas
 

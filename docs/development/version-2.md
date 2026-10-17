@@ -1,6 +1,7 @@
 # Version 2 development
 
-> Status: 2.0.0-alpha.1 prerelease. Production qualification is in progress.
+> Status: 2.0.0-alpha.1 prerelease. Production release is not ready; see the
+> 2026-10-17 qualification record below.
 
 ## Direction and delivery order
 
@@ -420,6 +421,44 @@ creating a kit on that host does not establish independent custody.
 
 ## Qualification and remaining work
 
+### Production release status — 2026-10-17
+
+**Not ready to claim the full current feature scope.** On October 17, the full
+`uv run pytest -n 8` suite passed 842 tests; a fresh wheel built and passed the
+isolated installed-artifact smoke. These are local functional checks, not live
+B2/AWS or native Docker acceptance.
+
+As checked on October 17, 2026, local `main` was at
+`ddaede3230a86463d1ebe4efe2caedad30775c5d`, one commit ahead of remote `main`
+at `8f2807887fd90771f57107a436c62eb485ea6947`. Local `VERSION` remains
+`2.0.0-alpha.1`. GitHub's current `v2.0.0-alpha.1` release is a prerelease
+published October 3; `v1.8.6` remains the latest stable release, and the
+remote has no non-alpha 2.x tag.
+
+The release assets include `SHA256SUMS` and detached `SHA256SUMS.asc`. GitHub's
+release API reports the wheel digest as
+`c24236b65c7f35076a39ae8e806e18ea6c1943c7cad46da10262189ca885e26e`; the
+published checksum manifest lists the same digest. The existing local record
+below reports successful checksum and OpenPGP signature verification.
+This signature authenticates the checksum list, not build provenance. On
+October 17, an authenticated `gh api` query to
+`/repos/CruxExperts/best-backup/attestations/sha256:<digest>` returned HTTP
+404. No artifact attestation could be retrieved or verified; this response
+does not prove that none exists. The tag-triggered release workflow can build
+and publish artifacts, but that alone establishes neither production
+qualification nor a build-provenance attestation.
+
+The attestation lookup is recorded for transparency, not as a functional release
+blocker.
+
+The initial release bar is functional, not enterprise-scale: pass the normal
+test suite and isolated installed-wheel smoke; exercise standard command and
+dashboard paths; and record one basic capture/check/restore path for every
+provider, backup engine, and package platform included in production claims.
+Keep any path without that evidence preview-only. Do not require large-scale,
+long-retention, off-host-custody, or exhaustive failure-injection qualification
+for the initial release.
+
 ### Resumed implementation
 
 The October 15, 2026 recovery review recovered the original production-release
@@ -436,19 +475,6 @@ alpha artifacts passed checksum and OpenPGP signature verification.
 A disposable real-restic capture, independent-password replication, full-data
 check, and restore preserved exact file bytes, mode 0640, and a symbolic link.
 These local checks do not qualify a cloud provider or application recovery.
-
-Continue in the original dependency order:
-
-1. Complete native database and Docker capture/restore, including restart
-   recovery and application validation.
-2. Complete retention without deleting snapshots awaiting required replication,
-   protected-cloud qualification, and independent historical-version recovery.
-3. Complete the shared command interface and dashboard setup, restore,
-   recovery, settings, and progress flows.
-4. Build isolated, locked Ubuntu packages for 24.04 and 26.04 on AMD64 and ARM64;
-   verify fresh installation, active-operation refusal, upgrade, and rollback.
-5. Close the provider, concurrent-write, interruption, scale, security, and
-   documentation gates below before claiming production readiness.
 
 The previous implementation recorded unavailable B2 credentials and a user
 instruction to proceed with local Garage testing instead. That substitution
@@ -556,20 +582,41 @@ rebuilt wheel passed isolated installed-command checks. Release-workflow YAML,
 twelve shell steps, and fixed-revision action references passed local structural
 checks; no hosted workflow or publication was dispatched.
 
-### Open release gates
+### Open functional release checks
 
-The live native Docker drill remains gated by administrator authentication:
-strict mount-sharing preflight refused an unreadable existing volume before
-stopping the disposable source. Its permission check has not been weakened.
-B2/AWS restricted credentials, thirty-day expiry boundaries, aged deduplicated
-packs, overwritten metadata, delete markers, protected pruning, real off-host
-escrow, boot/reboot behavior, cross-application-version package rollback,
-remaining native ARM64 qualification, and representative 1–10 TB recovery
-exercises remain release gates. Authorized disposable provider resources,
-native target machines, and sufficient isolated storage are required; local
-substitutes cannot close them.
-No legacy implementation has been removed before its replacement is ready.
-Restore deadlines must come from measured drills.
+The local file, selected database, dashboard, and AMD64 package happy paths have
+recorded passing evidence. Only basic checks for unverified production claims
+remain:
+
+- **B2/AWS:** No live provider capture/check/restore result is recorded. Run one
+  disposable round trip for each provider included in production support;
+  otherwise keep that provider preview-only.
+- **Docker:** The latest recorded native attempt stopped before capture at
+  safety preflight because an existing volume was unreadable. Run one isolated
+  capture/restore happy path only if native Docker is included in production
+  support; crash and interruption drills are not required for this bar.
+- **Packages:** Fresh-install and capture/check/restore drills passed on AMD64
+  Ubuntu 24.04 and 26.04. A normal cross-version upgrade and native ARM64 smoke
+  are not recorded. Test the routine upgrade path if offered; include ARM64 only
+  after a basic smoke. Rollback and boot/reboot drills are deferred.
+- **Database and dashboard:** PostgreSQL 17.11, MariaDB 11.8.9, and MySQL 8.4.12
+  data-recovery checks passed. Headless setup, settings save/backup, file
+  restore, repository check, and progress paths passed. Full application
+  startup/failover and exhaustive UI-state coverage are not release gates.
+
+### Deferred assurance, not release blockers
+
+Thirty-day cloud-lifecycle boundaries, aged or overwritten object cases,
+protected pruning, provider historical-version recovery, off-host escrow,
+representative 1–10 TB runs, broad failure-injection, full rollback/reboot
+qualification, and an exhaustive security audit are deferred. They remain
+unverified; do not make the corresponding guarantees. Fix any discovered
+data-loss or security defects before release.
+
+The offline recovery-kit drill and local retention tests passed, but do not prove
+off-host custody or cloud-protected retention. No legacy implementation has
+been removed before its replacement is ready. Restore deadlines must come from
+measured drills.
 
 ## Dependency evidence
 

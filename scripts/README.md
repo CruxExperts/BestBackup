@@ -8,7 +8,7 @@
 
 ### Build a native Ubuntu package
 
-The `build_deb.py` script builds a `.deb` from the supplied bbackup wheel, this repository's `uv.lock`, and a supplied restic 0.19.1 executable. The builder requires an already installed `uv` and `dpkg-deb`; it does not download restic, install packages on the host, update `uv.lock`, or install Python packages into system Python. Run it as an unprivileged user.
+The `build_deb.py` script builds a `.deb` from the supplied bbackup wheel, this repository's `uv.lock`, and a supplied restic 0.19.1 executable. The builder requires an already installed `uv`, `dpkg-deb`, and the `packaging` module in its Python interpreter; on supported Ubuntu/Mint hosts, install `python3-packaging` and invoke `/usr/bin/python3`. It does not download restic, install packages on the host, update `uv.lock`, or install Python packages into system Python. Run it as an unprivileged user.
 
 The builder only accepts native environments: Ubuntu 24.04 with CPython 3.12, or Ubuntu 26.04 with CPython 3.14, on amd64 or arm64. The sole ABI-build exception is Linux Mint 22.3 based on noble for an Ubuntu 24.04-targeted candidate; it does not qualify Ubuntu runtime behavior. Cross-release, cross-Python, and cross-architecture builds are refused.
 
@@ -18,7 +18,7 @@ Provide the restic executable and its reviewed SHA-256 digest as separate inputs
 RESTIC=/absolute/path/to/the-reviewed-restic-0.19.1
 RESTIC_SHA256='<reviewed SHA-256 for that exact executable>'
 
-python3 scripts/build_deb.py \
+/usr/bin/python3 scripts/build_deb.py \
   --target-release 24.04 \
   --wheel dist/bbackup-2.0.0-py3-none-any.whl \
   --restic "$RESTIC" \

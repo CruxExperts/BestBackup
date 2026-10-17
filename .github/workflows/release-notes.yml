@@ -352,6 +352,15 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: release-inputs
 
+      - name: Load public release verification certificate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: release-verification
+          sparse-checkout: .github/release-signing-key.asc
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: Verify checksum inventory and fixed-fingerprint signature
         env:
           DETACHED_SIGNATURE: ${{ inputs.detached_signature }}
@@ -383,7 +392,7 @@ jobs:
             cd release-inputs
             sha256sum --check SHA256SUMS
           )
-          gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$expected_fingerprint"
+          gpg --batch --import release-verification/.github/release-signing-key.asc
           imported_fingerprint="$(
             gpg --batch --with-colons --fingerprint "$expected_fingerprint" |
               awk -F: '$1 == "fpr" { print $10; exit }'

@@ -10,6 +10,13 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+### Fixed
+
+- Release publication now imports the checked-in public signing certificate
+  rather than depending on a key server's email-verification state. The fixed
+  fingerprint, artifact checksums, tag binding, and signature checks remain
+  mandatory; no private key is stored in the repository.
+
 ---
 
 ## [2.0.2] - 2026-10-17

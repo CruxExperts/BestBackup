@@ -54,7 +54,7 @@ gh run download "$BUILD_RUN_ID" --repo CruxExperts/BestBackup \
   --name release-inputs --dir release-inputs
 (cd release-inputs && sha256sum --check SHA256SUMS)
 FINGERPRINT=AF7968466B5B39C5E928FEFE716342D3EFBA5522
-gpg --keyserver hkps://keys.openpgp.org --recv-keys "$FINGERPRINT"
+gpg --import .github/release-signing-key.asc
 gpg --fingerprint "$FINGERPRINT"
 gpg --local-user "$FINGERPRINT" --armor --detach-sign release-inputs/SHA256SUMS
 gpg --verify release-inputs/SHA256SUMS.asc release-inputs/SHA256SUMS
@@ -65,6 +65,10 @@ jq -n --arg build_run_id "$BUILD_RUN_ID" --arg tag "$TAG" \
 ```
 
 The dispatched publisher accepts only the detached signature and successful build run ID. It verifies every checksum, the full pinned Crux signing fingerprint, the exact successful tag-build workflow, and the tag-to-commit binding before publishing. Keep the signing private key and passphrase in the operator's local key store; NEVER export, copy, upload, or enter them into GitHub Actions. Missing or invalid signatures fail closed; there is no unsigned release path.
+
+The publisher imports the public certificate from the dispatch commit and checks
+its fixed fingerprint. It does not depend on a key server or email-verification
+state; the repository contains no private signing material.
 
 ```bash
 uv run --locked pytest tests/test_deb_package_lifecycle.py

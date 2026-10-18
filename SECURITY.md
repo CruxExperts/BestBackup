@@ -4,7 +4,7 @@ This policy covers security issues in bbackup's source code and the packaged com
 
 ## Version status
 
-The latest published release is v2.0.2. Its supported scope is recorded in [release evidence](docs/development/version-2.md). The development checkout contains unreleased safety and enrollment changes; reports for both published and development code are welcome.
+Version 2.0.3 includes the reviewed safety and schema-3 enrollment changes. Supported scope and historical release boundaries are recorded in [release evidence](docs/development/version-2.md); reports for released and development code are welcome.
 
 Security fixes are prepared for the latest published release. The project does not promise backports to older versions.
 

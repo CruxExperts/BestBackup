@@ -1,6 +1,9 @@
 # Documentation
 
-Start with the [README](../README.md), then the [guided quick start](../QUICKSTART.md). Current checkout guides include unreleased schema-3 enrollment and safety improvements. Published v2.0.2 retains its [versioned documentation](https://github.com/CruxExperts/BestBackup/tree/v2.0.2/docs) and tested support scope.
+Start with the [README](../README.md), then the [guided quick start](../QUICKSTART.md). The v2.0.3 guides cover schema-3 enrollment, guided setup, safety improvements, and the separately recorded user-timer reboot qualification. Older v2.0.2 installations retain their [versioned documentation](https://github.com/CruxExperts/BestBackup/tree/v2.0.2/docs).
+
+The [release dependency evidence](development/release-dependencies.json) records
+the exact reviewed versions, source timestamps, lock hash, and audit limits.
 
 ## Start using bbackup
 

@@ -27,6 +27,10 @@ It requires restic and never touches user backup repositories.
   default-branch commit, and successful trusted push CI before release builds and
   again before publication. The publisher uploads to a draft, verifies every
   uploaded asset digest, then publishes the complete release.
+- `scripts/generate_release_provenance.py` binds verified source/CI evidence to
+  the exact assembled release artifacts, lockfile, and artwork provenance. The
+  tag build runs it before creating `SHA256SUMS`, so both source evidence and
+  `release-provenance.json` are covered by the release signature.
 
 
 ### Test container and helper images
@@ -65,7 +69,7 @@ wheelhouse, and hash-locked requirements exported from `uv.lock`:
 
 ```bash
 uv run python scripts/qualify_systemd.py \
-  --artifact dist/bbackup-2.0.2-py3-none-any.whl \
+  --artifact dist/bbackup-2.0.3-py3-none-any.whl \
   --wheel-sha256 '<SHA-256 of that exact wheel>' \
   --ubuntu-codename noble \
   --wheelhouse /path/to/reviewed-runtime-wheels \
@@ -100,7 +104,7 @@ RESTIC_SHA256='<reviewed SHA-256 for that exact executable>'
 
 /usr/bin/python3 scripts/build_deb.py \
   --target-release 24.04 \
-  --wheel dist/bbackup-2.0.2-py3-none-any.whl \
+  --wheel dist/bbackup-2.0.3-py3-none-any.whl \
   --restic "$RESTIC" \
   --restic-sha256 "$RESTIC_SHA256" \
   --output-dir dist/deb
@@ -111,7 +115,7 @@ Use `--target-release 26.04` only from a native Ubuntu 26.04/Python 3.14 environ
 The tag workflow builds all four target combinations on native x86_64/arm64 runners in matching, digest-pinned official Ubuntu containers, installs and checks each package in its disposable target container, and assembles the source archives, four `.deb` files, package manifests/checksums, and a combined `SHA256SUMS` into the immutable `release-inputs` artifact. It does not publish a GitHub release or sign anything. The in-package `/usr/share/doc/bbackup/build-manifest.json` records the package version, target release/architecture/Python, build host release, wheel hash, `uv.lock` hash, dependency-export hash, and bundled restic hash. The adjacent sidecar adds the final `.deb` hash, which cannot be embedded in the package without changing that hash. No hostname, user path, credentials, repository URL, or backup state is included. To review a package without installing it:
 
 ```bash
-PACKAGE=dist/deb/bbackup_2.0.2_ubuntu24.04_amd64.deb
+PACKAGE=dist/deb/bbackup_2.0.3_ubuntu24.04_amd64.deb
 (cd "$(dirname "$PACKAGE")" && sha256sum -c "$(basename "${PACKAGE%.deb}.sha256")")
 dpkg-deb --info "$PACKAGE"
 dpkg-deb --contents "$PACKAGE"

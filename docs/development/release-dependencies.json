@@ -1,0 +1,305 @@
+{
+  "dependency_audit": {
+    "audited_build_requirements": [
+      {
+        "requirement": "setuptools==84.0.0",
+        "resolved_version": "84.0.0"
+      },
+      {
+        "requirement": "wheel==0.48.0",
+        "resolved_version": "0.48.0"
+      }
+    ],
+    "limitations": [
+      "This is an exact PyPI package-version advisory lookup, not a general claim that dependencies are risk-free.",
+      "It does not audit OS packages, container images, runtime hosts, cloud accounts, external services, or disaster recovery."
+    ],
+    "package_version_coverage_verified_against_lockfile": true,
+    "query_failures": 0,
+    "raw_evidence_sha256": "86aaef2a3c1cb361737fe5a0c7c8f687149fa446cff14b0ada379e29f3dabbb9",
+    "result": "No advisory records were returned for these exact package versions by OSV, GitHub Advisory Database, deps.dev, or PyPI at retrieval time.",
+    "retrieved_at_utc": "2026-10-18T03:51:34.212451+00:00",
+    "scope": "All 51 exact PyPI registry package versions in uv.lock, plus the exact setuptools and wheel versions resolved for the build-system requirements.",
+    "sources": [
+      {
+        "advisory_hits": 0,
+        "endpoint": "https://api.osv.dev/v1/querybatch",
+        "http_status_counts": {
+          "200": 1
+        },
+        "independence_class": "A",
+        "name": "OSV",
+        "package_version_queries": 53,
+        "requests": 1,
+        "retrieved_at_utc": "2026-10-18T03:51:06.585248+00:00"
+      },
+      {
+        "advisory_hits": 0,
+        "endpoint": "https://api.github.com/advisories?ecosystem=pip&affects=PACKAGE%40VERSION",
+        "http_status_counts": {
+          "200": 53
+        },
+        "independence_class": "B",
+        "name": "GitHub Advisory Database",
+        "package_version_queries": 53,
+        "retrieval_window_utc": [
+          "2026-10-18T03:51:08.797412+00:00",
+          "2026-10-18T03:51:30.089083+00:00"
+        ]
+      },
+      {
+        "advisory_hits": 0,
+        "endpoint": "https://api.deps.dev/v3/systems/pypi/packages/PACKAGE/versions/VERSION",
+        "http_status_counts": {
+          "200": 53
+        },
+        "independence_class": "E",
+        "name": "deps.dev",
+        "package_version_queries": 53,
+        "retrieval_window_utc": [
+          "2026-10-18T03:51:10.318316+00:00",
+          "2026-10-18T03:51:31.114433+00:00"
+        ]
+      },
+      {
+        "advisory_hits": 0,
+        "endpoint": "https://pypi.org/pypi/PACKAGE/VERSION/json",
+        "http_status_counts": {
+          "200": 53
+        },
+        "independence_class": "E",
+        "name": "PyPI JSON API",
+        "package_version_queries": 53,
+        "retrieval_window_utc": [
+          "2026-10-18T03:51:10.672943+00:00",
+          "2026-10-18T03:51:34.211582+00:00"
+        ]
+      }
+    ]
+  },
+  "lockfile": {
+    "local_project_version": "2.0.3",
+    "locked_pypi_packages": 51,
+    "path": "uv.lock",
+    "sha256": "7cf0bfc2b287378e4fe893a2f2ffc20379d165ce55fe6a518bc749f5a701c9fb"
+  },
+  "package_versions": [
+    {
+      "name": "annotated-types",
+      "version": "0.8.0"
+    },
+    {
+      "name": "b2sdk",
+      "version": "2.13.0"
+    },
+    {
+      "name": "bcrypt",
+      "version": "5.0.0"
+    },
+    {
+      "name": "boto3",
+      "version": "1.43.108"
+    },
+    {
+      "name": "botocore",
+      "version": "1.43.108"
+    },
+    {
+      "name": "certifi",
+      "version": "2026.5.20"
+    },
+    {
+      "name": "cffi",
+      "version": "2.0.0"
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.4.7"
+    },
+    {
+      "name": "click",
+      "version": "8.4.1"
+    },
+    {
+      "name": "colorama",
+      "version": "0.4.6"
+    },
+    {
+      "name": "coverage",
+      "version": "7.14.1"
+    },
+    {
+      "name": "cryptography",
+      "version": "50.0.0"
+    },
+    {
+      "name": "docker",
+      "version": "7.1.0"
+    },
+    {
+      "name": "execnet",
+      "version": "2.1.2"
+    },
+    {
+      "name": "google-auth",
+      "version": "2.56.2"
+    },
+    {
+      "name": "google-auth-oauthlib",
+      "version": "1.4.0"
+    },
+    {
+      "name": "idna",
+      "version": "3.17"
+    },
+    {
+      "name": "iniconfig",
+      "version": "2.3.0"
+    },
+    {
+      "name": "invoke",
+      "version": "3.0.3"
+    },
+    {
+      "name": "jmespath",
+      "version": "1.1.0"
+    },
+    {
+      "name": "linkify-it-py",
+      "version": "2.2.0"
+    },
+    {
+      "name": "logfury",
+      "version": "1.0.1"
+    },
+    {
+      "name": "markdown-it-py",
+      "version": "4.2.0"
+    },
+    {
+      "name": "mdit-py-plugins",
+      "version": "0.6.1"
+    },
+    {
+      "name": "mdurl",
+      "version": "0.1.2"
+    },
+    {
+      "name": "oauthlib",
+      "version": "4.0.0"
+    },
+    {
+      "name": "packaging",
+      "version": "26.2"
+    },
+    {
+      "name": "paramiko",
+      "version": "5.0.0"
+    },
+    {
+      "name": "platformdirs",
+      "version": "4.12.2"
+    },
+    {
+      "name": "pluggy",
+      "version": "1.6.0"
+    },
+    {
+      "name": "pyasn1",
+      "version": "0.6.4"
+    },
+    {
+      "name": "pyasn1-modules",
+      "version": "0.4.2"
+    },
+    {
+      "name": "pycparser",
+      "version": "3.0"
+    },
+    {
+      "name": "pygments",
+      "version": "2.20.0"
+    },
+    {
+      "name": "pynacl",
+      "version": "1.6.2"
+    },
+    {
+      "name": "pytest",
+      "version": "9.0.3"
+    },
+    {
+      "name": "pytest-cov",
+      "version": "7.1.0"
+    },
+    {
+      "name": "pytest-mock",
+      "version": "3.15.1"
+    },
+    {
+      "name": "pytest-xdist",
+      "version": "3.8.0"
+    },
+    {
+      "name": "python-dateutil",
+      "version": "2.9.0.post0"
+    },
+    {
+      "name": "pywin32",
+      "version": "311"
+    },
+    {
+      "name": "pyyaml",
+      "version": "6.0.3"
+    },
+    {
+      "name": "requests",
+      "version": "2.34.2"
+    },
+    {
+      "name": "requests-oauthlib",
+      "version": "2.0.0"
+    },
+    {
+      "name": "rich",
+      "version": "15.0.0"
+    },
+    {
+      "name": "ruff",
+      "version": "0.15.15"
+    },
+    {
+      "name": "s3transfer",
+      "version": "0.19.2"
+    },
+    {
+      "name": "six",
+      "version": "1.17.0"
+    },
+    {
+      "name": "textual",
+      "version": "8.2.8"
+    },
+    {
+      "name": "typing-extensions",
+      "version": "4.16.0"
+    },
+    {
+      "name": "urllib3",
+      "version": "2.8.0"
+    },
+    {
+      "name": "setuptools",
+      "version": "84.0.0"
+    },
+    {
+      "name": "wheel",
+      "version": "0.48.0"
+    }
+  ],
+  "release": {
+    "release_date_utc": "2026-10-18",
+    "version": "2.0.3"
+  },
+  "schema_version": 1
+}

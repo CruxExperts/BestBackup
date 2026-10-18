@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=70", "wheel"]
+requires = ["setuptools==84.0.0", "wheel==0.48.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "bbackup"
-version = "2.0.2"
+version = "2.0.3"
 description = "Local-first encrypted Linux backups with restic and a visual dashboard"
 readme = "README.md"
 requires-python = ">=3.12"

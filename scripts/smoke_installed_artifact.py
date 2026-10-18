@@ -41,6 +41,7 @@ SOURCE_INPUTS = {
     "VERSION", "uv.lock", "pyproject.toml", "README.md", "LICENSE", "MANIFEST.in",
     "bbackup/production_cli.py", "bbackup/data/production-schemas.json",
     "scripts/build_deb.py", "scripts/check_assets.py", "scripts/verify_release_source.py", "scripts/README.md",
+    "scripts/generate_release_provenance.py", "docs/development/release-dependencies.json",
     "tests/conftest.py",
     "tests/fixtures/markdown/changelog-duplicate-category.md",
     "tests/fixtures/markdown/changelog-unversioned-category.md",

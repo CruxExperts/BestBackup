@@ -24,8 +24,8 @@ Use this checklist before changing public project metadata or publishing a relea
 
 ## Version 2 tested-scope claims
 
-- [ ] Describe stable v2.0.2 as qualified only for local file capture/restore, live PostgreSQL 17.11 / MySQL 8.4.12 / MariaDB 11.8.9 capture/restore, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages.
-- [ ] Keep B2/AWS, native Docker, ARM64 backup/restore, cross-application-version upgrades/rollback, systemd boot/reboot, and cloud/off-host protection explicitly unqualified.
+- [ ] Describe v2.0.3 as qualified only for local file capture/restore, live PostgreSQL 17.11 / MySQL 8.4.12 / MariaDB 11.8.9 capture/restore, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages.
+- [ ] Keep B2/AWS, native Docker, ARM64 backup/restore, cross-application-version upgrades/rollback, root-owned systemd package templates, and cloud/off-host protection explicitly unqualified; describe the separate user-timer guest drills with their exact limits.
 - [ ] State that ARM64 packages may be built by the release matrix but are not functionally qualified by package-install smoke alone.
 - [ ] Keep native B2 capability inspection distinct from backup transfer; inspection is read-only and always reports `protection_qualified: false`.
 - [ ] Describe the local Garage round trip as S3-compatible test evidence, not B2 or Amazon S3 qualification.
@@ -45,7 +45,7 @@ Use this checklist before changing public project metadata or publishing a relea
 - [ ] GitHub workflow actions use verified full commit SHAs; CI verifies hash-pinned bootstrap tooling.
 - [ ] GitHub workflows declare least-privilege `permissions`.
 - [ ] CI installs dependencies with `uv sync --locked`, collects integration tests across `tests/`, and exposes an aggregate `CI required` result.
-- [ ] Ruff covers the package, selected release scripts, generated CLI skill checker, and tests.
+- [ ] Ruff covers the package, all maintenance/release scripts, generated CLI skill checker, and tests.
 
 ## GitHub enforcement and release provenance
 
@@ -55,6 +55,7 @@ Use this checklist before changing public project metadata or publishing a relea
 - [ ] Secret scanning, push protection, private reporting, code scanning, and external-contributor workflow approval are enabled and verified.
 - [ ] SHA enforcement is enabled only after every remote workflow is pinned; required aggregate CI is selected only after that check exists and passes.
 - [ ] Release source has successful exact-commit trusted default-branch CI, default-branch ancestry, and an annotated tag signed by the pinned release key.
+- [ ] `source-verification.json` and `release-provenance.json` bind exact source, CI/build runs, artifact hashes, locked dependencies, and active artwork provenance; include both in the signed checksum inventory.
 - [ ] Complete signed assets are uploaded and verified in a draft before one publication; immutable releases apply to future releases.
 - [ ] Preserve previous settings privately before mutations. Reconcile uncertain publication or installation results read-only; never replay blindly.
 

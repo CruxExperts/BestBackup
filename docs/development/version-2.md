@@ -685,7 +685,7 @@ off-host custody or cloud-protected retention. No legacy implementation has
 been removed before its replacement is ready. Restore deadlines must come from
 measured drills.
 
-## Unreleased repository and recovery hardening — October 17, 2026
+## Version 2.0.3 candidate: repository and recovery hardening
 
 This development work follows the published v2.0.2 artifacts and does not replace
 their release evidence. Portable schema 3 policy uses logical source names;
@@ -768,7 +768,7 @@ Three distinct guest boot identifiers per guest were checked and retained privat
 
 The installed qualification wheel SHA-256 was
 `286fbd25bb346a403e448b0ad2c6b6008c9cd78bb77519b927e3e3c389b106f7`.
-The final delivery wheel SHA-256 is
+The reviewed 2.0.2 development delivery wheel SHA-256 was
 `72a9a7a5757a749a00ee5f09eb4f2183c2e1610cc5f9e472b01be377b74ce31a`.
 A ZIP-member comparison found only the reviewed `dashboard_setup.py` enrollment
 screen fix and wheel `RECORD` changed. All engine, enrollment, and scheduling
@@ -782,6 +782,57 @@ application startup, native ARM64 behavior, or package upgrade choreography. The
 harness never invoked host systemd. See the [qualification script instructions](../../scripts/README.md#rebootable-systemd-qualification)
 for reproduction; private logs, guest disks, and machine identifiers are excluded
 from source archives and Git.
+
+### Version 2.0.3 release provenance
+
+Version 2.0.3 is prepared from the reviewed guided-setup and recovery work above.
+Its release requires the protected pull request to merge, successful trusted CI
+on the exact resulting default-branch commit, and an annotated tag signed by the
+fixed project key. An unverified GitHub signing identity blocks the merge; local
+cryptographic verification alone does not override that requirement.
+
+The tag build records `source-verification.json` and produces
+`release-provenance.json`, binding the source commit, tag, trusted CI run, build
+run, portable source, wheel, native package manifests, lockfile and active artwork
+provenance. Both JSON files and every package are included in `SHA256SUMS`.
+The operator's detached signature authenticates that inventory; the publisher
+checks the complete draft's remote file sizes and SHA-256 values before making
+the release public. A prepared candidate, a pushed tag, or a successful build
+alone is not a published release.
+
+The local v2.0.3 candidate wheel SHA-256 is
+`f8d5a3600a8a6a20999d71536286585748ef99ea985e9550953bb1d330305aba`.
+Compared with the reviewed 2.0.2 development delivery wheel above, the only
+runtime package changes are version text in `bbackup/__init__.py` and
+`bbackup/data/cli-skills.md`; every other runtime member is byte-identical.
+Release-builder output digests are recorded separately in the published manifest;
+local wheel bytes are not assumed to equal a later hosted build.
+
+The final local v2.0.3 candidate suite passed **947 tests with one skip** in
+41.52 seconds. The wheel passed isolated installed-command smoke checks and the
+source archive passed its portable-input/private-state guard. All nine provenance
+regressions passed, including the actual workflow matrix, stale advisory-lock
+binding, unsafe archive members, and changed release-note digests. Ruff, syntax,
+generated documentation, Markdown, asset metadata, and version checks passed.
+Hosted candidate CI and the exact default-branch/tag builds remain separate
+release prerequisites; these local results do not imply publication.
+
+The dependency refresh on October 18, 2026 queried all 51 locked PyPI package
+versions plus setuptools 84.0.0 and wheel 0.48.0. OSV, GitHub advisories, deps.dev,
+and PyPI returned successful responses with no exact-version advisory hits at
+03:51 UTC. Build requirements now pin those reviewed tool versions. The portable
+[dependency evidence](release-dependencies.json) records package coordinates,
+source timestamps and limits, and the final lockfile digest
+`7cf0bfc2b287378e4fe893a2f2ffc20379d165ce55fe6a518bc749f5a701c9fb`.
+The release provenance verifies that evidence against the source lockfile and
+includes it in the signed inventory. This is not a complete OS, container, or
+host security audit.
+
+The earlier real-guest results apply only through that checked comparison of the
+unchanged engine, enrollment, and scheduling implementation. Version metadata,
+generated command documentation, and release provenance tooling receive their
+own candidate validation. The release does not turn same-guest repository copies
+into off-host recovery or broaden the recorded ARM64/cloud qualification.
 
 ## Dependency evidence
 

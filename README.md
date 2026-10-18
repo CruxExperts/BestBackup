@@ -4,7 +4,7 @@
 
 Encrypted Linux backups with a visual dashboard, dependable local snapshots, and an automation interface that tells you what actually happened.
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE) [![Version 2.0.2](https://img.shields.io/badge/version-2.0.2-22c55e?style=flat-square)](https://github.com/CruxExperts/BestBackup/releases/latest)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE) [![Version 2.0.3](https://img.shields.io/badge/version-2.0.3-22c55e?style=flat-square)](https://github.com/CruxExperts/BestBackup/releases/latest)
 
 ![bbackup: encrypted snapshot layers, an additional copy, and a restored document](docs/assets/bbackup-banner-v2.png)
 
@@ -21,7 +21,7 @@ A backup should leave you knowing **what was captured, where the copies are, and
 - **Keep private details private.** Portable policy describes intent; enrolled host bindings hold machine paths and credential-file references.
 - **Recover deliberately.** New-target restores and explicit reconciliation protect existing data when an operation is interrupted.
 
-This README describes the development checkout, including unreleased setup, policy, and safety improvements. **The latest published release is v2.0.2.** Use its [versioned quick start](https://github.com/CruxExperts/BestBackup/blob/v2.0.2/QUICKSTART.md) with that release.
+This README documents v2.0.3: guided setup, schema-3 policy enrollment, and hardened recovery. Existing schema-2 configurations require explicit migration; the originals are preserved. See the [quick start](QUICKSTART.md) and [qualification evidence](docs/development/version-2.md#development-candidate-rebootable-systemd-qualification).
 
 ![Real bbackup dashboard with disposable example data and illustrative capacity](docs/assets/bbackup-dashboard-preview.svg)
 
@@ -43,10 +43,10 @@ Already have version-two policy files? The dashboard offers an explicit migratio
 ## Prefer a published release?
 
 ```bash
-uv tool install --force 'git+https://github.com/CruxExperts/BestBackup.git@v2.0.2'
+uv tool install --force 'git+https://github.com/CruxExperts/BestBackup.git@v2.0.3'
 ```
 
-Stable v2.0.2 is qualified for local file capture/restore, selected PostgreSQL/MySQL/MariaDB capture/restore, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages. The [release evidence](docs/development/version-2.md) records exact versions and limits.
+Stable v2.0.3 is qualified for local file capture/restore, selected PostgreSQL/MySQL/MariaDB capture/restore, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages. The [release evidence](docs/development/version-2.md) records exact versions and limits.
 
 > [!IMPORTANT]
 > B2/AWS, native Docker, ARM64 operation, and complete host-loss recovery remain unqualified. A second directory on one host is not independent disaster recovery. Keep an independent copy of repository passwords and verify restores before relying on a backup.

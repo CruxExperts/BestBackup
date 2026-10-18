@@ -10,12 +10,27 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+---
+
+## [2.0.3] - 2026-10-18
+
+Existing schema-2 configurations require explicit migration and enrollment before
+mutating production operations. Migration preserves the original files. The wire
+result contract remains schema version 2; portable configuration is schema 3.
+
+Scheduled file capture/copy/restore, missed-timer catch-up, and interruption
+without replay have bounded Ubuntu 24.04/26.04 AMD64 guest evidence. Both test
+repositories shared the guest. B2/AWS, native Docker, ARM64 backup/restore, and
+complete off-host disaster recovery remain unqualified.
+
 ### Added
 
 - Guided terminal setup, labeled operation forms, inline validation, tooltips and keyboard help.
 - Schema-3 portable source policy, private host bindings, explicit migration and machine/user enrollment.
 - Per-stage job timeouts and explicit user-level systemd timer installation.
 - Generated banner and social artwork with embedded rights metadata and checked provenance.
+- Signed release provenance binding source/tag, trusted CI, build run, dependency lock, artwork, and package digests.
+- Fresh exact-version dependency advisory evidence and reviewed build-tool pins.
 
 ### Security
 
@@ -501,7 +516,8 @@ are still under development. See [implementation status](docs/development/versio
 
 The `Unreleased` comparison is a live `HEAD` link for navigation, not an immutable historical citation.
 
-[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.2...HEAD
+[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.3...HEAD
+[2.0.3]: https://github.com/CruxExperts/BestBackup/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/CruxExperts/BestBackup/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/CruxExperts/BestBackup/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/CruxExperts/BestBackup/compare/v1.8.6...v2.0.0

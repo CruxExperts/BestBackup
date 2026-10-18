@@ -234,10 +234,12 @@ class DockerRestore:
                     return False
                 temp_extract_dir = Path(tempfile.mkdtemp(prefix=f"bbackup_volume_{volume_name}_"))
                 ensure_private_directory(temp_extract_dir)
+                extract_dir = temp_extract_dir / "payload"
+                ensure_private_directory(extract_dir)
                 with tarfile.open(archive_path, self._tar_read_mode(archive_path)) as tar:
-                    extract_archive_safely(tar, temp_extract_dir)
-                extracted_volume_dir = temp_extract_dir / volume_name
-                volume_backup_dir = extracted_volume_dir if extracted_volume_dir.exists() else temp_extract_dir
+                    extract_archive_safely(tar, extract_dir)
+                extracted_volume_dir = extract_dir / volume_name
+                volume_backup_dir = extracted_volume_dir if extracted_volume_dir.exists() else extract_dir
 
             if not volume_backup_dir.exists():
                 return False

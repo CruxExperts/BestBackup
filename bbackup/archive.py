@@ -32,8 +32,13 @@ SOLID_ARCHIVE_SUFFIXES = (
 
 
 def extract_archive_safely(tar: tarfile.TarFile, destination: Path) -> None:
-    """Apply tar's data path checks while retaining supported ownership data."""
+    """Extract a payload beneath an untouched, owned mode-0700 wrapper."""
     destination = Path(destination)
+    wrapper_info = os.lstat(destination.parent)
+    if (not stat.S_ISDIR(wrapper_info.st_mode)
+            or wrapper_info.st_uid != os.geteuid()
+            or stat.S_IMODE(wrapper_info.st_mode) != 0o700):
+        raise OSError("Archive extraction requires an owned mode-0700 private extraction wrapper")
     members = tar.getmembers()
     for member in members:
         tarfile.data_filter(member, str(destination))
@@ -187,7 +192,8 @@ def unpack_solid_archive(
 
     Args:
         archive_path: Path to .tar.gz, .tar.gz.enc, .tar.bz2, .tar.xz, or directory.
-        dest_dir: If set, extract here; else use a temp directory (caller must clean up).
+        dest_dir: Optional private wrapper directory; the extracted payload is placed in
+            a child of this directory. If omitted, a temporary wrapper is used.
         encryption_config: Required if archive_path has .enc suffix; used to decrypt.
 
     Returns:
@@ -218,6 +224,12 @@ def unpack_solid_archive(
     ensure_private_directory(dest_dir)
     if was_present and any(dest_dir.iterdir()):
         raise OSError(f"Extraction destination is not empty: {dest_dir}")
+
+    # Keep a private directory above the actual extraction target. Some
+    # archives contain a "." member with mode 0755; extracting it into the
+    # wrapper itself would expose plaintext before cleanup.
+    extract_dir = Path(tempfile.mkdtemp(prefix="bbackup_payload_", dir=dest_dir))
+    ensure_private_directory(extract_dir)
 
     extraction_succeeded = False
     try:
@@ -265,21 +277,24 @@ def unpack_solid_archive(
             mode = "r:*"
 
         with tarfile.open(to_extract, mode) as tar:
-            extract_archive_safely(tar, dest_dir)
+            extract_archive_safely(tar, extract_dir)
 
         # Tar typically contains one top-level dir (backup_YYYYMMDD_HHMMSS); return that if present
-        items = list(dest_dir.iterdir())
+        items = list(extract_dir.iterdir())
         if len(items) == 1 and items[0].is_dir():
             extraction_succeeded = True
             return (items[0], temp_root_to_remove)
         extraction_succeeded = True
-        return (dest_dir, temp_root_to_remove)
+        return (extract_dir, temp_root_to_remove)
     finally:
         if temp_tar is not None and temp_tar.exists():
             try:
                 temp_tar.unlink()
             except OSError:
                 pass
+        if not extraction_succeeded and extract_dir.exists():
+            import shutil
+            shutil.rmtree(extract_dir, ignore_errors=True)
         if not extraction_succeeded and temp_root_to_remove is not None:
             import shutil
             shutil.rmtree(temp_root_to_remove, ignore_errors=True)

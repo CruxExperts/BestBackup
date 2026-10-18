@@ -124,7 +124,9 @@ class DockerBackup:
                 except OSError as exc:
                     logger.error("Docker volume source preflight failed for %s: %s", volume_name, exc)
                     return False
-            volume_backup_dir = backup_dir / "volumes" / volume_name
+            volumes_dir = backup_dir / "volumes"
+            ensure_private_directory(volumes_dir)
+            volume_backup_dir = volumes_dir / volume_name
             ensure_private_directory(volume_backup_dir)
             
             # Use a temporary container to access the volume
@@ -156,7 +158,9 @@ class DockerBackup:
                     text=True,
                 )
                 
-                if check_rsync.returncode == 0:
+                if check_rsync.returncode == 0 and os.geteuid() == 0:
+                    # Non-root docker cp -a can silently discard numeric owners.
+                    # Use the ownership-checked tar path unless root can retain them.
                     # Use rsync if available
                     # Add --progress and --info=progress2 for detailed progress
                     rsync_cmd = [
@@ -242,7 +246,7 @@ class DockerBackup:
                         logger.error(f"rsync backup failed for volume {volume_name}: {stderr.strip()}")
                         raise RuntimeError(f"rsync failed for volume {volume_name}")
                 else:
-                    # Fallback to tar if rsync not available
+                    # Tar verifies every original numeric owner before extraction.
                     tar_cmd = [
                         "docker", "exec", temp_container_name,
                         "tar", "czf", "/tmp/volume_backup.tar.gz", "-C", "/volume_data", "."
@@ -265,7 +269,10 @@ class DockerBackup:
                             raise RuntimeError(f"docker cp failed for volume {volume_name}")
                         # Extract tar (tarfile imported at module level)
                         with tarfile.open(temp_tar, "r:gz") as tar:
-                            extract_archive_safely(tar, volume_backup_dir)
+                            extract_archive_safely(
+                                tar,
+                                volume_backup_dir,
+                            )
                         temp_tar.unlink()
                     else:
                         stderr = getattr(result, "stderr", "")

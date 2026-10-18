@@ -81,21 +81,17 @@ def seeded_volume(docker_client, unique_id):
 # ---------------------------------------------------------------------------
 
 
-def test_backup_volume_rsync_path(docker_client, alpine_rsync_image, seeded_volume, tmp_path, unique_id, caplog):
+def test_backup_volume_preserves_numeric_ownership_or_refuses(docker_client, alpine_rsync_image, seeded_volume, tmp_path, unique_id, caplog):
     """Preserve volume ownership or refuse without a misleading artifact."""
     from bbackup.config import Config
     from bbackup.docker_backup import DockerBackup
 
     cfg = Config(config_path=None)
 
-    # Monkeypatch the alpine image used by backup_volume
-    original_run = docker_client.containers.run
-
-    def patched_run(image, **kwargs):
-        return original_run(alpine_rsync_image, **kwargs)
-
+    # Docker SDK collection properties can return a new manager on each access;
+    # patch the owning image constant so this actually exercises rsync.
     with pytest.MonkeyPatch.context() as m:
-        m.setattr(docker_client.containers, "run", patched_run)
+        m.setattr("bbackup.docker_backup.ALPINE_HELPER_IMAGE", alpine_rsync_image)
         db = DockerBackup(cfg)
         db.client = docker_client
 
@@ -105,6 +101,8 @@ def test_backup_volume_rsync_path(docker_client, alpine_rsync_image, seeded_volu
     if os.geteuid() != 0:
         assert result is False
         assert not vol_dir.exists()
+        # Even with rsync installed, non-root clients use checked tar because
+        # docker cp -a may silently discard original numeric ownership.
         assert "Cannot restore archive ownership" in caplog.text
     else:
         assert result is True

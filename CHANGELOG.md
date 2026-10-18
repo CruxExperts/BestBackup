@@ -42,6 +42,10 @@ complete off-host disaster recovery remain unqualified.
 
 ### Fixed
 
+- Archive extraction retains a private outer directory while restoring payload metadata.
+- Filesystem metadata preflight follows native rsync exclusions without re-entering excluded trees.
+- User timer installation honors an absolute custom XDG configuration directory.
+- Non-root legacy Docker backups use checked tar ownership instead of trusting `docker cp -a`; integration tests now select their helper image reliably.
 - Complete portable source archives with documentation, build tools and test fixtures, checked before release.
 - Release publication now imports the checked-in public signing certificate
   rather than depending on a key server's email-verification state. The fixed

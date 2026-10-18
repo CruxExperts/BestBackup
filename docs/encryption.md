@@ -20,7 +20,7 @@ The host bindings file points to these paths; it contains no password values and
 
 Independent recovery kits also require a trusted OpenPGP signing fingerprint, a recipient key, and access to the independent restic password. Keep signing/decryption keys and the sealed kit separate from the protected host. The [recovery guide](development/version-2.md#independent-recovery-artifacts) describes experimental recovery-kit checks and limitations; a signed kit does not establish provider retention, off-host custody, or a successful application recovery.
 
-## Unreleased legacy format hardening
+## Version 2.0.3 legacy format hardening
 
 New per-file backups use format 3: an encrypted, authenticated inventory and
 random payload identifiers keep original names and tree metadata out of the
@@ -31,10 +31,16 @@ ACLs, extended attributes, and special permission bits are refused before a
 successful artifact is reported. Encrypted Docker volume capture requires
 access to inspect the original mountpoint; it fails closed without that access.
 
+Legacy Docker volume backups from a non-root account use ownership-checked tar
+extraction, even when the helper has rsync. They refuse numeric ownership the
+account cannot preserve and do not use rsync incremental optimization. Every
+extracted plaintext payload remains beneath an untouched private directory until
+cleanup; archive root permissions apply only to the payload.
+
 Format 2 remains readable with a warning because its authenticated inventory
 was plaintext. Older backups without authenticated tree metadata also warn;
-they cannot provide the new fidelity guarantees. These changes are unreleased
-and do not change existing v2.0.2 artifacts. Test a restore before discarding
+they cannot provide the new fidelity guarantees. These v2.0.3 changes do not
+change existing v2.0.2 artifacts. Test a restore before discarding
 any older backup or key.
 
 ## Legacy 1.x file encryption

@@ -190,6 +190,60 @@ class TestUnpackSolidArchive:
         assert isinstance(unpacked, Path)
         assert cleanup is None
 
+    def test_dot_root_mode_is_restored_under_private_wrapper(self, tmp_path):
+        archive = tmp_path / "dot-root.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            root = tarfile.TarInfo(".")
+            root.type = tarfile.DIRTYPE
+            root.mode = 0o755
+            root.uid, root.gid = os.geteuid(), os.getegid()
+            tar.addfile(root)
+
+            item = tarfile.TarInfo("secret.txt")
+            item.mode = 0o640
+            item.uid, item.gid = os.geteuid(), os.getegid()
+            item.size = len(b"private")
+            tar.addfile(item, io.BytesIO(b"private"))
+
+        unpacked, cleanup = unpack_solid_archive(archive)
+        try:
+            assert cleanup is not None
+            assert stat.S_IMODE(cleanup.stat().st_mode) == 0o700
+            assert cleanup in unpacked.parents
+            assert stat.S_IMODE(unpacked.stat().st_mode) == 0o755
+            assert stat.S_IMODE((unpacked / "secret.txt").stat().st_mode) == 0o640
+            assert (unpacked / "secret.txt").read_text() == "private"
+        finally:
+            if cleanup is not None:
+                import shutil
+                shutil.rmtree(cleanup, ignore_errors=True)
+
+    def test_dot_root_entry_requires_a_private_extraction_wrapper(self, tmp_path):
+        from bbackup.archive import extract_archive_safely
+
+        archive = tmp_path / "unwrapped-dot-root.tar"
+        with tarfile.open(archive, "w") as tar:
+            root = tarfile.TarInfo(".")
+            root.type = tarfile.DIRTYPE
+            root.mode = 0o755
+            root.uid, root.gid = os.geteuid(), os.getegid()
+            tar.addfile(root)
+            item = tarfile.TarInfo("secret.txt")
+            item.uid, item.gid = os.geteuid(), os.getegid()
+            item.size = len(b"private")
+            tar.addfile(item, io.BytesIO(b"private"))
+
+        public_parent = tmp_path / "unprotected"
+        public_parent.mkdir(mode=0o755)
+        destination = public_parent / "destination"
+        destination.mkdir(mode=0o700)
+        with tarfile.open(archive) as tar:
+            with pytest.raises(OSError, match="private extraction wrapper"):
+                extract_archive_safely(tar, destination)
+
+        assert stat.S_IMODE(destination.stat().st_mode) == 0o700
+        assert not (destination / "secret.txt").exists()
+
 
 def test_archive_does_not_restore_unnormalized_link_target(tmp_path):
     from bbackup.archive import extract_archive_safely
@@ -231,3 +285,34 @@ def test_archive_extract_requests_numeric_ownership(tmp_path, monkeypatch):
     stream.getmembers.return_value = [item]
     extract_archive_safely(stream, tmp_path)
     assert stream.extractall.call_args.kwargs["numeric_owner"] is True
+
+
+@pytest.mark.parametrize("protected", [False, True])
+def test_root_symlink_alias_cannot_expose_extracted_payload(tmp_path, protected):
+    from bbackup.archive import extract_archive_safely
+    wrapper = tmp_path / "wrapper"
+    wrapper.mkdir(mode=0o700 if protected else 0o755)
+    destination = wrapper / "payload"
+    destination.mkdir(mode=0o700)
+    archive = tmp_path / "alias.tar"
+    with tarfile.open(archive, "w") as tar:
+        link = tarfile.TarInfo("alias")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "."
+        link.uid, link.gid = os.geteuid(), os.getegid()
+        tar.addfile(link)
+        directory = tarfile.TarInfo("alias")
+        directory.type = tarfile.DIRTYPE
+        directory.mode = 0o755
+        directory.uid, directory.gid = os.geteuid(), os.getegid()
+        tar.addfile(directory)
+    with tarfile.open(archive) as tar:
+        if not protected:
+            with pytest.raises(OSError, match="private extraction wrapper"):
+                extract_archive_safely(tar, destination)
+            assert not (destination / "alias").exists()
+            assert stat.S_IMODE(destination.stat().st_mode) == 0o700
+        else:
+            extract_archive_safely(tar, destination)
+            assert stat.S_IMODE(wrapper.stat().st_mode) == 0o700
+            assert (destination / "alias").is_symlink()

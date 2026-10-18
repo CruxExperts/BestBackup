@@ -450,8 +450,9 @@ bbackup restore --backup-path /tmp/bbackup_staging/backup_YYYYMMDD_HHMMSS \
 
 Restore dry-run reports selected targets only; it does not verify manifest
 hashes, Docker access, or destination permissions. A real restore verifies the
-manifest before mutation, but can stop/remove existing containers, replace
-volumes or networks, and use `rsync --delete` for filesystem destinations.
+manifest before mutation and refuses occupied container and volume names.
+Network restoration can still replace networks, and filesystem restoration uses
+`rsync --delete` for its destination.
 Treat `--dry-run` as a plan, not as a non-destructive integrity proof.
 
 ---

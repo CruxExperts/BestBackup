@@ -202,7 +202,9 @@ jobs:
 
 
       - name: Run integration tests
-        run: uv run pytest tests/ -m integration -v --tb=short
+        run: |
+          command -v rsync
+          uv run pytest tests/ -m integration -v --tb=short
 
   required:
     name: CI required

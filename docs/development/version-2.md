@@ -801,14 +801,17 @@ the release public. A prepared candidate, a pushed tag, or a successful build
 alone is not a published release.
 
 The local v2.0.3 candidate wheel SHA-256 is
-`f8d5a3600a8a6a20999d71536286585748ef99ea985e9550953bb1d330305aba`.
-Compared with the reviewed 2.0.2 development delivery wheel above, the only
-runtime package changes are version text in `bbackup/__init__.py` and
-`bbackup/data/cli-skills.md`; every other runtime member is byte-identical.
+`364a758123b1848a9ad63b74c2cab05ddaa13827898376ec8f51510b5c1dc177`.
+Compared with the reviewed 2.0.2 development delivery wheel above, runtime
+changes cover version text, legacy archive/filesystem/Docker handling, and the
+user-unit installation path. Service execution, enrollment, and guarded operation
+modules remain byte-identical; timer-rendering function syntax trees also match.
+Post-review regressions cover the changed legacy and installer behavior. The
+complete current wheel has not repeated the earlier real-guest drill.
 Release-builder output digests are recorded separately in the published manifest;
 local wheel bytes are not assumed to equal a later hosted build.
 
-The final local v2.0.3 candidate suite passed **947 tests with one skip** in
+The initial local v2.0.3 candidate suite passed **947 tests with one skip** in
 41.52 seconds. The wheel passed isolated installed-command smoke checks and the
 source archive passed its portable-input/private-state guard. All nine provenance
 regressions passed, including the actual workflow matrix, stale advisory-lock
@@ -816,6 +819,23 @@ binding, unsafe archive members, and changed release-note digests. Ruff, syntax,
 generated documentation, Markdown, asset metadata, and version checks passed.
 Hosted candidate CI and the exact default-branch/tag builds remain separate
 release prerequisites; these local results do not imply publication.
+
+Post-review fixes retain an owned mode-0700 wrapper for every legacy archive extraction,
+including archive root aliases, and preserve payload root metadata. Native rsync
+selection applies the same exclude file to an empty-target dry run and decodes
+escaped filenames exactly once. Custom absolute XDG configuration paths are
+honored, with trusted-directory and traversal checks. Non-root Docker volume
+backups use ownership-checked tar; a successful `docker cp -a` is not treated as
+numeric-ownership proof. The actual helper-image integration fixture was fixed
+so its rsync path selection is effective. Mocked unit-test Docker daemons receive
+separate real-lease namespaces to avoid cross-worker false contention.
+
+After those fixes, the complete candidate suite passed **963 tests with one
+skip** in 33.76 seconds. Focused Docker plus live integration passed **51 tests
+with one skip**. The native rsync-selection regression is marked for integration,
+and CI requires rsync to be present before collecting that job. Material source
+review accepted the extraction, ownership, selection, and XDG changes. The final
+wheel and updated source archive are checked separately before publication.
 
 The dependency refresh on October 18, 2026 queried all 51 locked PyPI package
 versions plus setuptools 84.0.0 and wheel 0.48.0. OSV, GitHub advisories, deps.dev,
@@ -828,8 +848,8 @@ The release provenance verifies that evidence against the source lockfile and
 includes it in the signed inventory. This is not a complete OS, container, or
 host security audit.
 
-The earlier real-guest results apply only through that checked comparison of the
-unchanged engine, enrollment, and scheduling implementation. Version metadata,
+The earlier real-guest results apply only to the unchanged service/enrollment/
+guarded-operation core and timer rendering verified by that comparison. Version metadata,
 generated command documentation, and release provenance tooling receive their
 own candidate validation. The release does not turn same-guest repository copies
 into off-host recovery or broaden the recorded ARM64/cloud qualification.

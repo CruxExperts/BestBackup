@@ -113,6 +113,8 @@ uv run bbackup production service install --name daily \
   --executable "$PWD/.venv/bin/bbackup" --activate
 ```
 
+Units are installed under an absolute `$XDG_CONFIG_HOME/systemd/user`, or `~/.config/systemd/user` when that variable is unset or relative. Use the same configuration environment as your user systemd manager. Parent traversal and symbolic-link ancestors are refused.
+
 Omit `--activate` to install disabled units. The command never enables lingering, installs a system-wide service, or elevates privileges. User timers require an available user systemd manager; boot operation may require administrator-managed lingering. A differing existing unit is preserved for review. [Installation](INSTALL.md#optional-systemd-scheduling) documents qualification limits.
 
 Persistent timers can catch up after an idle interruption. An interrupted mutation remains uncertain and blocks automatic replay until explicit reconciliation. Retention remains a separate reviewed action; scheduling does not silently prune data.

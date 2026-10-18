@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 
 from .models import Job
+from .config import ensure_private_directory
 
 
 def _argument(path: Path) -> str:
@@ -91,14 +92,16 @@ def install_user_units(units: dict[str, str], *, activate: bool = False) -> dict
     if any(not isinstance(content, str) or "\0" in content or not content
            for content in units.values()):
         raise ValueError("Invalid systemd unit content")
-    home = Path.home()
-    directory = home / ".config" / "systemd" / "user"
-    if any(path.is_symlink() for path in (home, home / ".config", home / ".config" / "systemd", directory)):
-        raise ValueError("User systemd path must not traverse symbolic links")
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if not directory.is_dir() or directory.stat().st_uid != os.geteuid():
-        raise ValueError("User systemd directory must belong to the current user")
-    directory.chmod(0o700)
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", ""))
+    if not config_home.is_absolute():
+        config_home = Path.home() / ".config"
+    if ".." in config_home.parts:
+        raise ValueError("User systemd path must not contain parent traversal")
+    directory = config_home / "systemd" / "user"
+    try:
+        ensure_private_directory(directory)
+    except OSError as error:
+        raise ValueError("User systemd path must use trusted directories without symbolic links") from error
     for name, content in units.items():
         target = directory / name
         if target.exists() or target.is_symlink():

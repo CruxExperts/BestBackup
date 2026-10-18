@@ -7,6 +7,9 @@ Last Updated: 2026-02-26
 """
 
 import json
+import io
+import os
+import stat
 import tarfile
 import time
 from pathlib import Path
@@ -19,6 +22,15 @@ from bbackup.config import Config, EncryptionSettings
 from bbackup.encryption import EncryptionManager
 from bbackup.manifest import generate_backup_manifest
 from bbackup.restore import DockerRestore, list_volume_backup_names
+
+
+@pytest.fixture(autouse=True)
+def isolate_mocked_daemon_volume_leases(tmp_path, monkeypatch):
+    # Each test models its own Docker daemon; identical fixture volume names
+    # must not contend across xdist workers. Keep the real lease implementation.
+    from bbackup import restore
+    original = restore._volume_restore_lock
+    monkeypatch.setattr(restore, "_volume_restore_lock", lambda name: original(f"{tmp_path}:{name}"))
 
 
 def make_restore(mock_docker_client):
@@ -343,6 +355,55 @@ class TestRestoreVolume:
         assert len(cp_calls) == 1
         assert cp_calls[0].args[0][2] == "-a"
         assert "myvolume" in cp_calls[0].args[0][3]
+
+    def test_dot_root_volume_archive_preserves_root_mode_under_wrapper(
+        self, mock_docker_client, mock_subprocess, tmp_path
+    ):
+        mock_run, _ = mock_subprocess
+        volumes_dir = tmp_path / "volumes"
+        volumes_dir.mkdir()
+        archive = volumes_dir / "myvolume.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            root = tarfile.TarInfo(".")
+            root.type = tarfile.DIRTYPE
+            root.mode = 0o755
+            root.uid, root.gid = os.geteuid(), os.getegid()
+            tar.addfile(root)
+            item = tarfile.TarInfo("data.txt")
+            item.uid, item.gid = os.geteuid(), os.getegid()
+            item.size = len(b"payload")
+            tar.addfile(item, io.BytesIO(b"payload"))
+
+        mock_docker_client.volumes.get.side_effect = NotFound("not found")
+        configure_owned_volume(mock_docker_client)
+        mock_docker_client.containers.run.return_value = MagicMock()
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        from bbackup.archive import extract_archive_safely as extract_original
+
+        observed_modes = []
+
+        def inspect_wrapper(tar, destination, **kwargs):
+            wrapper = Path(destination).parent
+            assert stat.S_IMODE(wrapper.stat().st_mode) == 0o700
+            extract_original(tar, destination, **kwargs)
+            observed_modes.append((
+                stat.S_IMODE(wrapper.stat().st_mode),
+                stat.S_IMODE(Path(destination).stat().st_mode),
+            ))
+
+        with patch("bbackup.restore.extract_archive_safely", side_effect=inspect_wrapper):
+            dr = make_restore(mock_docker_client)
+            assert dr.restore_volume("myvolume", tmp_path) is True
+
+        assert observed_modes == [(0o700, 0o755)]
+        copy_calls = [
+            call.args[0]
+            for call in mock_run.call_args_list
+            if call.args and call.args[0][:2] == ["docker", "cp"]
+        ]
+        assert len(copy_calls) == 1
+        assert "/payload/." in copy_calls[0][3]
 
     def test_restore_volume_returns_false_when_docker_cp_fails(
         self, mock_docker_client, mock_subprocess, tmp_path

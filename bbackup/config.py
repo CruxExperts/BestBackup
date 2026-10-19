@@ -4,6 +4,7 @@ Handles loading and merging of YAML config files with CLI overrides.
 """
 
 import os
+import stat
 import yaml
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
@@ -69,6 +70,91 @@ class SnapshotProfile:
 RCLONE_OPTIONS_CAP = 32
 RCLONE_DEFAULT_TRANSFERS = 8
 RCLONE_DEFAULT_CHECKERS = 8
+
+
+def ensure_private_directory(path: os.PathLike[str] | str, *, _chmod_leaf: bool = True) -> str:
+    """Create or validate a current-user-owned directory with mode 0700."""
+    path = os.fspath(path)
+    requested = os.path.abspath(path)
+    if requested == os.sep:
+        raise OSError("Filesystem root cannot be a private staging directory")
+    # Walk with pinned directory descriptors. A path-only check followed by
+    # makedirs permits a writable ancestor to swap the checked child.
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(os.sep, flags)
+    current = os.sep
+    try:
+        parts = [part for part in requested.split(os.sep) if part]
+        for index, part in enumerate(parts):
+            next_path = os.path.join(current, part)
+            created = False
+            try:
+                os.mkdir(part, 0o700, dir_fd=fd)
+                created = True
+            except FileExistsError:
+                pass
+            child_fd = os.open(part, flags, dir_fd=fd)
+            info = os.fstat(child_fd)
+            owner = os.geteuid() if hasattr(os, "geteuid") else info.st_uid
+            writable = bool(stat.S_IMODE(info.st_mode) & 0o022)
+            trusted_root_sticky = info.st_uid == 0 and bool(info.st_mode & stat.S_ISVTX)
+            is_leaf = index == len(parts) - 1
+            if not stat.S_ISDIR(info.st_mode) or (
+                info.st_uid not in (owner, 0)
+                or ((not is_leaf or not _chmod_leaf) and writable and not trusted_root_sticky)
+            ):
+                os.close(child_fd)
+                raise OSError(f"Private staging path has an untrusted ancestor: {next_path}")
+            if is_leaf:
+                if info.st_uid != owner:
+                    os.close(child_fd)
+                    raise OSError(f"Private staging directory is owned by another user: {next_path}")
+                if _chmod_leaf:
+                    os.fchmod(child_fd, 0o700)
+            elif created:
+                os.fchmod(child_fd, 0o700)
+            os.close(fd)
+            fd = child_fd
+            current = next_path
+    finally:
+        os.close(fd)
+    return path
+
+
+def open_private_file(path: os.PathLike[str] | str, mode: str = "w", **kwargs):
+    """Open a sensitive output file without following symlinks and with mode 0600."""
+    path = os.fspath(path)
+    parent = os.path.dirname(path) or "."
+    ensure_private_directory(parent, _chmod_leaf=False)
+    parent_info = os.lstat(parent)
+    if not stat.S_ISDIR(parent_info.st_mode) or stat.S_ISLNK(parent_info.st_mode):
+        raise OSError(f"Private output parent is not a real directory: {parent}")
+    if hasattr(os, "geteuid") and parent_info.st_uid != os.geteuid():
+        raise OSError(f"Private output parent is owned by another user: {parent}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    if os.path.lexists(path):
+        existing_info = os.lstat(path)
+        if stat.S_ISLNK(existing_info.st_mode) or not stat.S_ISREG(existing_info.st_mode):
+            raise OSError(f"Private output is not a regular file: {path}")
+        if hasattr(os, "geteuid") and existing_info.st_uid != os.geteuid():
+            raise OSError(f"Private output is owned by another user: {path}")
+        if existing_info.st_nlink != 1:
+            raise OSError(f"Private output has unexpected hardlinks: {path}")
+    fd = os.open(path, flags, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise OSError(f"Private output is not a regular file: {path}")
+        if hasattr(os, "geteuid") and info.st_uid != os.geteuid():
+            raise OSError(f"Private output is owned by another user: {path}")
+        if info.st_nlink != 1:
+            raise OSError(f"Private output has unexpected hardlinks: {path}")
+        os.fchmod(fd, 0o600)
+        return os.fdopen(fd, mode, **kwargs)
+    except Exception:
+        os.close(fd)
+        raise
 
 
 def _clamp_rclone_int(value: Any, name: str, default: int) -> int:

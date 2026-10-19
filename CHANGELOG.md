@@ -10,8 +10,44 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+---
+
+## [2.0.3] - 2026-10-19
+
+Existing schema-2 configurations require explicit migration and enrollment before
+mutating production operations. Migration preserves the original files. The wire
+result contract remains schema version 2; portable configuration is schema 3.
+
+Scheduled file capture/copy/restore, missed-timer catch-up, and interruption
+without replay have bounded Ubuntu 24.04/26.04 AMD64 guest evidence. Both test
+repositories shared the guest. B2/AWS, native Docker, ARM64 backup/restore, and
+complete off-host disaster recovery remain unqualified.
+
+### Added
+
+- Guided terminal setup, labeled operation forms, inline validation, tooltips and keyboard help.
+- Schema-3 portable source policy, private host bindings, explicit migration and machine/user enrollment.
+- Per-stage job timeouts and explicit user-level systemd timer installation.
+- Generated banner and social artwork with embedded rights metadata and checked provenance.
+- Signed release provenance binding source/tag, trusted CI, build run, dependency lock, artwork, and package digests.
+- Fresh exact-version dependency advisory evidence and reviewed build-tool pins.
+- Operator-focused landing documentation and task-based guides for Linux administrators, homelabs, and small infrastructure teams.
+
+### Security
+
+- Fail-closed legacy decryption, private plaintext staging, occupied Docker restore-target refusal and trusted SFTP host keys.
+- Encrypted and authenticated legacy tree inventories, opaque payload names, backward readers and explicit filesystem-fidelity limits.
+- Trusted configuration snapshots and enrollment leases; interrupted operations never gain automatic replay authority.
+- Pinned CI actions, complete integration selection, aggregate CI and signed exact-commit release verification.
+
+
 ### Fixed
 
+- Archive extraction retains a private outer directory while restoring payload metadata.
+- Filesystem metadata preflight follows native rsync exclusions without re-entering excluded trees.
+- User timer installation honors an absolute custom XDG configuration directory.
+- Non-root legacy Docker backups use checked tar ownership instead of trusting `docker cp -a`; integration tests now select their helper image reliably.
+- Complete portable source archives with documentation, build tools and test fixtures, checked before release.
 - Release publication now imports the checked-in public signing certificate
   rather than depending on a key server's email-verification state. The fixed
   fingerprint, artifact checksums, tag binding, and signature checks remain
@@ -261,7 +297,7 @@ are still under development. See [implementation status](docs/development/versio
 
 ### Changed
 
-- Simplified the GitHub install and redeploy documentation around the single `uv tool install --force git+https://github.com/CruxExperts/best-backup.git` command.
+- Simplified the GitHub install and redeploy documentation around the single `uv tool install --force git+https://github.com/CruxExperts/BestBackup.git` command.
 - Moved the sudo `UV_TOOL_DIR`/`UV_TOOL_BIN_DIR` deployment form out of the README and Quickstart path, keeping it only as an advanced system-wide install option in `INSTALL.md`.
 
 ---
@@ -485,29 +521,30 @@ are still under development. See [implementation status](docs/development/versio
 
 The `Unreleased` comparison is a live `HEAD` link for navigation, not an immutable historical citation.
 
-[Unreleased]: https://github.com/CruxExperts/best-backup/compare/v2.0.2...HEAD
-[2.0.2]: https://github.com/CruxExperts/best-backup/compare/v2.0.1...v2.0.2
-[2.0.1]: https://github.com/CruxExperts/best-backup/compare/v2.0.0...v2.0.1
-[2.0.0]: https://github.com/CruxExperts/best-backup/compare/v1.8.6...v2.0.0
-[2.0.0-alpha.1]: https://github.com/CruxExperts/best-backup/compare/v1.8.6...v2.0.0-alpha.1
-[1.8.6]: https://github.com/CruxExperts/best-backup/compare/v1.8.5...v1.8.6
-[1.8.5]: https://github.com/CruxExperts/best-backup/compare/v1.8.4...v1.8.5
-[1.8.4]: https://github.com/CruxExperts/best-backup/compare/v1.8.3...v1.8.4
-[1.8.3]: https://github.com/CruxExperts/best-backup/compare/v1.8.2...v1.8.3
-[1.8.2]: https://github.com/CruxExperts/best-backup/compare/v1.8.1...v1.8.2
-[1.8.1]: https://github.com/CruxExperts/best-backup/compare/v1.8.0...v1.8.1
-[1.8.0]: https://github.com/CruxExperts/best-backup/compare/v1.7.0...v1.8.0
-[1.7.0]: https://github.com/CruxExperts/best-backup/compare/v1.6.0...v1.7.0
-[1.6.0]: https://github.com/CruxExperts/best-backup/compare/v1.5.0...v1.6.0
-[1.5.0]: https://github.com/CruxExperts/best-backup/compare/v1.4.0...v1.5.0
-[1.4.0]: https://github.com/CruxExperts/best-backup/compare/v1.3.3...v1.4.0
-[1.3.3]: https://github.com/CruxExperts/best-backup/compare/v1.3.2...v1.3.3
-[1.3.2]: https://github.com/CruxExperts/best-backup/compare/v1.3.1...v1.3.2
-[1.3.1]: https://github.com/CruxExperts/best-backup/compare/v1.3.0...v1.3.1
-[1.3.0]: https://github.com/CruxExperts/best-backup/compare/v1.2.1...v1.3.0
-[1.2.1]: https://github.com/CruxExperts/best-backup/compare/v1.2.0...v1.2.1
-[1.2.0]: https://github.com/CruxExperts/best-backup/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/CruxExperts/best-backup/releases/tag/v1.1.0
+[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.3...HEAD
+[2.0.3]: https://github.com/CruxExperts/BestBackup/compare/v2.0.2...v2.0.3
+[2.0.2]: https://github.com/CruxExperts/BestBackup/compare/v2.0.1...v2.0.2
+[2.0.1]: https://github.com/CruxExperts/BestBackup/compare/v2.0.0...v2.0.1
+[2.0.0]: https://github.com/CruxExperts/BestBackup/compare/v1.8.6...v2.0.0
+[2.0.0-alpha.1]: https://github.com/CruxExperts/BestBackup/compare/v1.8.6...v2.0.0-alpha.1
+[1.8.6]: https://github.com/CruxExperts/BestBackup/compare/v1.8.5...v1.8.6
+[1.8.5]: https://github.com/CruxExperts/BestBackup/compare/v1.8.4...v1.8.5
+[1.8.4]: https://github.com/CruxExperts/BestBackup/compare/v1.8.3...v1.8.4
+[1.8.3]: https://github.com/CruxExperts/BestBackup/compare/v1.8.2...v1.8.3
+[1.8.2]: https://github.com/CruxExperts/BestBackup/compare/v1.8.1...v1.8.2
+[1.8.1]: https://github.com/CruxExperts/BestBackup/compare/v1.8.0...v1.8.1
+[1.8.0]: https://github.com/CruxExperts/BestBackup/compare/v1.7.0...v1.8.0
+[1.7.0]: https://github.com/CruxExperts/BestBackup/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/CruxExperts/BestBackup/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/CruxExperts/BestBackup/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/CruxExperts/BestBackup/compare/v1.3.3...v1.4.0
+[1.3.3]: https://github.com/CruxExperts/BestBackup/compare/v1.3.2...v1.3.3
+[1.3.2]: https://github.com/CruxExperts/BestBackup/compare/v1.3.1...v1.3.2
+[1.3.1]: https://github.com/CruxExperts/BestBackup/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/CruxExperts/BestBackup/compare/v1.2.1...v1.3.0
+[1.2.1]: https://github.com/CruxExperts/BestBackup/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/CruxExperts/BestBackup/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/CruxExperts/BestBackup/releases/tag/v1.1.0
 
 <!-- project-footer:start -->
 
@@ -515,7 +552,7 @@ The `Unreleased` comparison is a live `HEAD` link for navigation, not an immutab
 
 <p align="center">
 Slavic Kozyuk<br>
-&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/best-backup/blob/main/LICENSE">MIT License</a>
+&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/BestBackup/blob/main/LICENSE">MIT License</a>
 </p>
 
 <!-- project-footer:end -->

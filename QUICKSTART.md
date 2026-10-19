@@ -1,147 +1,127 @@
-# Version 2 stable quick start
+# Your first backup and verified restore
 
-This guide creates an encrypted local restic repository, copies a successful snapshot to an independent repository, and verifies a restore into a new directory. It uses strict JSON policy and private host bindings. Stable v2.0.2 covers the tested local/file, selected database, headless dashboard, and AMD64 Ubuntu paths; review the [release evidence and limits](docs/development/version-2.md) before using real data.
+This guide covers v2.0.3 and its schema-3 policy. For an older v2.0.2 installation, use its [versioned quick start](https://github.com/CruxExperts/BestBackup/blob/v2.0.2/QUICKSTART.md) until you migrate. Keep an independently retrievable copy of each repository password.
 
-## Requirements
+## Start with the guided dashboard
 
-- Python 3.12 or newer and `restic` on `PATH`.
-- Read access to the source paths and write access to the repository and state locations.
-- `openssl` for the example password generation.
-- A second local storage location for an independent replica. B2/AWS configurations are available but not production-qualified.
-
-Docker, `rsync`, and `tar` are needed only for the retained 1.x Docker/filesystem commands. Native database capture and restore have separate client requirements; see [version 2 details](docs/development/version-2.md).
-
-## Create private paths and passwords
-
-The example uses user-owned paths. Adjust them for the account that runs bbackup. Keep source data, repositories, passwords, and state separate.
+Install Python 3.12+, uv, and restic, then use the development environment described in [INSTALL.md](INSTALL.md):
 
 ```bash
-install -d -m 700 \
-  "$HOME/.config/bbackup" \
-  "$HOME/.local/state/bbackup" \
-  "$HOME/.local/share/bbackup" \
-  "$HOME/backup-local" \
-  "$HOME/backup-replica"
-
-umask 077
-openssl rand -hex 32 > "$HOME/.local/share/bbackup/local.password"
-openssl rand -hex 32 > "$HOME/.local/share/bbackup/replica.password"
-chmod 600 "$HOME/.local/share/bbackup/"*.password
+uv sync --locked
+uv run bbackup production tui
 ```
 
-Store each password file outside captured sources and repositories. Keep an independent recovery copy of both passwords. A recovery kit can contain the repository password, but creating that kit on the protected host does not establish off-host custody.
+Setup walks through four short steps:
 
-## Write portable policy
+1. **Sources:** choose an existing folder and name the backup job. Hidden files are included.
+2. **Encrypted storage:** choose a local repository and password-file path. An additional local repository is optional. Setup creates missing password files privately after review.
+3. **Schedule:** choose a systemd calendar expression and the maximum seconds for each capture or copy. The default is daily and 3,600 seconds per stage.
+4. **Review and enroll:** approve the source and storage mappings for this machine and user. Existing configuration files are never replaced.
 
-Save this as `~/.config/bbackup/config.json`, replacing `/srv/documents` with an existing absolute source path:
+Every field has a persistent label. Hover for help, or focus a field and press `F1`. Invalid inputs stay in the form so you can correct them. Advanced JSON remains available.
+
+From Overview, choose **Set up storage**. Initialize the local repository first; initialize an optional replica with the local repository as its source. Choose **Run first backup**, review the selected job, and run it once. After success, select a snapshot and choose **Restore** with a new absolute destination folder.
+
+> [!IMPORTANT]
+> A second directory on the same host does not establish independent host-loss recovery. Copy repository passwords to independently retrievable encrypted or offline storage. Never store the only password copy inside the repository it unlocks.
+
+## Prefer the command line?
+
+These commands use the same enrolled default configuration as the dashboard:
+
+```bash
+uv run bbackup production doctor
+uv run bbackup production repositories init --name local
+uv run bbackup production jobs run --name daily
+```
+
+If you configured the optional replica, initialize it before running the job:
+
+```bash
+uv run bbackup production repositories init --name replica --source local
+```
+
+Keep the full snapshot IDs returned by successful capture and copy operations. A local capture can succeed while a replica fails; the command returns a nonzero result with each destination's outcome. Inspect failed or uncertain targets before another attempt.
+
+Check the replica, then restore its full snapshot ID into a new folder:
+
+```bash
+uv run bbackup production repositories check --name replica
+uv run bbackup production restore --repository replica \
+  --snapshot FULL_DESTINATION_SNAPSHOT_ID --target "$HOME/restore-test"
+```
+
+The restore target must not exist or overlap source, repository, password, or state paths. File verification does not prove application startup or complete machine recovery.
+
+## Policy you can move, bindings that stay private
+
+Schema 3 keeps source identity and job intent in portable policy:
 
 ```json
 {
-  "schema_version": 2,
-  "repositories": [
-    {"name": "local", "role": "local"},
-    {"name": "replica", "role": "replica"}
-  ],
-  "sources": [
-    {"name": "documents", "kind": "files", "paths": ["/srv/documents"]}
-  ],
-  "jobs": [
-    {"name": "daily", "repository": "local", "sources": ["documents"], "replicas": ["replica"]}
-  ]
+  "schema_version": 3,
+  "repositories": [{"name": "local", "role": "local"}],
+  "sources": [{"name": "documents", "kind": "files"}],
+  "jobs": [{"name": "daily", "repository": "local", "sources": ["documents"], "schedule": "daily", "timeout_seconds": 3600}]
 }
 ```
 
-Policy names repositories and sources. It contains no passwords or cloud credentials.
+Private bindings resolve those names to actual paths and credential-file references. This example is illustrative; replace each path with an absolute path for the executing account:
 
-## Write host-private bindings
-
-Create `~/.config/bbackup/bindings.json` with absolute paths for the account that runs bbackup. The shell expands `$HOME` while writing the file:
-
-```bash
-cat > "$HOME/.config/bbackup/bindings.json" <<JSON
+```json
 {
-  "schema_version": 2,
-  "state_dir": "$HOME/.local/state/bbackup",
+  "schema_version": 3,
+  "state_dir": "/private/state/bbackup",
   "repositories": {
-    "local": {
-      "repository": "$HOME/backup-local",
-      "password_file": "$HOME/.local/share/bbackup/local.password"
-    },
-    "replica": {
-      "repository": "$HOME/backup-replica",
-      "password_file": "$HOME/.local/share/bbackup/replica.password"
-    }
-  }
+    "local": {"repository": "/backup/local", "password_file": "/private/keys/local.password"}
+  },
+  "source_bindings": {"documents": {"paths": ["/srv/documents"]}}
 }
-JSON
-chmod 600 "$HOME/.config/bbackup/bindings.json"
 ```
 
-Bindings are machine-specific and must remain private. The state directory must be private to its owner. Use the same state directory for every bbackup process that accesses these repositories.
-
-For an unqualified cloud replica, replace its `repository` value with the provider's restic repository identifier and provide credentials through the supervised process environment. Keep credentials out of the JSON file and URL. Do not rely on B2/AWS for production backups; see the [cloud storage guide](docs/cloud-storage.md).
-
-## Initialize and run a job
-
-Validate configured bindings and check for restic:
+Bindings and password files must be owner-only. Enrollment binds the exact policy and bindings to this machine and user. Copying them to another machine does not authorize execution there. Validated dashboard/CLI saves refresh enrollment automatically; manual edits require one explicit review and enrollment:
 
 ```bash
-bbackup production --config "$HOME/.config/bbackup/config.json" \
-  --bindings "$HOME/.config/bbackup/bindings.json" doctor
+uv run bbackup production service enroll
 ```
 
-Initialize each repository. The replica copies the source repository's chunker settings, while its password remains independent:
+For noninteractive new setup, supply reviewed candidate files using `setup --configuration-file POLICY --bindings-file BINDINGS`. This enrolls the candidates but does not initialize repositories or activate a schedule.
+
+## Migrate an existing schema-2 configuration
+
+Open the dashboard with the existing paths and choose **Migrate and enroll**, or run:
 
 ```bash
-bbackup production --config "$HOME/.config/bbackup/config.json" \
-  --bindings "$HOME/.config/bbackup/bindings.json" repositories init --name local
-bbackup production --config "$HOME/.config/bbackup/config.json" \
-  --bindings "$HOME/.config/bbackup/bindings.json" repositories init --name replica --source local
+uv run bbackup production --config config.json --bindings bindings.json config migrate
 ```
 
-Run the configured job:
+Migration writes enrolled sibling `config.v3.json` and `bindings.v3.json` files. Original bytes remain untouched. Use the returned paths for explicitly named configurations. The default-path workflow recognizes a valid locally enrolled migrated pair on later launches.
+
+## Apply a schedule deliberately
+
+Render the selected job's units for review:
 
 ```bash
-bbackup production --config "$HOME/.config/bbackup/config.json" \
-  --bindings "$HOME/.config/bbackup/bindings.json" jobs run --name daily
+uv run bbackup production service render --name daily \
+  --executable "$PWD/.venv/bin/bbackup"
 ```
 
-The command captures locally, records a successful full snapshot ID, then copies it to each declared replica. Save the full destination snapshot ID from the result. A failed or interrupted mutation may require read-only inspection and explicit reconciliation before another attempt.
-
-## Check and restore
-
-Check a repository's data:
+Install the reviewed user-level units and activate their exact timer:
 
 ```bash
-bbackup production --config "$HOME/.config/bbackup/config.json" \
-  --bindings "$HOME/.config/bbackup/bindings.json" repositories check --name replica
+uv run bbackup production service install --name daily \
+  --executable "$PWD/.venv/bin/bbackup" --activate
 ```
 
-Restore using the full snapshot ID returned for `replica` and a new absolute target directory:
+Units are installed under an absolute `$XDG_CONFIG_HOME/systemd/user`, or `~/.config/systemd/user` when that variable is unset or relative. Use the same configuration environment as your user systemd manager. Parent traversal and symbolic-link ancestors are refused.
 
-```bash
-bbackup production --config "$HOME/.config/bbackup/config.json" \
-  --bindings "$HOME/.config/bbackup/bindings.json" restore \
-  --repository replica --snapshot FULL_DESTINATION_SNAPSHOT_ID \
-  --target "$HOME/restore-test"
-```
+Omit `--activate` to install disabled units. The command never enables lingering, installs a system-wide service, or elevates privileges. User timers require an available user systemd manager; boot operation may require administrator-managed lingering. A differing existing unit is preserved for review. [Installation](INSTALL.md#optional-systemd-scheduling) documents qualification limits.
 
-The target must not already exist and must not overlap a source, repository, password, or state path. The restore verifies file data; it does not start applications or validate database behavior. Use an isolated test target before relying on any recovery process.
+Persistent timers can catch up after an idle interruption. An interrupted mutation remains uncertain and blocks automatic replay until explicit reconciliation. Retention remains a separate reviewed action; scheduling does not silently prune data.
 
-## Mouse and agent operation
+## Existing Docker and YAML users
 
-Open the dashboard with:
-
-```bash
-bbackup production --config "$HOME/.config/bbackup/config.json" \
-  --bindings "$HOME/.config/bbackup/bindings.json" tui
-```
-
-For unattended jobs and agents, use the strict `--input-json` interface. It rejects duplicate JSON fields and unknown command fields, and returns a versioned JSON envelope. Start with the [agent integration guide](docs/AGENT_INTEGRATION.md); it documents schemas, bounded run history, and uncertain-operation reconciliation.
-
-## Legacy 1.x commands
-
-The 1.x command family remains available for existing Docker and YAML configurations. Use `bbman setup` and `bbackup backup` only for that retained workflow. Its configuration and encryption settings do not configure the v2 production interface. See [legacy management](docs/management.md).
+The retained 1.x commands use their own configuration. Legacy Docker restores require unused container/volume names; bind-mounted container restoration is refused. SFTP requires a previously trusted host key. See [legacy management](docs/management.md) and [encryption compatibility](docs/encryption.md).
 
 <!-- project-footer:start -->
 
@@ -149,7 +129,7 @@ The 1.x command family remains available for existing Docker and YAML configurat
 
 <p align="center">
 Slavic Kozyuk<br>
-&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/best-backup/blob/main/LICENSE">MIT License</a>
+&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/BestBackup/blob/main/LICENSE">MIT License</a>
 </p>
 
 <!-- project-footer:end -->

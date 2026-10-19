@@ -1,30 +1,39 @@
 # Documentation
 
-This index separates the selected stable v2.0.2 tested scope from the retained 1.x management workflow. Start with the root [README](../README.md), then choose the guide for your task.
+bbackup is for Linux administrators, homelab and self-hosted operators, and small infrastructure teams who need encrypted local backups, verified file restores, and visible scheduled jobs. Choose a guide by the work you are doing.
 
-## Start using bbackup
+These guides describe v2.0.3. The [qualification record](development/version-2.md) is the authority for the exact qualified scope, version-specific evidence, and remaining limits; an implemented path alone does not establish support. Operators still using v2.0.2 can follow its [versioned documentation](https://github.com/CruxExperts/BestBackup/tree/v2.0.2/docs) until they migrate.
 
-| Guide | Use it for |
+The [release dependency evidence](development/release-dependencies.json) records the reviewed versions, source timestamps, lock hash, and audit limits.
+
+## Choose a starting point
+
+| If you need to... | Start here |
 |:--|:--|
-| [QUICKSTART.md](../QUICKSTART.md) | Strict v2 configuration, private bindings, local capture, replicas, and restore |
-| [INSTALL.md](../INSTALL.md) | Prerequisites, pinned releases, current release status, and development setup |
-| [cloud-storage.md](cloud-storage.md) | Implemented B2/AWS paths, not production-qualified; provider and protection limits |
-| [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) | Machine-readable schemas, JSON envelopes, bounded run records, and safe restore/reconciliation |
-| [management.md](management.md) | Retained 1.x `bbman`, Docker, and YAML management commands; native v2 Docker unqualified |
+| Install bbackup and run your first backup | [Installation](../INSTALL.md) and the [quick start](../QUICKSTART.md) |
+| Migrate an existing schema-2 setup | [Quick start: migrate an existing configuration](../QUICKSTART.md#migrate-an-existing-schema-2-configuration) |
+| Maintain an older Docker/YAML workflow | [Legacy management](management.md) and [encryption compatibility](encryption.md) |
+| Schedule jobs or integrate with scripts and agents | [Quick start: apply a schedule](../QUICKSTART.md#apply-a-schedule-deliberately), [agent integration](AGENT_INTEGRATION.md), and the [production command reference](production-cli.md) |
+| Check what v2.0.3 qualifies | [Version 2 qualification record](development/version-2.md) |
+
+## Operator references
+
+| Reference | Use it for |
+|:--|:--|
+| [architecture.md](architecture.md) | Shared operations, durable state, and safety boundaries |
+| [cloud-storage.md](cloud-storage.md) | Implemented B2/AWS paths and their qualification limits |
 | [encryption.md](encryption.md) | Restic password custody, deferred off-host custody, and legacy file encryption |
-| [cli-skills.md](cli-skills.md) | Generated command and agent skills catalog |
+| [cli-skills.md](cli-skills.md) | Generated command and agent-skills catalog |
 
-## Architecture and release evidence
+## Maintainer references
 
-| Reference | Contents |
+| Reference | Use it for |
 |:--|:--|
-| [development/version-2.md](development/version-2.md) | Selected stable-release scope, qualification evidence, deferred assurances, and historical alpha1 record |
-| [production-cli.md](production-cli.md) | Generated v2 command reference and input schemas |
-| [architecture.md](architecture.md) | v2 operation service, tested support boundary, storage model, and retained 1.x implementation |
 | [VERSIONING.md](VERSIONING.md) | Canonical package version, release tags, and validation |
 | [PUBLISHING_CHECKLIST.md](PUBLISHING_CHECKLIST.md) | Community files and release readiness checks |
+| [development/version-2.md](development/version-2.md) | Qualification evidence, candidate results, and deferred assurance |
+| [development/release-dependencies.json](development/release-dependencies.json) | Reviewed package versions and dependency audit evidence |
 | [assets/README.md](assets/README.md) | Documentation asset inventory and visual standards |
-| [prompts/bootstrap-planning-agent.md](prompts/bootstrap-planning-agent.md) | Maintainer planning prompt for repository work |
 
 ## Documentation standards
 
@@ -34,7 +43,7 @@ This index separates the selected stable v2.0.2 tested scope from the retained 1
 - [GitHub Markdown source provenance](standards/github-markdown/github-markdown-source-provenance.md)
 - [GitHub Markdown provenance manifest](standards/github-markdown/github-markdown-provenance-manifest.json)
 
-Back to [README.md](../README.md).
+Back to the [project README](../README.md).
 
 <!-- project-footer:start -->
 
@@ -42,7 +51,7 @@ Back to [README.md](../README.md).
 
 <p align="center">
 Slavic Kozyuk<br>
-&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/best-backup/blob/main/LICENSE">MIT License</a>
+&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/BestBackup/blob/main/LICENSE">MIT License</a>
 </p>
 
 <!-- project-footer:end -->

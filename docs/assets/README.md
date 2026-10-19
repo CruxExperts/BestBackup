@@ -1,11 +1,34 @@
 # Documentation assets
 
-This directory stores GitHub-facing visual assets referenced by the project documentation.
+Active README artwork follows the bbackup forest-green identity and keeps all product claims in readable documentation. Generated artwork is illustrative; the dashboard preview is a real, sanitized headless capture.
 
-| File | Purpose | Provenance and license |
-|:--|:--|:--|
-| `bbackup-banner.svg` | Editable README artwork: local encrypted snapshots and B2/S3 paths, with recovery limits explained in text | Original vector artwork, 2026 Crux Experts LLC. Embedded copyright, company URL, and private-asset notice. Rendered and visually checked headlessly. |
-| `bbackup-dashboard-preview.svg` | Real Textual headless screenshot of the preview empty state at 112 × 32 terminal cells | Generated from `bbackup/dashboard.py` with Textual `App.save_screenshot`; copyright and private-asset notice embedded. Empty fixture configuration, no host data. |
-| `bbackup-hero.png` | README hero image showing the Docker, filesystem, database, encryption, verification, and remote-storage backup pipeline | Generated project asset; source prompt, generator, and license record are not present in the repository. Treat it as project-local until a complete asset record is added. Native v2 Docker and B2/AWS are not production-qualified. |
+## Active assets
 
-Prefer Mermaid diagrams in Markdown for charts and process flows. Use bitmap assets when a visual overview improves first-read comprehension or when a diagram benefits from richer UI-style composition.
+- `bbackup-banner-v2.png`: wide README banner, generated with OpenAI's built-in image generation tool on 2026-10-17.
+- `bbackup-social-v2.png`: matching 2:1 master image, generated from the banner reference.
+- `bbackup-social-v2.jpg`: 1774×887 delivery encoding for GitHub social upload, under 1 MB. EXIF and XMP retain ownership and usage terms.
+- `bbackup-dashboard-preview.svg`: Textual headless dashboard capture, using fixture data only and illustrative capacity. Regenerate with
+  `uv run python scripts/generate_dashboard_preview.py` (requires restic).
+
+[provenance.json](provenance.json) records generation briefs, references, dimensions, original hashes, final hashes, and ownership for the generated images and delivery encoding. Copyright, company URL, creator, usage terms, and generator are embedded in PNG metadata. Metadata insertion preserves the generated pixel data.
+
+Validate active images with:
+
+```bash
+uv run python scripts/check_assets.py
+```
+
+GitHub requires a PNG, JPG, or GIF under 1 MB; the JPEG is the prepared upload asset.
+See [GitHub’s social preview guide](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/customizing-your-repositorys-social-media-preview).
+
+## Historical assets
+
+`bbackup-banner.svg` is the original editable vector banner. It is retained for provenance and is no longer the README hero. `bbackup-hero.png` is an older unused illustration whose source prompt and generation record are unavailable; do not reuse it as a qualified product diagram or infer a license from the code license.
+
+## Artwork terms
+
+Copyright © 2026 Crux Experts LLC. [https://www.cruxexperts.com/](https://www.cruxexperts.com/)
+
+Private asset. Property of Crux Experts LLC. Use, reproduction, modification, distribution, or publication without prior written permission is prohibited.
+
+These terms apply to original artwork. The repository's code retains its MIT license; third-party notices remain their owners' property.

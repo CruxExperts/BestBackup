@@ -89,13 +89,27 @@ bbackup production recovery b2-inspect --bucket BUCKET --prefix restic/
 
 By default it reads `B2_APPLICATION_KEY_ID` and `B2_APPLICATION_KEY` from the process environment. Optional `--key-id-env` and `--key-env` flags select different environment variable names; they never accept credential values. The response verifies bucket access and version listing, and reports the key's read/write capabilities, unsafe capabilities, and lifecycle conflicts. Capability fields do not establish a successful object write or restore. It always reports `protection_qualified: false`. Do not pass access-key values in command arguments or JSON input.
 
+## Development policy and enrollment
+
+The machine result envelope remains schema version 2. Configuration and private-binding documents use schema version 3 in the development checkout; these are separate versioned interfaces.
+
+Portable policy contains logical sources and job safety choices. Private `source_bindings` contain file paths and database/container selectors. Existing schema-2 files are inspection/migration inputs only. `config migrate` creates enrolled sibling `.v3.json` files without replacing originals; `setup --enroll` or `service enroll` explicitly approves a reviewed schema-3 pair on the current machine and user.
+
+Default paths resolve from an absolute `XDG_CONFIG_HOME`, or the current user's `.config/bbackup` directory. Explicit `--config` and `--bindings` override them. A valid locally enrolled migrated default pair is reused on later launches.
+
+The shared operation boundary verifies one bounded configuration snapshot and holds a policy lease throughout execution. Trusted configuration saves preserve previous bytes and refresh enrollment from the exact validated candidate; raw edits and imported bindings require enrollment again. Busy edits return promptly with unsaved text preserved. Error envelopes include actionable `schema_migration_required`, `enrollment_required`, `machine_identity_unavailable`, or `busy` codes where applicable.
+
+A job captures once, then attempts each independent replica once. Partial results retain local snapshot identity, successful copies, and destination failures in `data`; `success` is false and exit status is nonzero. Cancellation stops later dispatch. Failed destination writes remain subject to reconciliation; the read-only source lease does not unnecessarily block other destinations. No failed or uncertain mutation is automatically replayed.
+
+`timeout_seconds` is a positive job setting, default 3600, applied independently to native source capture, restic capture, and each copy. It is not a total job deadline. See the [generated command reference](production-cli.md) for the exact current schemas and field help.
+
 <!-- project-footer:start -->
 
 <br><br>
 
 <p align="center">
 Slavic Kozyuk<br>
-&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/best-backup/blob/main/LICENSE">MIT License</a>
+&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/BestBackup/blob/main/LICENSE">MIT License</a>
 </p>
 
 <!-- project-footer:end -->

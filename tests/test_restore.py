@@ -7,22 +7,43 @@ Last Updated: 2026-02-26
 """
 
 import json
+import io
+import os
+import stat
 import tarfile
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from docker.errors import DockerException, APIError
+from docker.errors import DockerException, APIError, NotFound
 
-from bbackup.config import Config
+from bbackup.config import Config, EncryptionSettings
+from bbackup.encryption import EncryptionManager
 from bbackup.manifest import generate_backup_manifest
 from bbackup.restore import DockerRestore, list_volume_backup_names
+
+
+@pytest.fixture(autouse=True)
+def isolate_mocked_daemon_volume_leases(tmp_path, monkeypatch):
+    # Each test models its own Docker daemon; identical fixture volume names
+    # must not contend across xdist workers. Keep the real lease implementation.
+    from bbackup import restore
+    original = restore._volume_restore_lock
+    monkeypatch.setattr(restore, "_volume_restore_lock", lambda name: original(f"{tmp_path}:{name}"))
 
 
 def make_restore(mock_docker_client):
     cfg = Config(config_path=None)
     return DockerRestore(cfg)
+
+
+def configure_owned_volume(client, volume=None):
+    def create(*, name, labels):
+        created = volume or MagicMock()
+        created.attrs = {"Name": name, "Labels": labels}
+        return created
+    client.volumes.create.side_effect = create
 
 
 def write_container_config(backup_path: Path, name: str, image="nginx:latest"):
@@ -139,17 +160,18 @@ class TestRestoreContainerConfig:
         dr = make_restore(mock_docker_client)
         assert dr.restore_container_config("web", tmp_path) is False
 
-    def test_existing_container_stopped_and_removed(self, mock_docker_client, tmp_path):
+    def test_existing_container_is_preserved_and_restore_refused(self, mock_docker_client, tmp_path):
         write_container_config(tmp_path, "web")
         existing = MagicMock()
         mock_docker_client.containers.get.return_value = existing
         mock_docker_client.containers.create.return_value = MagicMock()
 
         dr = make_restore(mock_docker_client)
-        dr.restore_container_config("web", tmp_path)
+        assert dr.restore_container_config("web", tmp_path) is False
 
-        existing.stop.assert_called_once()
-        existing.remove.assert_called_once()
+        existing.stop.assert_not_called()
+        existing.remove.assert_not_called()
+        mock_docker_client.containers.create.assert_not_called()
 
     def test_env_and_ports_and_restart_extracted(self, mock_docker_client, tmp_path):
         configs_dir = tmp_path / "configs"
@@ -165,7 +187,7 @@ class TestRestoreContainerConfig:
         }
         (configs_dir / "web_config.json").write_text(json.dumps(cfg_data))
 
-        mock_docker_client.containers.get.side_effect = APIError("not found")
+        mock_docker_client.containers.get.side_effect = NotFound("not found")
         created = MagicMock()
         mock_docker_client.containers.create.return_value = created
 
@@ -188,7 +210,7 @@ class TestRestoreContainerConfig:
         }
         (configs_dir / "web_config.json").write_text(json.dumps(cfg_data))
 
-        mock_docker_client.containers.get.side_effect = APIError("not found")
+        mock_docker_client.containers.get.side_effect = NotFound("not found")
         mock_docker_client.containers.create.return_value = MagicMock()
         network = MagicMock()
         network.connect.side_effect = APIError("connect fail")
@@ -205,6 +227,26 @@ class TestRestoreContainerConfig:
         result = dr.restore_container_config("web", tmp_path)
         assert result is False
 
+    def test_container_lookup_api_error_is_not_treated_as_absent(self, mock_docker_client, tmp_path):
+        write_container_config(tmp_path, "web")
+        mock_docker_client.containers.get.side_effect = APIError("daemon unavailable")
+        dr = make_restore(mock_docker_client)
+
+        assert dr.restore_container_config("web", tmp_path) is False
+        mock_docker_client.containers.create.assert_not_called()
+
+    def test_bind_mount_restore_is_refused(self, mock_docker_client, tmp_path):
+        write_container_config(tmp_path, "web")
+        config_path = tmp_path / "configs" / "web_config.json"
+        data = json.loads(config_path.read_text())
+        data["Mounts"] = [{"Type": "bind", "Source": "/srv/live", "Destination": "/data"}]
+        config_path.write_text(json.dumps(data))
+
+        dr = make_restore(mock_docker_client)
+        assert dr.restore_container_config("web", tmp_path, new_name="web_restore") is False
+        mock_docker_client.containers.get.assert_not_called()
+        mock_docker_client.containers.create.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # TestRestoreVolume
@@ -216,12 +258,20 @@ class TestRestoreVolume:
         dr = make_restore(mock_docker_client)
         assert dr.restore_volume("myvolume", tmp_path) is False
 
+    def test_volume_lookup_api_error_is_not_treated_as_absent(self, mock_docker_client, tmp_path):
+        (tmp_path / "volumes" / "myvolume").mkdir(parents=True)
+        mock_docker_client.volumes.get.side_effect = APIError("daemon unavailable")
+        dr = make_restore(mock_docker_client)
+
+        assert dr.restore_volume("myvolume", tmp_path) is False
+        mock_docker_client.volumes.create.assert_not_called()
+
     def test_new_name_used_for_target(self, mock_docker_client, mock_subprocess, tmp_path):
         mock_run, _ = mock_subprocess
         vol_dir = tmp_path / "volumes" / "myvolume"
         vol_dir.mkdir(parents=True)
-        mock_docker_client.volumes.get.side_effect = APIError("not found")
-        mock_docker_client.volumes.create.return_value = MagicMock()
+        mock_docker_client.volumes.get.side_effect = NotFound("not found")
+        configure_owned_volume(mock_docker_client)
         temp_container = MagicMock()
         mock_docker_client.containers.run.return_value = temp_container
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
@@ -233,27 +283,24 @@ class TestRestoreVolume:
         assert create_call.kwargs.get("name") == "myvolume_restored" or \
                (create_call.args and create_call.args[0] == "myvolume_restored")
 
-    def test_existing_volume_removed(self, mock_docker_client, mock_subprocess, tmp_path):
-        mock_run, _ = mock_subprocess
+    def test_existing_volume_is_preserved_and_restore_refused(self, mock_docker_client, mock_subprocess, tmp_path):
         vol_dir = tmp_path / "volumes" / "myvolume"
         vol_dir.mkdir(parents=True)
         existing_vol = MagicMock()
         mock_docker_client.volumes.get.return_value = existing_vol
-        mock_docker_client.volumes.create.return_value = MagicMock()
-        temp_container = MagicMock()
-        mock_docker_client.containers.run.return_value = temp_container
-
         dr = make_restore(mock_docker_client)
-        dr.restore_volume("myvolume", tmp_path)
+        assert dr.restore_volume("myvolume", tmp_path) is False
 
-        existing_vol.remove.assert_called_once()
+        existing_vol.remove.assert_not_called()
+        mock_docker_client.volumes.create.assert_not_called()
+        mock_docker_client.containers.run.assert_not_called()
 
     def test_docker_cp_called(self, mock_docker_client, mock_subprocess, tmp_path):
         mock_run, _ = mock_subprocess
         vol_dir = tmp_path / "volumes" / "myvolume"
         vol_dir.mkdir(parents=True)
-        mock_docker_client.volumes.get.side_effect = APIError("not found")
-        mock_docker_client.volumes.create.return_value = MagicMock()
+        mock_docker_client.volumes.get.side_effect = NotFound("not found")
+        configure_owned_volume(mock_docker_client)
         temp_container = MagicMock()
         mock_docker_client.containers.run.return_value = temp_container
 
@@ -267,6 +314,21 @@ class TestRestoreVolume:
         ]
         assert len(cp_calls) >= 1
 
+    def test_concurrently_created_foreign_volume_is_never_copied_or_removed(
+        self, mock_docker_client, mock_subprocess, tmp_path
+    ):
+        (tmp_path / "volumes" / "myvolume").mkdir(parents=True)
+        mock_docker_client.volumes.get.side_effect = NotFound("not found")
+        foreign = MagicMock()
+        foreign.attrs = {"Name": "myvolume", "Labels": {}}
+        mock_docker_client.volumes.create.return_value = foreign
+        dr = make_restore(mock_docker_client)
+
+        assert dr.restore_volume("myvolume", tmp_path) is False
+        foreign.remove.assert_not_called()
+        mock_docker_client.containers.run.assert_not_called()
+        mock_subprocess[0].assert_not_called()
+
     def test_compressed_volume_archive_restores(self, mock_docker_client, mock_subprocess, tmp_path):
         mock_run, _ = mock_subprocess
         source_dir = tmp_path / "source" / "myvolume"
@@ -277,8 +339,8 @@ class TestRestoreVolume:
         with tarfile.open(volumes_dir / "myvolume.tar.gz", "w:gz") as tar:
             tar.add(source_dir, arcname="myvolume")
 
-        mock_docker_client.volumes.get.side_effect = APIError("not found")
-        mock_docker_client.volumes.create.return_value = MagicMock()
+        mock_docker_client.volumes.get.side_effect = NotFound("not found")
+        configure_owned_volume(mock_docker_client)
         temp_container = MagicMock()
         mock_docker_client.containers.run.return_value = temp_container
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
@@ -291,7 +353,57 @@ class TestRestoreVolume:
             if c.args and "docker" in c.args[0] and "cp" in c.args[0]
         ]
         assert len(cp_calls) == 1
-        assert "myvolume" in cp_calls[0].args[0][2]
+        assert cp_calls[0].args[0][2] == "-a"
+        assert "myvolume" in cp_calls[0].args[0][3]
+
+    def test_dot_root_volume_archive_preserves_root_mode_under_wrapper(
+        self, mock_docker_client, mock_subprocess, tmp_path
+    ):
+        mock_run, _ = mock_subprocess
+        volumes_dir = tmp_path / "volumes"
+        volumes_dir.mkdir()
+        archive = volumes_dir / "myvolume.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            root = tarfile.TarInfo(".")
+            root.type = tarfile.DIRTYPE
+            root.mode = 0o755
+            root.uid, root.gid = os.geteuid(), os.getegid()
+            tar.addfile(root)
+            item = tarfile.TarInfo("data.txt")
+            item.uid, item.gid = os.geteuid(), os.getegid()
+            item.size = len(b"payload")
+            tar.addfile(item, io.BytesIO(b"payload"))
+
+        mock_docker_client.volumes.get.side_effect = NotFound("not found")
+        configure_owned_volume(mock_docker_client)
+        mock_docker_client.containers.run.return_value = MagicMock()
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        from bbackup.archive import extract_archive_safely as extract_original
+
+        observed_modes = []
+
+        def inspect_wrapper(tar, destination, **kwargs):
+            wrapper = Path(destination).parent
+            assert stat.S_IMODE(wrapper.stat().st_mode) == 0o700
+            extract_original(tar, destination, **kwargs)
+            observed_modes.append((
+                stat.S_IMODE(wrapper.stat().st_mode),
+                stat.S_IMODE(Path(destination).stat().st_mode),
+            ))
+
+        with patch("bbackup.restore.extract_archive_safely", side_effect=inspect_wrapper):
+            dr = make_restore(mock_docker_client)
+            assert dr.restore_volume("myvolume", tmp_path) is True
+
+        assert observed_modes == [(0o700, 0o755)]
+        copy_calls = [
+            call.args[0]
+            for call in mock_run.call_args_list
+            if call.args and call.args[0][:2] == ["docker", "cp"]
+        ]
+        assert len(copy_calls) == 1
+        assert "/payload/." in copy_calls[0][3]
 
     def test_restore_volume_returns_false_when_docker_cp_fails(
         self, mock_docker_client, mock_subprocess, tmp_path
@@ -299,36 +411,33 @@ class TestRestoreVolume:
         mock_run, _ = mock_subprocess
         vol_dir = tmp_path / "volumes" / "myvolume"
         vol_dir.mkdir(parents=True)
-        mock_docker_client.volumes.get.side_effect = APIError("not found")
-        mock_docker_client.volumes.create.return_value = MagicMock()
+        mock_docker_client.volumes.get.side_effect = NotFound("not found")
+        created_volume = MagicMock()
+        configure_owned_volume(mock_docker_client, created_volume)
         temp_container = MagicMock()
         mock_docker_client.containers.run.return_value = temp_container
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="copy failed")
 
         dr = make_restore(mock_docker_client)
         assert dr.restore_volume("myvolume", tmp_path) is False
+        created_volume.remove.assert_called_once()
         temp_container.stop.assert_called_once()
         temp_container.remove.assert_called_once()
 
-    def test_existing_volume_preserved_when_preflight_copy_fails(
+    def test_existing_volume_is_not_staged_or_replaced(
         self, mock_docker_client, mock_subprocess, tmp_path
     ):
-        mock_run, _ = mock_subprocess
         vol_dir = tmp_path / "volumes" / "myvolume"
         vol_dir.mkdir(parents=True)
         existing_vol = MagicMock()
-        staging_vol = MagicMock()
         mock_docker_client.volumes.get.return_value = existing_vol
-        mock_docker_client.volumes.create.return_value = staging_vol
-        temp_container = MagicMock()
-        mock_docker_client.containers.run.return_value = temp_container
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="copy failed")
 
         dr = make_restore(mock_docker_client)
         assert dr.restore_volume("myvolume", tmp_path) is False
 
         existing_vol.remove.assert_not_called()
-        staging_vol.remove.assert_called_once()
+        mock_docker_client.volumes.create.assert_not_called()
+        mock_docker_client.containers.run.assert_not_called()
 
 
 class TestVolumeBackupDiscovery:
@@ -438,7 +547,7 @@ class TestRestoreBackup:
         mock_run, _ = mock_subprocess
         vol_dir = tmp_path / "volumes" / "data"
         vol_dir.mkdir(parents=True)
-        mock_docker_client.volumes.get.side_effect = APIError("not found")
+        mock_docker_client.volumes.get.side_effect = NotFound("not found")
         mock_docker_client.volumes.create.return_value = MagicMock()
         temp_container = MagicMock()
         mock_docker_client.containers.run.return_value = temp_container
@@ -470,7 +579,7 @@ class TestRestoreBackup:
 
         def volumes_get_side_effect(name):
             call_count[0] += 1
-            raise APIError("not found")
+            raise NotFound("not found")
 
         mock_docker_client.volumes.get.side_effect = volumes_get_side_effect
 
@@ -551,15 +660,15 @@ class TestDecryptBackupDirectory:
         result = dr.decrypt_backup_directory(tmp_path)
         assert result == tmp_path
 
-    def test_encryption_disabled_returns_original_with_warning(self, mock_docker_client, tmp_path):
+    def test_encryption_disabled_fails_closed(self, mock_docker_client, tmp_path):
         (tmp_path / "encryption_metadata.json").write_text("{}")
         cfg = Config(config_path=None)
         cfg.encryption.enabled = False
         dr = DockerRestore(cfg)
-        result = dr.decrypt_backup_directory(tmp_path)
-        assert result == tmp_path
+        with pytest.raises(RuntimeError, match="disabled"):
+            dr.decrypt_backup_directory(tmp_path)
 
-    def test_decryption_fails_returns_original(self, mock_docker_client, tmp_path):
+    def test_decryption_fails_closed(self, mock_docker_client, tmp_path):
         (tmp_path / "encryption_metadata.json").write_text("{}")
         cfg = Config(config_path=None)
         cfg.encryption.enabled = True
@@ -567,11 +676,10 @@ class TestDecryptBackupDirectory:
 
         with patch("bbackup.restore.EncryptionManager") as mock_em:
             instance = MagicMock()
-            instance.decrypt_backup.return_value = tmp_path  # same path = failure
+            instance.decrypt_backup.side_effect = RuntimeError("bad key")
             mock_em.return_value = instance
-            result = dr.decrypt_backup_directory(tmp_path)
-
-        assert result == tmp_path
+            with pytest.raises(RuntimeError, match="Decryption failed"):
+                dr.decrypt_backup_directory(tmp_path)
 
     def test_decryption_succeeds_returns_new_path(self, mock_docker_client, tmp_path):
         (tmp_path / "encryption_metadata.json").write_text("{}")
@@ -588,3 +696,59 @@ class TestDecryptBackupDirectory:
             result = dr.decrypt_backup_directory(tmp_path)
 
         assert result == decrypted
+
+    def test_restore_cleans_successful_decryption_staging_root(self, mock_docker_client, tmp_path):
+        (tmp_path / "encryption_metadata.json").write_text("{}")
+        cfg = Config(config_path=None)
+        cfg.encryption.enabled = True
+        dr = DockerRestore(cfg)
+        private_root = tmp_path / "bbackup_decrypted_fixture"
+        decrypted = private_root / "tree"
+        decrypted.mkdir(parents=True, mode=0o700)
+
+        with patch("bbackup.restore.EncryptionManager") as mock_em:
+            mock_em.return_value.decrypt_backup.return_value = decrypted
+            result = dr.restore_backup(tmp_path, containers=None, volumes=None, networks=None)
+
+        assert result["errors"] == []
+        assert not private_root.exists()
+
+    def test_restore_backup_with_disabled_encryption_does_not_touch_docker(self, mock_docker_client, tmp_path):
+        (tmp_path / "encryption_metadata.json").write_text("{}")
+        write_container_config(tmp_path, "web")
+        dr = make_restore(mock_docker_client)
+
+        result = dr.restore_backup(tmp_path, containers=["web"], volumes=None, networks=None)
+
+        assert result["containers"] == {}
+        assert result["errors"]
+        mock_docker_client.containers.get.assert_not_called()
+        mock_docker_client.containers.create.assert_not_called()
+
+    def test_wrong_key_restore_fails_before_docker_mutation(self, mock_docker_client, tmp_path):
+        source = tmp_path / "backup_plain"
+        write_container_config(source, "web")
+        good_key = tmp_path / "good.key"
+        good_key.write_bytes(b"g" * 32)
+        good_settings = EncryptionSettings(
+            enabled=True,
+            method="symmetric",
+            symmetric={"key_file": str(good_key)},
+        )
+        encrypted = EncryptionManager(good_settings).encrypt_backup(source)
+        wrong_key = tmp_path / "wrong.key"
+        wrong_key.write_bytes(b"w" * 32)
+        cfg = Config(config_path=None)
+        cfg.encryption = EncryptionSettings(
+            enabled=True,
+            method="symmetric",
+            symmetric={"key_file": str(wrong_key)},
+        )
+        dr = DockerRestore(cfg)
+
+        result = dr.restore_backup(encrypted, containers=["web"], volumes=None, networks=None)
+
+        assert result["containers"] == {}
+        assert "decryption failed" in result["errors"][0].lower()
+        mock_docker_client.containers.get.assert_not_called()
+        mock_docker_client.containers.create.assert_not_called()

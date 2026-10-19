@@ -146,7 +146,16 @@ class RemoteStorageManager:
         try:
             # Setup SSH client
             ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            known_hosts_files = (
+                os.path.expanduser("~/.ssh/known_hosts"),
+                os.path.expanduser("~/.ssh/known_hosts2"),
+                "/etc/ssh/ssh_known_hosts",
+                "/etc/ssh/ssh_known_hosts2",
+            )
+            for known_hosts_file in known_hosts_files:
+                if os.path.isfile(known_hosts_file):
+                    ssh.load_system_host_keys(known_hosts_file)
+            ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
             
             # Load key file
             key_path = os.path.expanduser(remote.key_file) if remote.key_file else None

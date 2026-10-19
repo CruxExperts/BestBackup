@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from bbackup.models import Job
-from bbackup.scheduling import job_units, unit_templates
+from bbackup.scheduling import install_user_units, job_units, unit_templates
 
 
 def test_unit_templates_are_disabled_and_use_secure_daily_defaults() -> None:
@@ -55,3 +55,77 @@ def test_job_renderer_keeps_custom_schedule_and_shared_service_hardening() -> No
     assert "OnCalendar=weekly" in units["bbackup-nightly.timer"]
     assert "Unit=bbackup-nightly.service" in units["bbackup-nightly.timer"]
     assert "NoNewPrivileges=yes" in units["bbackup-nightly.service"]
+
+
+def test_user_install_requires_explicit_activation_and_preserves_existing_units(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    commands = []
+    options = []
+    def run(args, **kwargs):
+        commands.append(args)
+        options.append(kwargs)
+    monkeypatch.setattr("bbackup.scheduling.subprocess.run", run)
+    units = job_units(
+        Job(name="nightly", repository="primary", sources=("home",)),
+        executable=Path("/usr/bin/bbackup"), config=Path("/etc/bbackup/config.json"),
+        bindings=Path("/etc/bbackup/bindings.json"),
+    )
+    result = install_user_units(units)
+    assert result["activated"] is False
+    assert commands == [["systemctl", "--user", "daemon-reload"]]
+    directory = tmp_path / ".config" / "systemd" / "user"
+    assert directory.stat().st_mode & 0o077 == 0
+    assert (directory / "bbackup-nightly.service").read_text() == units["bbackup-nightly.service"]
+    commands.clear()
+    result = install_user_units(units, activate=True)
+    assert result["installed"] == []
+    assert all(kwargs.get("capture_output") and kwargs.get("text") for kwargs in options)
+    assert commands[-1] == ["systemctl", "--user", "enable", "--now", "bbackup-nightly.timer"]
+    (directory / "bbackup-nightly.timer").write_text("operator content")
+    commands.clear()
+    with pytest.raises(ValueError, match="differs"):
+        install_user_units(units, activate=True)
+    assert commands == []
+
+
+@pytest.mark.parametrize("xdg", ["absolute", "relative", "empty"])
+def test_user_install_honors_absolute_xdg_and_ignores_invalid_relative_value(tmp_path, monkeypatch, xdg):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    config = tmp_path / "config" if xdg == "absolute" else tmp_path / "home" / ".config"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config) if xdg == "absolute" else "relative" if xdg == "relative" else "")
+    monkeypatch.setattr("bbackup.scheduling.subprocess.run", lambda *args, **kwargs: None)
+    units = job_units(Job(name="daily", repository="primary", sources=("home",)),
+                      executable=Path("/usr/bin/bbackup"), config=Path("/etc/config.json"),
+                      bindings=Path("/etc/bindings.json"))
+    install_user_units(units)
+    assert (config / "systemd/user/bbackup-daily.timer").read_text() == units["bbackup-daily.timer"]
+    assert (config / "systemd/user").stat().st_mode & 0o077 == 0
+
+
+def test_user_install_rejects_symlink_inside_custom_xdg_ancestor(tmp_path, monkeypatch):
+    actual = tmp_path / "actual"
+    actual.mkdir()
+    (tmp_path / "alias").symlink_to(actual, target_is_directory=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "alias" / "config"))
+    commands = []
+    monkeypatch.setattr("bbackup.scheduling.subprocess.run", lambda *a, **kw: commands.append(a))
+    units = job_units(Job(name="daily", repository="primary", sources=("home",)),
+                      executable=Path("/usr/bin/bbackup"), config=Path("/etc/config.json"),
+                      bindings=Path("/etc/bindings.json"))
+    with pytest.raises(ValueError, match="without symbolic links"):
+        install_user_units(units)
+    assert not commands
+    assert not (actual / "config").exists()
+
+
+def test_user_install_rejects_parent_traversal_in_custom_xdg(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "alias" / ".." / "config"))
+    commands = []
+    monkeypatch.setattr("bbackup.scheduling.subprocess.run", lambda *a, **kw: commands.append(a))
+    units = job_units(Job(name="daily", repository="primary", sources=("home",)),
+                      executable=Path("/usr/bin/bbackup"), config=Path("/etc/config.json"),
+                      bindings=Path("/etc/bindings.json"))
+    with pytest.raises(ValueError, match="parent traversal"):
+        install_user_units(units)
+    assert not commands

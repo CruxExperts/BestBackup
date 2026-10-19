@@ -16,7 +16,7 @@ plan.
 
 Repository context:
 - Repo path: `<repo-root>`
-- GitHub remote: https://github.com/CruxExperts/best-backup.git
+- GitHub remote: https://github.com/CruxExperts/BestBackup.git
 - Primary package: bbackup/
 - CLI entry points: bbackup.py, bbman.py, bbackup/cli.py, bbackup/bbman_entry.py
 - Repo policy: AGENTS.md

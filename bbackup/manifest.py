@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Optional
 
 import bbackup
 
 from .config import BackupScope, FilesystemTarget
+from .config import open_private_file
 
 
 MANIFEST_NAME = "backup_manifest.json"
@@ -26,7 +28,11 @@ def _sha256(path: Path) -> str:
 
 def _iter_manifest_files(backup_dir: Path) -> Iterable[Path]:
     for path in sorted(backup_dir.rglob("*")):
-        if path.is_file() and path.name != MANIFEST_NAME:
+        try:
+            is_regular_file = stat.S_ISREG(path.lstat().st_mode)
+        except OSError:
+            is_regular_file = False
+        if is_regular_file and path.name != MANIFEST_NAME:
             yield path
 
 
@@ -97,7 +103,8 @@ def generate_backup_manifest(
     }
 
     manifest_path = backup_dir / MANIFEST_NAME
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    with open_private_file(manifest_path, "w", encoding="utf-8") as manifest_file:
+        manifest_file.write(json.dumps(manifest, indent=2, sort_keys=True))
     return manifest
 
 
@@ -105,8 +112,14 @@ def verify_backup_manifest(backup_dir: Path) -> List[str]:
     """Return manifest verification errors. Missing manifest means legacy backup."""
     backup_dir = Path(backup_dir)
     manifest_path = backup_dir / MANIFEST_NAME
-    if not manifest_path.exists():
+    try:
+        manifest_info = manifest_path.lstat()
+    except FileNotFoundError:
         return []
+    except OSError as exc:
+        return [f"Invalid backup manifest: {exc}"]
+    if not stat.S_ISREG(manifest_info.st_mode):
+        return ["Invalid backup manifest: manifest path is not a regular file"]
 
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -126,8 +139,13 @@ def verify_backup_manifest(backup_dir: Path) -> List[str]:
             continue
         expected_paths.add(rel_path)
         path = backup_dir / rel_path
-        if not path.exists():
+        try:
+            path_info = path.lstat()
+        except OSError:
             errors.append(f"Manifest file missing: {rel_path}")
+            continue
+        if not stat.S_ISREG(path_info.st_mode):
+            errors.append(f"Manifest file is not a regular file: {rel_path}")
             continue
         expected_size = entry.get("size")
         if expected_size is not None and path.stat().st_size != expected_size:

@@ -400,7 +400,7 @@ def write_copyright(docs: Path) -> None:
     content = (
         "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n"
         "Upstream-Name: bbackup\n"
-        "Source: https://github.com/CruxExperts/best-backup\n\n"
+        "Source: https://github.com/CruxExperts/BestBackup\n\n"
         "Files: opt/bbackup/*/site-packages/bbackup/* "
         "opt/bbackup/*/site-packages/bbackup-*.dist-info/* "
         "usr/bin/bbackup usr/bin/bbman\n"
@@ -751,7 +751,7 @@ def run_build(args: argparse.Namespace) -> tuple[Path, str]:
             "Priority: optional\n"
             "Maintainer: Crux Experts LLC\n"
             f"Depends: python{python_version}, util-linux, systemd\n"
-            "Homepage: https://github.com/CruxExperts/best-backup\n"
+            "Homepage: https://github.com/CruxExperts/BestBackup\n"
             "Description: encrypted Linux backup and restore tools\n"
             " bbackup manages encrypted backup workflows using the bundled restic executable.\n"
             " Package installation does not enable or start services.\n"

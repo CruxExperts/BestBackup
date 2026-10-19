@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      actions: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -59,6 +60,18 @@ jobs:
           test "$version" = "$(cat VERSION)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Require signed tag and exact default-branch CI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release-source
+          python3 scripts/verify_release_source.py \
+            --repository "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" \
+            > dist/release-source/source-verification.json
+          python3 -m json.tool dist/release-source/source-verification.json > /dev/null
+
       - name: Verify release readiness
         run: |
           set -euo pipefail
@@ -66,11 +79,9 @@ jobs:
           uv run python scripts/check_version_sync.py
           uv run python scripts/check_publishing_ready.py
           uv run python scripts/check_markdown_standards.py
-          uv run ruff check bbackup/ scripts/build_deb.py scripts/check_markdown_standards.py scripts/check_publishing_ready.py scripts/check_version_sync.py scripts/smoke_installed_artifact.py scripts/generate_cli_skills.py tests/
+          uv run ruff check bbackup/ scripts/ tests/
           uv run python scripts/generate_cli_skills.py --check
           uv run python -m py_compile bbackup.py bbman.py bbackup/*.py bbackup/data/*.py bbackup/management/*.py scripts/*.py
-          workers="$(python -c 'import os; print(max(1, len(os.sched_getaffinity(0)) // 3))')"
-          uv run pytest -n "$workers"
 
       - name: Extract changelog section
         run: |
@@ -236,6 +247,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Download source archives
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
@@ -249,37 +266,22 @@ jobs:
           merge-multiple: true
           path: release-inputs
 
-      - name: Validate complete native artifact set and checksum inventory
+      - name: Bind release inputs to verified source and create checksum inventory
+        env:
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_BUILD_RUN_ID: ${{ github.run_id }}
+          RELEASE_BUILD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import hashlib
-          import json
-          from pathlib import Path
-
-          root = Path("release-inputs")
-          wheels = list(root.glob("bbackup-*.whl"))
-          source_archives = list(root.glob("bbackup-*.tar.gz"))
-          packages = list(root.glob("bbackup_*_ubuntu*.deb"))
-          manifests = list(root.glob("bbackup_*_ubuntu*.manifest.json"))
-          checksums = list(root.glob("bbackup_*_ubuntu*.sha256"))
-          assert len(wheels) == len(source_archives) == 1, "Expected one wheel and one source archive"
-          assert len(packages) == len(manifests) == len(checksums) == 4, "Expected four packages and sidecars"
-          targets = set()
-          for manifest_path in manifests:
-              manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-              target = (manifest["target"]["release"], manifest["target"]["architecture"])
-              package_path = root / manifest["artifact"]["filename"]
-              assert package_path in packages, f"Missing package referenced by {manifest_path.name}"
-              assert manifest["artifact"]["sha256"] == hashlib.sha256(
-                  package_path.read_bytes()
-              ).hexdigest(), f"Package hash mismatch for {package_path.name}"
-              targets.add(target)
-          assert targets == {
-              ("24.04", "amd64"), ("24.04", "arm64"),
-              ("26.04", "amd64"), ("26.04", "arm64"),
-          }, f"Incomplete target matrix: {targets!r}"
-          PY
+          python3 scripts/generate_release_provenance.py \
+            --release-inputs release-inputs \
+            --repository "$RELEASE_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --commit "$RELEASE_COMMIT" \
+            --build-run-id "$RELEASE_BUILD_RUN_ID" \
+            --build-run-url "$RELEASE_BUILD_RUN_URL"
           (
             cd release-inputs
             find . -maxdepth 1 -type f \
@@ -357,9 +359,20 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: release-verification
-          sparse-checkout: .github/release-signing-key.asc
+          fetch-depth: 0
+          sparse-checkout: |
+            .github/release-signing-key.asc
+            scripts/verify_release_source.py
           sparse-checkout-cone-mode: false
           persist-credentials: false
+
+      - name: Recheck trusted release source before publication
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: >-
+          python3 release-verification/scripts/verify_release_source.py
+          --repository "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" --checkout release-verification
 
       - name: Verify checksum inventory and fixed-fingerprint signature
         env:
@@ -419,9 +432,26 @@ jobs:
           done < <(find release-inputs -maxdepth 1 -type f \
             ! -name 'release_notes.txt' ! -name 'SHA256SUMS.asc' -print0 | sort -z)
           assets+=("$GITHUB_WORKSPACE/release-inputs/SHA256SUMS.asc")
-          release_args=(--verify-tag --title "$RELEASE_TAG" --notes-file release-inputs/release_notes.txt)
+          release_args=(--draft --verify-tag --title "$RELEASE_TAG" --notes-file release-inputs/release_notes.txt)
           if [[ "$RELEASE_TAG" == *-* ]]; then
             release_args+=(--prerelease)
           fi
           gh release create "$RELEASE_TAG" "${assets[@]}" "${release_args[@]}" \
             --repo "$GITHUB_REPOSITORY"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            > "$RUNNER_TEMP/draft-release.json"
+          python3 - <<'PYVERIFY'
+          import hashlib, json, os
+          from pathlib import Path
+          draft = json.loads((Path(os.environ["RUNNER_TEMP"]) / "draft-release.json").read_text())
+          expected = {}
+          for path in Path("release-inputs").iterdir():
+              if path.name == "release_notes.txt":
+                  continue
+              with path.open("rb") as stream:
+                  digest = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
+              expected[path.name] = (path.stat().st_size, digest)
+          actual = {asset["name"]: (asset["size"], asset.get("digest")) for asset in draft["assets"]}
+          assert draft["draft"] and actual == expected, "Draft asset inventory or SHA256 differs"
+          PYVERIFY
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false

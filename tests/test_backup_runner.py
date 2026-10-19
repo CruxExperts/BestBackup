@@ -6,12 +6,14 @@ Last Updated: 2026-02-26
 """
 
 import json
+import stat
 import threading
 from unittest.mock import MagicMock, patch
 
 
 from bbackup.config import BackupScope, Config
 from bbackup.backup_runner import BackupRunner
+from bbackup.manifest import generate_backup_manifest, verify_backup_manifest
 from bbackup.tui import BackupStatus
 
 
@@ -104,11 +106,29 @@ class TestRunBackupLifecycle:
 
         manifest_file = tmp_path / "backup_manifest.json"
         assert manifest_file.exists()
+        assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+        assert stat.S_IMODE(manifest_file.stat().st_mode) == 0o600
         manifest = json.loads(manifest_file.read_text())
         assert manifest["schema_version"] == 1
         assert manifest["backup_name"] == tmp_path.name
         assert manifest["status"] == "complete"
         assert manifest["source_scope"]["volumes"] is False
+
+    def test_manifest_verification_does_not_follow_replaced_symlink(self, tmp_path):
+        backup = tmp_path / "backup"
+        backup.mkdir()
+        backup.chmod(0o700)
+        data = backup / "data.txt"
+        data.write_text("original")
+        generate_backup_manifest(backup, BackupScope())
+        outside = tmp_path / "outside.txt"
+        outside.write_text("outside")
+        data.unlink()
+        data.symlink_to(outside)
+
+        errors = verify_backup_manifest(backup)
+
+        assert errors == ["Manifest file is not a regular file: data.txt"]
 
     def test_run_backup_creates_metadata_archive_before_manifest(self, mock_docker_client, tmp_path):
         runner = make_runner(mock_docker_client, tmp_path)

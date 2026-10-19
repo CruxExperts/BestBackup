@@ -1,79 +1,63 @@
 # bbackup
 
-**Local-first, encrypted backup and restore for Linux servers.** Capture to a nearby repository, replicate selected snapshots to independent storage, and restore into a new directory.
+**Back up with confidence. Restore with clarity.**
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE) [![Version 2.0.2](https://img.shields.io/badge/version-2.0.2-22c55e?style=flat-square)](CHANGELOG.md)
+bbackup is an encrypted, restic-based backup tool for Linux system administrators, homelab and self-hosted operators, and small infrastructure teams. It brings local file backups, selected database workflows, verified file restores, and observable scheduled jobs into one operator workflow.
 
-[Quick start](QUICKSTART.md) · [Install](INSTALL.md) · [Cloud storage](docs/cloud-storage.md) · [Agent CLI](docs/AGENT_INTEGRATION.md) · [All documentation](docs/README.md)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE) [![Version 2.0.3](https://img.shields.io/badge/version-2.0.3-22c55e?style=flat-square)](https://github.com/CruxExperts/BestBackup/releases/latest)
 
-![bbackup local-first capture, independent repositories, and verified restore workflow](docs/assets/bbackup-banner.svg)
+![bbackup: encrypted snapshot layers, an additional copy, and a restored document](docs/assets/bbackup-banner-v2.png)
 
-> [!WARNING]
-> Stable v2.0.2 covers only the tested paths below. Keep an independent recovery path and verify restores before using real data.
+[Get started](QUICKSTART.md) · [Install](INSTALL.md) · [Qualification evidence](docs/development/version-2.md) · [Automation and agents](docs/AGENT_INTEGRATION.md) · [All documentation](docs/README.md)
 
-## Keep recovery close and independent
+## A practical backup and restore workflow
 
-- **Recover quickly from local storage.** Restore from a nearby encrypted repository without waiting for a cloud download.
-- **Keep an independent replica.** Copy successful snapshots to another repository. Local-to-local replication is tested; B2/AWS remain unqualified.
-- **Protect Linux workloads.** Capture file trees and selected database sources through named jobs.
-- **Choose mouse or automation.** Use the Textual dashboard or strict, schema-discoverable JSON commands.
+Use bbackup when you want to know what a job captured, whether each repository copy succeeded, and whether files can be restored into a clean destination.
 
-## Production support scope
+- **Set up once.** The terminal dashboard guides source, encrypted storage, schedule, and enrollment. Portable policy records job intent; private host bindings hold paths and credential-file references.
+- **Capture and copy.** Create encrypted restic snapshots of file trees and optionally copy a successful snapshot to a separately configured repository. Results show the outcome for each destination.
+- **Restore and verify.** Restore files into a new directory and ask restic to verify them. This checks file data, not application startup or full-machine recovery.
+- **Schedule and observe.** Run named jobs from the dashboard, the JSON CLI, or generated user-level systemd timers. Progress, results, repository locks, and interrupted-operation status are visible to operators and automation.
+- **Recover deliberately.** An interrupted mutation can have an uncertain result. Inspect the destination and reconcile that operation explicitly; bbackup does not automatically replay it.
 
-The v2.0.2 stable support claim is limited to local file capture and restore,
-live PostgreSQL 17.11, MySQL 8.4.12, and MariaDB 11.8.9 capture/restore,
-headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages. B2/AWS,
-native Docker, ARM64 package functionality, cross-application-version upgrades
-or rollback, systemd boot/reboot, and cloud/off-host retention remain
-unqualified. The release workflow may publish ARM64 package artifacts, but
-artifact availability does not qualify ARM64 backup/restore.
-See [v2 release evidence](docs/development/version-2.md) for exact tests and limits.
+![Real bbackup dashboard with disposable example data and illustrative capacity](docs/assets/bbackup-dashboard-preview.svg)
 
-## Install v2.0.2
+## v2.0.3 tested scope
 
-Install stable v2 from its pinned source tag:
+The qualified scope covers local file capture and restore; live capture and restore for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB 11.8.9; headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04 packages. A separate real-guest user-timer reboot drill covers only the components and conditions recorded in the [qualification evidence](docs/development/version-2.md#development-candidate-rebootable-systemd-qualification).
 
-```bash
-uv tool install --force 'git+https://github.com/CruxExperts/best-backup.git@v2.0.2'
-```
+B2/AWS, native Docker, ARM64 backup/restore, cross-application-version upgrades and rollback, root-owned systemd package templates, and cloud or off-host protection remain unqualified. ARM64 packages may be built, but build or package-install smoke checks alone do not qualify backup/restore. Keep an independently retrievable copy of repository passwords; a second repository on the same host does not protect against host loss. See [installation](INSTALL.md) for prerequisites and release install instructions.
 
-For the retained 1.x command line, install the `v1.8.6` release tag:
+## Start with the guided workflow
+
+For packaged releases, start with the [latest release downloads](https://github.com/CruxExperts/BestBackup/releases/latest) and [installation guide](INSTALL.md).
+
+From a development checkout with Python 3.12+, uv, and restic installed:
 
 ```bash
-uv tool install --force 'git+https://github.com/CruxExperts/best-backup.git@v1.8.6'
+git clone https://github.com/CruxExperts/BestBackup.git
+cd BestBackup
+uv sync --locked
+uv run bbackup production tui
 ```
 
-See [INSTALL.md](INSTALL.md) for prerequisites and development setup. Version 2 requires Python 3.12+ and `restic`; Docker, `rsync`, and `tar` are only needed by the retained 1.x Docker/filesystem workflow. Database capture and restore also require the matching native database clients.
-
-## First v2 capture
-
-Create strict portable policy and private host bindings as described in the [quick start](QUICKSTART.md), then run:
-
-```bash
-bbackup production --config config.json --bindings bindings.json doctor
-bbackup production --config config.json --bindings bindings.json jobs run --name daily
-```
-
-`jobs run` captures locally and copies the successful snapshot to each configured replica. Keep the returned full snapshot IDs. The quick start shows how to verify a repository and restore a selected ID into a new directory.
-
-## Cloud destinations
-
-B2 through its S3 API and Amazon S3 can be configured as repositories, but neither provider has a live capture/check/restore qualification for v2.0.2. Native B2 inspection is read-only and does not prove backup transfer or retention. Do not rely on these paths for production backups; see the [cloud storage guide](docs/cloud-storage.md).
+Choose a source folder, encrypted storage, and a schedule. Review and enroll once. The dashboard then guides you through initializing storage, running the first backup, and restoring into a new folder. Advanced settings and the command line remain available. The [quick start](QUICKSTART.md) covers migration, password custody, replica setup, and deliberate schedule activation.
 
 ## Choose a guide
 
-- [Quick start](QUICKSTART.md): v2 configuration, password files, local capture, replicas, and restore.
-- [Installation](INSTALL.md): pinned source installs, legacy release, and development checkout.
-- [Agent integration](docs/AGENT_INTEGRATION.md): strict schemas, JSON envelopes, pagination, and reconciliation.
-- [Cloud storage](docs/cloud-storage.md): B2/S3 repository setup and provider qualification limits.
-- [Legacy management](docs/management.md): retained `bbman` and 1.x commands.
-- [Encryption](docs/encryption.md): restic password custody and legacy file-encryption modes.
-- [Architecture](docs/architecture.md): v2 operation service, storage model, tested scope, and retained implementation.
+- [Install](INSTALL.md): prerequisites, release packages, and development setup.
+- [Quick start](QUICKSTART.md): first backup, schema-2 migration, replica, verified restore, and user-level scheduling.
+- [Automation and agent integration](docs/AGENT_INTEGRATION.md): schemas, progress, results, and uncertain-operation reconciliation.
+- [Production command reference](docs/production-cli.md): generated command and input-schema reference.
+- [Cloud storage](docs/cloud-storage.md): implemented provider paths and their qualification limits.
+- [Encryption](docs/encryption.md): password custody and legacy encryption compatibility.
+- [Architecture](docs/architecture.md): shared operations, durable state, and safety boundaries.
+- [Legacy management](docs/management.md): retained 1.x Docker/YAML commands and compatibility guidance.
 - [Support](SUPPORT.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
 
-[MIT](LICENSE)
+Code is available under the [MIT License](LICENSE). Original documentation artwork carries separate [asset terms and provenance](docs/assets/README.md).
 
 <!-- project-footer:start -->
 
@@ -81,7 +65,7 @@ B2 through its S3 API and Amazon S3 can be configured as repositories, but neith
 
 <p align="center">
 Slavic Kozyuk<br>
-&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/best-backup/blob/main/LICENSE">MIT License</a>
+&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/BestBackup/blob/main/LICENSE">MIT License</a>
 </p>
 
 <!-- project-footer:end -->

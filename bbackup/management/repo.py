@@ -4,14 +4,15 @@ Repository URL management with configurable default and override support.
 The default URL is the public project repository. Override it via:
   - Environment variable: BBACKUP_REPO_URL
   - Config file:          ~/.config/bbackup/management.yaml → repo_url
-  - CLI:                  bbman repo-url --url https://github.com/CruxExperts/best-backup
+  - CLI:                  bbman repo-url --url https://github.com/CruxExperts/BestBackup
 """
 
 import os
+from urllib.parse import urlsplit
 from pathlib import Path
 import yaml
 
-DEFAULT_REPO_URL = "https://github.com/CruxExperts/best-backup"
+DEFAULT_REPO_URL = "https://github.com/CruxExperts/BestBackup"
 
 
 def get_repo_url() -> str:
@@ -109,24 +110,14 @@ def parse_repo_url(url: str) -> dict:
         "base_url": url,
     }
     
-    # GitHub
-    if "github.com" in url:
-        result["type"] = "github"
-        parts = url.replace("https://github.com/", "").replace("http://github.com/", "").split("/")
-        if len(parts) >= 2:
-            result["owner"] = parts[0]
-            result["repo"] = parts[1].replace(".git", "")
-    
-    # GitLab
-    elif "gitlab.com" in url:
-        result["type"] = "gitlab"
-        parts = url.replace("https://gitlab.com/", "").replace("http://gitlab.com/", "").split("/")
-        if len(parts) >= 2:
-            result["owner"] = parts[0]
-            result["repo"] = parts[1].replace(".git", "")
-    
-    # Custom HTTP
+    parsed = urlsplit(url)
+    host = parsed.hostname
+    parts = parsed.path.strip("/").split("/")
+    if (parsed.scheme in ("https", "http") and host in ("github.com", "gitlab.com")
+            and parsed.username is None and parsed.password is None
+            and len(parts) == 2 and all(parts)):
+        result.update(type="github" if host == "github.com" else "gitlab",
+                      owner=parts[0], repo=parts[1].removesuffix(".git"))
     else:
         result["type"] = "custom"
-    
     return result

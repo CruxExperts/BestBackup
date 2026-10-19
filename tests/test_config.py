@@ -22,8 +22,18 @@ from bbackup.config import (
     RcloneOptions,
     RemoteStorage,
     RetentionPolicy,
+    ensure_private_directory,
 )
 from bbackup.logging import setup_logging
+
+
+def test_private_directory_rejects_writable_preexisting_parent(tmp_path):
+    parent = tmp_path / "shared"
+    parent.mkdir()
+    parent.chmod(0o777)
+    with pytest.raises(OSError, match="untrusted ancestor"):
+        ensure_private_directory(parent / "backup" / "child")
+    assert not (parent / "backup").exists()
 
 
 # ---------------------------------------------------------------------------

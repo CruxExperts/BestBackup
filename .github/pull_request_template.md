@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- What changes for a user or operator? Identify legacy 1.x or the 2.0.0-alpha.1 preview, if relevant. -->
+<!-- What changes for a user or operator? Identify legacy 1.x or the production interface or an unreleased schema change, if relevant. -->
 
 ## Related issue
 

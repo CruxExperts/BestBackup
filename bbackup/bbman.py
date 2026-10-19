@@ -41,7 +41,7 @@ from bbackup.skills import get_skill
 
 SKILLS_DOC_RESOURCE = "cli-skills.md"
 SKILLS_INDEX_RESOURCE = "cli-skills-index.json"
-CANONICAL_REPO_URL = "https://github.com/CruxExperts/best-backup"
+CANONICAL_REPO_URL = "https://github.com/CruxExperts/BestBackup"
 
 # Default repository URL: auto-detected from git remote, then placeholder.
 # Set BBACKUP_REPO_URL env var or run `bbman repo-url --url URL` to override.

@@ -1,6 +1,7 @@
-"""Version-two noninteractive CLI over the shared operations service."""
+"""Production CLI over the shared version-three operations service."""
 from contextlib import nullcontext
 import json
+import os
 from pathlib import Path
 import signal
 import sqlite3
@@ -16,10 +17,11 @@ from .cloud import CloudError
 from .recovery import RecoveryError
 from .cli_metadata import PRODUCTION_COMMANDS, production_schema
 from .configuration_workspace import ConfigurationWorkspace
-from .models import Configuration, ConfigurationError, HostBindings, strict_json
-from .operations import OperationError, UncertainOperationError
-from .service import BackupService, ServiceError
-from .production_operations import execute_operation
+from .enrollment import parse_pair, read_pair, verify_bytes
+from .models import ConfigurationError, strict_json
+from .operations import OperationError, RepositoryConflictError, UncertainOperationError
+from .service import ReplicaJobError, ServiceError
+from .production_operations import _operation_lease, execute_operation
 from .progress import observe_progress
 
 
@@ -50,16 +52,41 @@ class MachineGroup(click.Group):
 @click.option("--bindings", type=click.Path(path_type=Path), required=False)
 @click.pass_context
 def cli(ctx, config, bindings):
-    """Version 2 backup and restore operations."""
+    """Backup and restore operations."""
     ctx.ensure_object(dict)
-    ctx.obj.update(config=config, bindings=bindings)
+    try:
+        default_config, default_bindings = _default_paths()
+    except ConfigurationError:
+        _emit("input", error={"code": "invalid_input", "message": "XDG_CONFIG_HOME must be an absolute directory"})
+        ctx.exit(2)
+    defaulted = config is None and bindings is None
+    config = config if config is not None else default_config
+    bindings = bindings if bindings is not None else default_bindings
+    ctx.obj.update(config=config, bindings=bindings, paths_defaulted=defaulted)
 
 
-def _service(ctx):
-    if ctx.obj.get("config") is None or ctx.obj.get("bindings") is None:
-        raise ConfigurationError("This command requires --config and --bindings")
-    return BackupService(Configuration.load(ctx.obj["config"]), HostBindings.load(ctx.obj["bindings"]))
-
+def _default_paths() -> tuple[Path, Path]:
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        if not Path(xdg).is_absolute() or any(c in xdg for c in "\0\r\n"):
+            raise ConfigurationError("XDG_CONFIG_HOME must be an absolute directory")
+        base = Path(xdg)
+    else:
+        base = Path.home() / ".config"
+    directory = base / "bbackup"
+    newer = (directory / "config.v3.json", directory / "bindings.v3.json")
+    if all(path.is_file() and not path.is_symlink() for path in newer):
+        try:
+            policy, bindings = read_pair(*newer)
+            configuration, host = parse_pair(policy, bindings)
+            if configuration.schema_version != 3:
+                raise ConfigurationError("Expected version-three defaults")
+            verify_bytes(host.state_dir, policy, bindings)
+        except (OSError, ConfigurationError):
+            pass
+        else:
+            return newer
+    return directory / "config.json", directory / "bindings.json"
 
 
 def _workspace(ctx):
@@ -113,11 +140,36 @@ def _register(command, definition):
                     click.echo(json.dumps({"schema_version": 2, "type": "event", "data": event}, sort_keys=True))
             else:
                 _emit(command, data)
-        except ConfigurationError:
-            _emit(command, error={"code": "invalid_input", "message": "Invalid configuration or command input"})
+        except ConfigurationError as exc:
+            message = str(exc).lower()
+            if "busy" in message:
+                error = {"code": "busy", "message": "Configuration is in use by an active operation",
+                         "next_action": "Wait for the active operation to finish and retry"}
+            elif "machine identity" in message:
+                error = {"code": "machine_identity_unavailable", "message": "Machine identity is unavailable",
+                         "next_action": "Restore a valid machine ID, then run service enroll"}
+            elif "version 2" in message or "migrate" in message:
+                error = {"code": "schema_migration_required", "message": "Version 2 policy requires explicit migration",
+                         "next_action": "Run config migrate and use its version 3 paths"}
+            elif "enrollment" in message or "enroll" in message:
+                error = {"code": "enrollment_required", "message": "Policy enrollment is missing or no longer matches",
+                         "next_action": "Review the policy and bindings, then run service enroll"}
+            else:
+                error = {"code": "invalid_input", "message": "Invalid configuration or command input"}
+            _emit(command, error=error)
             ctx.exit(2)
+        except RepositoryConflictError:
+            _emit(command, error={"code": "busy", "message": "Repository operation is already active",
+                                  "next_action": "Wait for the active operation to finish"})
+            ctx.exit(3)
         except UncertainOperationError as exc:
             _emit(command, error={"code": "requires_reconciliation", "message": "Review repository state before resolving this operation", "operation_id": exc.operation_id})
+            ctx.exit(3)
+        except ReplicaJobError as exc:
+            click.echo(json.dumps({"schema_version": 2, "command": command, "success": False,
+                                   "data": exc.result,
+                                   "errors": [{"code": "replica_incomplete", "message": str(exc)}]},
+                                  sort_keys=True))
             ctx.exit(3)
         except (ServiceError, OperationError, CaptureError, CloudError, B2Error, RecoveryError, tarfile.TarError, sqlite3.Error, OSError, ValueError, KeyError):
             _emit(command, error={"code": "operation_failed", "message": "Operation failed; inspect sanitized run state before retrying"})
@@ -143,12 +195,31 @@ def tui(ctx):
     from .dashboard import BackupDashboard, BackupSetup
     try:
         workspace = _workspace(ctx)
+        if ctx.obj.get("paths_defaulted") and workspace.config_path.name == "config.json":
+            imported = (workspace.config_path.with_name("config.v3.json"),
+                        workspace.bindings_path.with_name("bindings.v3.json"))
+            if all(path.is_file() and not path.is_symlink() for path in imported):
+                # A copied or edited v3 pair gets the guided review path. It
+                # is never silently adopted for machine operations.
+                workspace = ConfigurationWorkspace(*imported)
         if not workspace.config_path.exists() and not workspace.bindings_path.exists():
             service = BackupSetup(workspace).run()
             if service is None:
                 return
         else:
-            service = _service(ctx)
+            configuration, _ = parse_pair(*read_pair(workspace.config_path, workspace.bindings_path))
+            if configuration.schema_version == 2:
+                service = BackupSetup(workspace).run()
+            else:
+                try:
+                    with _operation_lease(workspace.config_path, workspace.bindings_path) as service:
+                        pass
+                except ConfigurationError as exc:
+                    if "enroll" not in str(exc).lower():
+                        raise
+                    service = BackupSetup(workspace).run()
+            if service is None:
+                return
         BackupDashboard(service, workspace=workspace).run()
     except (ConfigurationError, ServiceError, OSError):
         _emit("tui", error={"code": "configuration_error", "message": "Dashboard configuration failed"})

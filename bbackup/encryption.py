@@ -7,20 +7,90 @@ Supports URL-based key fetching for easy multi-server deployment.
 import os
 import hashlib
 import json
+import base64
+import hmac as stdlib_hmac
+import stat
+import tempfile
 from pathlib import Path
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple, Any, Dict, List
 from datetime import datetime
 import requests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hmac as crypto_hmac
 from cryptography.hazmat.backends import default_backend
 import secrets
 
 from .logging import get_logger
+from .config import ensure_private_directory, open_private_file
 
 logger = get_logger('encryption')
+
+TREE_FORMAT = "bbackup-encrypted-tree"
+TREE_VERSION = 3
+TREE_PAYLOAD_MAGIC = b"BBAKTR3\0"
+TREE_IDENTITY_NAME = ".bbackup-tree-v3"
+TREE_INVENTORY_NAME = ".inventory-v3"
+TREE_INVENTORY_MAGIC = b"BBAKIN3\0"
+TREE_V2_PAYLOAD_MAGIC = b"BBAKTR2\0"
+TREE_V2_IDENTITY_NAME = ".bbackup-tree-v2"
+TREE_METADATA_NAME = "encryption_metadata.json"
+
+
+def _canonical_json(value: Any) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _safe_tree_path(value: Any) -> Optional[Path]:
+    if value == ".":
+        return Path(".")
+    if not isinstance(value, str) or not value or "\x00" in value:
+        return None
+    posix = Path(value)
+    if posix.is_absolute() or any(part in ("", ".", "..") for part in value.split("/")):
+        return None
+    return posix
+
+
+def _check_owned_directory(path: Path, *, private: bool = False, empty: bool = False) -> None:
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        raise OSError(f"Staging root is not a real directory: {path}")
+    if hasattr(os, "geteuid") and info.st_uid != os.geteuid():
+        raise OSError(f"Staging root is owned by another user: {path}")
+    if private and stat.S_IMODE(info.st_mode) & 0o077:
+        raise OSError(f"Staging root permissions are not private: {path}")
+    if empty and any(path.iterdir()):
+        raise OSError(f"Staging destination is not empty: {path}")
+
+
+def _create_private_directory(path: Path) -> None:
+    ensure_private_directory(path)
+    _check_owned_directory(path, private=True)
+
+
+def _read_regular_file(path: Path) -> bytes:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as source_file:
+        if not stat.S_ISREG(os.fstat(source_file.fileno()).st_mode):
+            raise OSError(f"Expected a regular file: {path}")
+        return source_file.read()
+
+
+def _read_regular_file_prefix(path: Path, size: int) -> bytes:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as source_file:
+        if not stat.S_ISREG(os.fstat(source_file.fileno()).st_mode):
+            raise OSError(f"Expected a regular file: {path}")
+        return source_file.read(size)
+
+
+def _raise_walk_error(error: OSError) -> None:
+    """Make os.walk traversal failures fail closed instead of skipping entries."""
+    raise error
 
 
 class EncryptionManager:
@@ -393,7 +463,7 @@ class EncryptionManager:
         
         try:
             # Read source file
-            plaintext = source.read_bytes()
+            plaintext = _read_regular_file(source)
             
             # Generate random IV (12 bytes for GCM)
             iv = secrets.token_bytes(12)
@@ -421,7 +491,7 @@ class EncryptionManager:
             
             # Write encrypted file
             dest.parent.mkdir(parents=True, exist_ok=True)
-            with open(dest, 'wb') as f:
+            with open_private_file(dest, 'wb') as f:
                 # Format: [encrypted_key_length (4 bytes)] [encrypted_key] [IV (12 bytes)] [ciphertext]
                 if encrypted_key:
                     f.write(len(encrypted_key).to_bytes(4, 'big'))
@@ -450,7 +520,7 @@ class EncryptionManager:
         """
         try:
             # Read encrypted file
-            encrypted_data = source.read_bytes()
+            encrypted_data = _read_regular_file(source)
             
             if len(encrypted_data) < 12:
                 logger.error("Encrypted file too short (missing IV)")
@@ -508,8 +578,8 @@ class EncryptionManager:
             plaintext = aesgcm.decrypt(iv, ciphertext, None)
             
             # Write decrypted file
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(plaintext)
+            with open_private_file(dest, 'wb') as output:
+                output.write(plaintext)
             
             logger.debug(f"Decrypted file: {source} -> {dest}")
             return True
@@ -518,93 +588,513 @@ class EncryptionManager:
             return False
     
     def encrypt_directory(self, source: Path, dest: Path) -> bool:
-        """
-        Encrypt all files in a directory.
-        
-        Args:
-            source: Source directory
-            dest: Destination directory (will contain encrypted files)
-        
-        Returns:
-            True if successful
-        """
+        """Encrypt a filesystem tree as individually authenticated payload files."""
+        source = Path(source)
+        dest = Path(dest)
+        staging: Optional[Path] = None
         try:
-            dest.mkdir(parents=True, exist_ok=True)
-            
-            # Create encryption metadata
-            metadata = {
+            source_info = os.lstat(source)
+            if not stat.S_ISDIR(source_info.st_mode) or stat.S_ISLNK(source_info.st_mode):
+                raise OSError(f"Source root is not a real directory: {source}")
+            if hasattr(os, "geteuid") and source_info.st_uid != os.geteuid():
+                raise OSError(f"Source root is owned by another user: {source}")
+            if dest.exists() or dest.is_symlink():
+                raise OSError(f"Encrypted destination already exists: {dest}")
+            source_resolved = source.resolve()
+            dest_resolved = dest.resolve(strict=False)
+            if dest_resolved == source_resolved or dest_resolved.is_relative_to(source_resolved):
+                raise OSError("Encrypted destination must be outside the source tree")
+            parent = dest.parent
+            parent_info = os.lstat(parent)
+            if not stat.S_ISDIR(parent_info.st_mode) or stat.S_ISLNK(parent_info.st_mode):
+                raise OSError(f"Encrypted destination parent is not a real directory: {parent}")
+            if hasattr(os, "geteuid") and parent_info.st_uid != os.geteuid():
+                raise OSError(f"Encrypted destination parent is owned by another user: {parent}")
+            ensure_private_directory(parent)
+
+            entries = self._collect_tree_entries(source)
+            tree_key, wrapped_key = self._new_tree_key()
+            salt = secrets.token_bytes(16)
+            mac_key = self._tree_mac_key(tree_key, salt, TREE_VERSION)
+            staging = Path(tempfile.mkdtemp(prefix=".bbackup-encrypt-", dir=parent))
+            ensure_private_directory(staging)
+            _check_owned_directory(staging, private=True, empty=True)
+            payload_root = staging / "payloads"
+            _create_private_directory(payload_root)
+
+            identity = TREE_PAYLOAD_MAGIC + stdlib_hmac.new(
+                mac_key, b"bbackup-tree-payload-identity-v3", hashlib.sha256
+            ).digest()
+            fd = os.open(
+                payload_root / TREE_IDENTITY_NAME,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            with os.fdopen(fd, "wb") as identity_file:
+                identity_file.write(identity)
+
+            for entry in entries:
+                if entry["type"] != "file":
+                    continue
+                source_file = source / entry["path"]
+                entry["payload_id"] = secrets.token_hex(24)
+                payload_path = payload_root / f"{entry['payload_id']}.bbackup"
+                nonce = secrets.token_bytes(12)
+                plaintext = _read_regular_file(source_file)
+                if len(plaintext) != entry["size"]:
+                    raise OSError(f"Source file changed during encryption: {source_file}")
+                ciphertext = AESGCM(tree_key).encrypt(nonce, plaintext, _canonical_json(entry))
+                fd = os.open(payload_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                with os.fdopen(fd, "wb") as payload_file:
+                    payload_file.write(TREE_PAYLOAD_MAGIC + nonce + ciphertext)
+
+            metadata: Dict[str, Any] = {
                 "encrypted": True,
+                "format": TREE_FORMAT,
+                "version": TREE_VERSION,
                 "method": self.config.method,
                 "algorithm": "aes-256-gcm",
-                "key_id": hashlib.sha256(self.symmetric_key or b'').hexdigest()[:16] if self.symmetric_key else None,
-                "timestamp": datetime.now().isoformat()
+                "key_id": hashlib.sha256(tree_key).hexdigest()[:16],
+                "salt": base64.b64encode(salt).decode("ascii"),
+                "wrapped_key": base64.b64encode(wrapped_key).decode("ascii") if wrapped_key else None,
+                "timestamp": datetime.now().isoformat(),
+                "inventory": TREE_INVENTORY_NAME,
             }
-            
-            # Encrypt all files
-            for root, dirs, files in os.walk(source):
-                for file in files:
-                    source_file = Path(root) / file
-                    rel_path = source_file.relative_to(source)
-                    dest_file = dest / f"{rel_path}.enc"
-                    dest_file.parent.mkdir(parents=True, exist_ok=True)
-                    
-                    if not self.encrypt_file(source_file, dest_file):
-                        return False
-            
-            # Save metadata
-            metadata_file = dest / "encryption_metadata.json"
-            with open(metadata_file, 'w') as f:
-                json.dump(metadata, f, indent=2)
-            
+            metadata["auth"] = self._tree_metadata_auth(metadata, mac_key)
+            inventory_nonce = secrets.token_bytes(12)
+            inventory_ciphertext = AESGCM(tree_key).encrypt(
+                inventory_nonce, _canonical_json(entries), _canonical_json(metadata)
+            )
+            inventory_path = payload_root / TREE_INVENTORY_NAME
+            fd = os.open(inventory_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            with os.fdopen(fd, "wb") as inventory_file:
+                inventory_file.write(TREE_INVENTORY_MAGIC + inventory_nonce + inventory_ciphertext)
+            metadata_path = staging / TREE_METADATA_NAME
+            fd = os.open(metadata_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as metadata_file:
+                json.dump(metadata, metadata_file, indent=2, sort_keys=True)
+            os.replace(staging, dest)
+            staging = None
             logger.info(f"Encrypted directory: {source} -> {dest}")
             return True
         except Exception as e:
             logger.error(f"Failed to encrypt directory {source}: {e}")
             return False
+        finally:
+            if staging is not None and staging.exists():
+                import shutil
+                shutil.rmtree(staging, ignore_errors=True)
+
+    @classmethod
+    def validate_directory_tree(cls, source: Path) -> List[Dict[str, Any]]:
+        """Preflight a source tree without writing output or loading encryption keys."""
+        return cls._collect_tree_entries(Path(source))
+
+    @classmethod
+    def _collect_tree_entries(cls, source: Path) -> List[Dict[str, Any]]:
+        """Inventory supported ordinary files, directories, symlinks and hardlinks."""
+        source_info = os.lstat(source)
+        if not stat.S_ISDIR(source_info.st_mode) or stat.S_ISLNK(source_info.st_mode):
+            raise OSError(f"Source root is not a real directory: {source}")
+        if hasattr(os, "geteuid") and source_info.st_uid != os.geteuid():
+            raise OSError(f"Source root is owned by another user: {source}")
+        entries: List[Dict[str, Any]] = []
+        inode_paths: Dict[Tuple[int, int], str] = {}
+        for root, dirs, files in os.walk(
+            source,
+            topdown=True,
+            followlinks=False,
+            onerror=_raise_walk_error,
+        ):
+            root_path = Path(root)
+            children = sorted(dirs + files)
+            dirs[:] = [name for name in sorted(dirs) if not (root_path / name).is_symlink()]
+            paths = [root_path] if root_path == source else []
+            paths.extend(root_path / name for name in children)
+            for path in paths:
+                info = os.lstat(path)
+                if os.geteuid() != 0 and (info.st_uid != os.geteuid()
+                        or info.st_gid not in {os.getegid(), *os.getgroups()}):
+                    raise OSError(f"Cannot restore tree ownership as the current user: {path}")
+                try:
+                    xattrs = os.listxattr(path, follow_symlinks=False)
+                except (AttributeError, NotImplementedError):
+                    xattrs = []
+                if xattrs:
+                    raise OSError(f"Unsupported extended attributes or ACLs on: {path}")
+
+                rel = "." if path == source else path.relative_to(source).as_posix()
+                base = {
+                    "path": rel,
+                    "mode": stat.S_IMODE(info.st_mode),
+                    "uid": info.st_uid,
+                    "gid": info.st_gid,
+                    "atime_ns": info.st_atime_ns,
+                    "mtime_ns": info.st_mtime_ns,
+                }
+                if stat.S_ISDIR(info.st_mode):
+                    base["type"] = "directory"
+                elif stat.S_ISREG(info.st_mode):
+                    if info.st_nlink > 1:
+                        inode_key = (info.st_dev, info.st_ino)
+                        target = inode_paths.get(inode_key)
+                        if target is not None:
+                            base.update({"type": "hardlink", "target": target})
+                        else:
+                            inode_paths[inode_key] = rel
+                            base.update({"type": "file", "size": info.st_size})
+                    else:
+                        base.update({"type": "file", "size": info.st_size})
+                elif stat.S_ISLNK(info.st_mode):
+                    base.update({"type": "symlink", "target": os.readlink(path)})
+                else:
+                    raise OSError(f"Unsupported special file type: {path}")
+                entries.append(base)
+        entries.sort(key=lambda item: item["path"])
+        cls._validate_tree_entries(entries)
+        return entries
+
+    def _new_tree_key(self) -> Tuple[bytes, Optional[bytes]]:
+        if self.config.method in ["symmetric", "both"] and self.symmetric_key:
+            return self.symmetric_key, None
+        if self.config.method in ["asymmetric", "both"] and self.public_key:
+            key = secrets.token_bytes(32)
+            wrapped = self.public_key.encrypt(
+                key,
+                padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None),
+            )
+            return key, wrapped
+        raise ValueError("No encryption key available for authenticated tree")
+
+    @staticmethod
+    def _tree_mac_key(tree_key: bytes, salt: bytes, version: int = 2) -> bytes:
+        return HKDF(algorithm=hashes.SHA256(), length=32, salt=salt, info=f"bbackup-tree-manifest-v{version}".encode()).derive(tree_key)
+
+    @staticmethod
+    def _tree_metadata_auth(metadata: Dict[str, Any], mac_key: bytes) -> str:
+        unsigned = {key: value for key, value in metadata.items() if key != "auth"}
+        signer = crypto_hmac.HMAC(mac_key, hashes.SHA256())
+        signer.update(_canonical_json(unsigned))
+        return base64.b64encode(signer.finalize()).decode("ascii")
+
+    @staticmethod
+    def _validate_tree_entries(entries: Any) -> List[Dict[str, Any]]:
+        if not isinstance(entries, list) or not entries:
+            raise ValueError("Encrypted tree inventory is missing")
+        by_path: Dict[str, Dict[str, Any]] = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise ValueError("Malformed encrypted tree inventory entry")
+            path = entry.get("path")
+            safe_path = _safe_tree_path(path)
+            kind = entry.get("type")
+            if safe_path is None or kind not in {"directory", "file", "symlink", "hardlink"}:
+                raise ValueError(f"Malformed encrypted tree path or type: {path!r}")
+            if path in by_path:
+                raise ValueError(f"Duplicate encrypted tree path: {path}")
+            for field in ("mode", "uid", "gid", "atime_ns", "mtime_ns"):
+                if not isinstance(entry.get(field), int) or entry[field] < 0:
+                    raise ValueError(f"Malformed encrypted tree metadata for {path}")
+            if entry["mode"] > 0o7777:
+                raise ValueError(f"Malformed encrypted tree mode for {path}")
+            if kind == "file" and (not isinstance(entry.get("size"), int) or entry["size"] < 0):
+                raise ValueError(f"Malformed encrypted file size for {path}")
+            if kind in {"symlink", "hardlink"} and not isinstance(entry.get("target"), str):
+                raise ValueError(f"Malformed encrypted link target for {path}")
+            by_path[path] = entry
+        if by_path.get(".", {}).get("type") != "directory":
+            raise ValueError("Encrypted tree inventory has no root directory")
+        for path, entry in by_path.items():
+            safe_path = _safe_tree_path(path)
+            assert safe_path is not None
+            if path != ".":
+                parent = safe_path.parent.as_posix()
+                if by_path.get(parent, {}).get("type") != "directory":
+                    raise ValueError(f"Encrypted tree parent is missing or not a directory: {path}")
+            if entry["type"] == "hardlink":
+                target = entry["target"]
+                target_path = _safe_tree_path(target)
+                if target_path is None or target not in by_path or by_path[target]["type"] not in {"file", "hardlink"}:
+                    raise ValueError(f"Invalid hardlink target for {path}")
+        return entries
+
+    @staticmethod
+    def contains_versioned_tree_payload(source: Path) -> bool:
+        """Return whether any tree payload marker exists, even if inventory was removed."""
+        source = Path(source)
+        if not source.is_dir() or source.is_symlink():
+            return False
+        for root, dirs, files in os.walk(source, topdown=True, followlinks=False):
+            root_path = Path(root)
+            dirs[:] = [name for name in dirs if not (root_path / name).is_symlink()]
+            for filename in files:
+                path = root_path / filename
+                try:
+                    if stat.S_ISREG(os.lstat(path).st_mode):
+                        if filename.endswith(".bbackup") and path.relative_to(source).parts[0] == "payloads":
+                            return True
+                        if _read_regular_file_prefix(path, len(TREE_PAYLOAD_MAGIC)) in (TREE_PAYLOAD_MAGIC, TREE_V2_PAYLOAD_MAGIC):
+                            return True
+                except OSError:
+                    continue
+        return False
     
     def decrypt_directory(self, source: Path, dest: Path) -> bool:
-        """
-        Decrypt all files in an encrypted directory.
-        
-        Args:
-            source: Encrypted directory
-            dest: Destination directory (will contain decrypted files)
-        
-        Returns:
-            True if successful
-        """
+        """Decrypt a versioned authenticated tree or a legacy per-file directory."""
+        source = Path(source)
+        dest = Path(dest)
         try:
-            dest.mkdir(parents=True, exist_ok=True)
-            
-            # Check for metadata
-            metadata_file = source / "encryption_metadata.json"
-            if metadata_file.exists():
-                with open(metadata_file, 'r') as f:
-                    metadata = json.load(f)
-                    logger.info(f"Decrypting backup encrypted with method: {metadata.get('method')}")
-            
-            # Decrypt all .enc files
-            for root, dirs, files in os.walk(source):
-                for file in files:
-                    if file == "encryption_metadata.json":
-                        continue
-                    
-                    if file.endswith('.enc'):
-                        source_file = Path(root) / file
-                        rel_path = source_file.relative_to(source)
-                        # Remove .enc extension
-                        dest_rel_path = str(rel_path)[:-4]  # Remove .enc
-                        dest_file = dest / dest_rel_path
-                        dest_file.parent.mkdir(parents=True, exist_ok=True)
-                        
-                        if not self.decrypt_file(source_file, dest_file):
-                            return False
-            
+            source_info = os.lstat(source)
+            if not stat.S_ISDIR(source_info.st_mode) or stat.S_ISLNK(source_info.st_mode):
+                raise OSError(f"Encrypted source is not a real directory: {source}")
+            if hasattr(os, "geteuid") and source_info.st_uid != os.geteuid():
+                raise OSError(f"Encrypted source is owned by another user: {source}")
+            metadata_path = source / TREE_METADATA_NAME
+            if not metadata_path.is_file() or metadata_path.is_symlink():
+                if self.contains_versioned_tree_payload(source) or source.name.endswith(".enc"):
+                    raise ValueError("Encrypted tree inventory is missing")
+                raise ValueError("Encrypted directory metadata is missing")
+            else:
+                metadata = json.loads(_read_regular_file(metadata_path).decode("utf-8"))
+                if metadata.get("format") == TREE_FORMAT:
+                    self._decrypt_versioned_tree(source, dest, metadata)
+                elif "version" in metadata or "format" in metadata:
+                    raise ValueError("Unsupported encrypted tree format version")
+                else:
+                    logger.warning("Decrypting legacy encrypted backup; file modes, ownership, links and timestamps cannot be preserved")
+                    self._decrypt_legacy_directory(source, dest)
             logger.info(f"Decrypted directory: {source} -> {dest}")
             return True
         except Exception as e:
             logger.error(f"Failed to decrypt directory {source}: {e}")
             return False
+
+    def _destination_root(self, dest: Path) -> None:
+        if dest.exists() or dest.is_symlink():
+            raise OSError(f"Decryption destination already exists: {dest}")
+        _create_private_directory(dest)
+
+    def _decrypt_versioned_tree(self, source: Path, dest: Path, metadata: Dict[str, Any]) -> None:
+        _check_owned_directory(source, private=True)
+        metadata_path = source / TREE_METADATA_NAME
+        metadata_info = os.lstat(metadata_path)
+        if (
+            not stat.S_ISREG(metadata_info.st_mode)
+            or stat.S_ISLNK(metadata_info.st_mode)
+            or stat.S_IMODE(metadata_info.st_mode) & 0o077
+            or metadata_info.st_nlink != 1
+            or (hasattr(os, "geteuid") and metadata_info.st_uid != os.geteuid())
+        ):
+            raise ValueError("Encrypted tree inventory file is unsafe")
+        version = metadata.get("version")
+        if version not in (2, TREE_VERSION) or metadata.get("algorithm") != "aes-256-gcm":
+            raise ValueError("Unsupported encrypted tree format version")
+        salt = base64.b64decode(metadata["salt"], validate=True)
+        wrapped_value = metadata.get("wrapped_key")
+        if wrapped_value:
+            if self.private_key is None:
+                raise ValueError("No private key available for encrypted tree")
+            wrapped_key = base64.b64decode(wrapped_value, validate=True)
+            tree_key = self.private_key.decrypt(
+                wrapped_key,
+                padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None),
+            )
+        else:
+            tree_key = self.symmetric_key
+            if tree_key is None:
+                raise ValueError("No symmetric key available for encrypted tree")
+        if len(salt) != 16 or len(tree_key) != 32:
+            raise ValueError("Malformed encrypted tree key metadata")
+        mac_key = self._tree_mac_key(tree_key, salt, version)
+        expected_auth = self._tree_metadata_auth(metadata, mac_key)
+        if not stdlib_hmac.compare_digest(expected_auth, metadata.get("auth", "")):
+            raise ValueError("Encrypted tree inventory authentication failed")
+        payload_root = source / "payloads"
+        if payload_root.is_symlink() or not payload_root.is_dir():
+            raise ValueError("Encrypted tree payload directory is missing or unsafe")
+        _check_owned_directory(payload_root, private=True)
+        if version == 2:
+            logger.warning("Decrypting v2 encrypted tree; its inventory exposes paths and filesystem metadata")
+            entries = self._validate_tree_entries(metadata.get("entries"))
+            payload_magic = TREE_V2_PAYLOAD_MAGIC
+            identity_name = TREE_V2_IDENTITY_NAME
+            expected_payloads = {f"{entry['path']}.bbackup" for entry in entries if entry["type"] == "file"}
+        else:
+            if metadata.get("inventory") != TREE_INVENTORY_NAME or "entries" in metadata:
+                raise ValueError("Malformed encrypted tree inventory header")
+            inventory_blob = _read_regular_file(payload_root / TREE_INVENTORY_NAME)
+            if not inventory_blob.startswith(TREE_INVENTORY_MAGIC) or len(inventory_blob) < len(TREE_INVENTORY_MAGIC) + 28:
+                raise ValueError("Malformed encrypted tree inventory")
+            nonce_start = len(TREE_INVENTORY_MAGIC)
+            inventory_data = AESGCM(tree_key).decrypt(
+                inventory_blob[nonce_start:nonce_start + 12],
+                inventory_blob[nonce_start + 12:],
+                _canonical_json(metadata),
+            )
+            entries = self._validate_tree_entries(json.loads(inventory_data))
+            payload_ids = [entry.get("payload_id") for entry in entries if entry["type"] == "file"]
+            if any(not isinstance(value, str) or len(value) != 48 or any(c not in "0123456789abcdef" for c in value) for value in payload_ids):
+                raise ValueError("Malformed encrypted payload identifier")
+            if len(set(payload_ids)) != len(payload_ids):
+                raise ValueError("Duplicate encrypted payload identifier")
+            expected_payloads = {f"{value}.bbackup" for value in payload_ids}
+            expected_payloads.add(TREE_INVENTORY_NAME)
+            payload_magic = TREE_PAYLOAD_MAGIC
+            identity_name = TREE_IDENTITY_NAME
+        expected_payloads.add(identity_name)
+        actual_payloads = set()
+        actual_payload_dirs = set()
+        for root, dirs, files in os.walk(payload_root, topdown=True, followlinks=False):
+            root_path = Path(root)
+            if any((root_path / name).is_symlink() for name in dirs):
+                raise ValueError("Symlink found in encrypted payload tree")
+            dirs[:] = [name for name in dirs if not (root_path / name).is_symlink()]
+            for name in dirs:
+                directory_info = os.lstat(root_path / name)
+                if (
+                    not stat.S_ISDIR(directory_info.st_mode)
+                    or stat.S_IMODE(directory_info.st_mode) & 0o077
+                    or (hasattr(os, "geteuid") and directory_info.st_uid != os.geteuid())
+                ):
+                    raise ValueError("Unsafe directory found in encrypted payload tree")
+            actual_payload_dirs.update(
+                (root_path / name).relative_to(payload_root).as_posix() for name in dirs
+            )
+            for name in files:
+                path = root_path / name
+                info = os.lstat(path)
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or stat.S_ISLNK(info.st_mode)
+                    or stat.S_IMODE(info.st_mode) & 0o077
+                    or info.st_nlink != 1
+                    or (hasattr(os, "geteuid") and info.st_uid != os.geteuid())
+                ):
+                    raise ValueError("Non-regular file found in encrypted payload tree")
+                actual_payloads.add(path.relative_to(payload_root).as_posix())
+        if actual_payloads != expected_payloads:
+            raise ValueError("Encrypted tree payload membership does not match inventory")
+        expected_payload_dirs = {
+            parent.as_posix()
+            for payload in expected_payloads
+            for parent in Path(payload).parents
+            if parent.as_posix() != "."
+        }
+        if actual_payload_dirs != expected_payload_dirs:
+            raise ValueError("Encrypted tree payload directory membership does not match inventory")
+
+        identity_path = payload_root / identity_name
+        identity_payload = _read_regular_file(identity_path)
+        expected_identity = payload_magic + stdlib_hmac.new(
+            mac_key, f"bbackup-tree-payload-identity-v{version}".encode(), hashlib.sha256
+        ).digest()
+        if not stdlib_hmac.compare_digest(identity_payload, expected_identity):
+            raise ValueError("Encrypted tree payload identity authentication failed")
+
+        self._destination_root(dest)
+        try:
+            for entry in sorted(entries, key=lambda value: (value["path"].count("/"), value["path"])):
+                if entry["type"] == "directory":
+                    target = dest if entry["path"] == "." else dest / entry["path"]
+                    if target != dest:
+                        target.mkdir(mode=0o700)
+            for entry in entries:
+                if entry["type"] != "file":
+                    continue
+                payload_name = f"{entry['path']}.bbackup" if version == 2 else f"{entry['payload_id']}.bbackup"
+                payload_path = payload_root / payload_name
+                payload = _read_regular_file(payload_path)
+                if len(payload) < len(payload_magic) + 12 + 16 or not payload.startswith(payload_magic):
+                    raise ValueError(f"Malformed encrypted payload for {entry['path']}")
+                nonce_start = len(payload_magic)
+                nonce = payload[nonce_start:nonce_start + 12]
+                plaintext = AESGCM(tree_key).decrypt(
+                    nonce,
+                    payload[nonce_start + 12:],
+                    _canonical_json(entry),
+                )
+                if len(plaintext) != entry["size"]:
+                    raise ValueError(f"Encrypted payload size mismatch for {entry['path']}")
+                output = dest / entry["path"]
+                output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                with os.fdopen(fd, "wb") as plaintext_file:
+                    plaintext_file.write(plaintext)
+
+            pending = [entry for entry in entries if entry["type"] == "hardlink"]
+            while pending:
+                remaining = []
+                made_progress = False
+                for entry in pending:
+                    target = dest / entry["target"]
+                    output = dest / entry["path"]
+                    if target.exists():
+                        os.link(target, output, follow_symlinks=False)
+                        made_progress = True
+                    else:
+                        remaining.append(entry)
+                if remaining and not made_progress:
+                    raise ValueError("Encrypted tree hardlink inventory is cyclic or incomplete")
+                pending = remaining
+
+            for entry in entries:
+                if entry["type"] == "symlink":
+                    output = dest / entry["path"]
+                    os.symlink(entry["target"], output)
+
+            for entry in sorted(entries, key=lambda value: (value["path"].count("/"), value["path"]), reverse=True):
+                output = dest if entry["path"] == "." else dest / entry["path"]
+                self._apply_tree_metadata(output, entry)
+        except Exception:
+            import shutil
+            shutil.rmtree(dest, ignore_errors=True)
+            raise
+
+    @staticmethod
+    def _apply_tree_metadata(path: Path, entry: Dict[str, Any]) -> None:
+        kind = entry["type"]
+        follow = kind != "symlink"
+        if hasattr(os, "chown"):
+            info = os.stat(path, follow_symlinks=follow)
+            if info.st_uid != entry["uid"] or info.st_gid != entry["gid"]:
+                os.chown(path, entry["uid"], entry["gid"], follow_symlinks=follow)
+        if kind != "symlink":
+            os.chmod(path, entry["mode"])
+        os.utime(path, ns=(entry["atime_ns"], entry["mtime_ns"]), follow_symlinks=follow)
+
+    def _decrypt_legacy_directory(self, source: Path, dest: Path) -> None:
+        files = []
+        for root, dirs, names in os.walk(source, topdown=True, followlinks=False):
+            root_path = Path(root)
+            if any((root_path / name).is_symlink() for name in dirs):
+                raise ValueError("Symlink found in legacy encrypted backup")
+            dirs[:] = [name for name in dirs if not (root_path / name).is_symlink()]
+            for name in names:
+                path = root_path / name
+                info = os.lstat(path)
+                if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                    raise ValueError("Unsupported entry in legacy encrypted backup")
+                if path == source / TREE_METADATA_NAME:
+                    continue
+                if not name.endswith(".enc"):
+                    raise ValueError(f"Partial legacy encrypted backup: unexpected file {path}")
+                rel_path = path.relative_to(source).as_posix()[:-4]
+                if _safe_tree_path(rel_path) is None:
+                    raise ValueError(f"Unsafe legacy encrypted backup path: {rel_path}")
+                files.append((path, rel_path))
+        if not files:
+            raise ValueError("Encrypted directory contains no payload files")
+        self._destination_root(dest)
+        try:
+            for source_file, rel_path in files:
+                dest_file = dest / rel_path
+                dest_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                if not self.decrypt_file(source_file, dest_file):
+                    raise ValueError(f"Legacy encrypted payload failed authentication: {rel_path}")
+        except Exception:
+            import shutil
+            shutil.rmtree(dest, ignore_errors=True)
+            raise
     
     def encrypt_backup(self, backup_dir: Path) -> Path:
         """
@@ -634,18 +1124,25 @@ class EncryptionManager:
         Returns:
             Path to decrypted backup directory
         """
-        # Check if already decrypted
-        if not (backup_dir / "encryption_metadata.json").exists():
+        backup_dir = Path(backup_dir)
+        metadata_path = backup_dir / TREE_METADATA_NAME
+        if not metadata_path.exists():
+            if self.contains_versioned_tree_payload(backup_dir) or backup_dir.name.endswith(".enc"):
+                raise RuntimeError("Authenticated tree inventory is missing")
             logger.info("Backup appears to be unencrypted")
             return backup_dir
-        
-        decrypted_dir = backup_dir.parent / backup_dir.name.replace('.enc', '')
-        
-        if self.decrypt_directory(backup_dir, decrypted_dir):
-            return decrypted_dir
-        else:
-            logger.error("Failed to decrypt backup")
-            return backup_dir  # Return original on failure
+
+        temp_root = Path(tempfile.mkdtemp(prefix="bbackup_decrypted_"))
+        ensure_private_directory(temp_root)
+        decrypted_dir = temp_root / "tree"
+        try:
+            if self.decrypt_directory(backup_dir, decrypted_dir):
+                return decrypted_dir
+            raise RuntimeError("Encrypted backup is malformed or could not be authenticated")
+        except Exception:
+            import shutil
+            shutil.rmtree(temp_root, ignore_errors=True)
+            raise
     
     @staticmethod
     def generate_symmetric_key() -> bytes:

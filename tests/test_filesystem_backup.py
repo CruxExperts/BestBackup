@@ -2,20 +2,177 @@
 Tests for bbackup.filesystem_backup (FilesystemBackup) and
 bbackup.restore.DockerRestore.restore_filesystem_path.
 
-Unit tests only - no real rsync or filesystem side-effects outside tmp_path.
-All subprocess calls are mocked via the mock_subprocess conftest fixture or
-targeted patches where finer control is needed.
+No filesystem side-effects outside tmp_path. Subprocess calls are mocked except
+for a source-selection regression that runs rsync in dry-run mode on tmp_path.
 
 Created: 2026-02-27
 Last Updated: 2026-02-27
 """
 
 from pathlib import Path
+import os
+import shutil
+import socket
+import stat
+import subprocess
+import pytest
 from unittest.mock import MagicMock, patch
 
 from bbackup.config import Config, FilesystemTarget
 from bbackup.filesystem_backup import FilesystemBackup
 from bbackup.restore import DockerRestore
+
+
+@pytest.mark.skipif(not hasattr(os, "setxattr"), reason="extended attributes unavailable")
+def test_original_source_xattr_rejected_before_rsync(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    item = source / "file.txt"
+    item.write_text("data")
+    try:
+        os.setxattr(item, "user.bbackup-test", b"acl-like")
+    except OSError as exc:
+        pytest.skip(f"extended attributes unavailable: {exc}")
+    backup = make_fs_backup(tmp_path)
+    result = MagicMock(
+        returncode=0,
+        stdout=b"BBACKUP_SELECTED:file.txt\n",
+        stderr=b"",
+    )
+    with patch("bbackup.filesystem_backup.subprocess.run", return_value=result) as preflight:
+        with patch.object(backup, "_run_rsync") as rsync:
+            assert backup.backup_path(make_target(path=str(source)), tmp_path / "output") is False
+            preflight.assert_called_once()
+            rsync.assert_not_called()
+
+
+def test_excluded_fifo_is_ignored_by_source_preflight(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "keep.txt").write_text("included")
+    fifo = source / "excluded-pipe"
+    try:
+        os.mkfifo(fifo)
+    except (AttributeError, NotImplementedError, OSError) as exc:
+        pytest.skip(f"FIFO creation is unavailable: {exc}")
+
+    backup = make_fs_backup(tmp_path)
+    result = MagicMock(
+        returncode=0,
+        stdout=b"sending incremental file list\nBBACKUP_SELECTED:keep.txt\n",
+        stderr=b"",
+    )
+    target = make_target(path=str(source), excludes=["excluded-pipe"])
+    with patch("bbackup.filesystem_backup.subprocess.run", return_value=result) as preflight:
+        with patch.object(backup, "_run_rsync", return_value=True):
+            assert backup.backup_path(target, tmp_path / "output") is True
+
+    command = preflight.call_args.args[0]
+    assert "--dry-run" in command
+    assert "--out-format=BBACKUP_SELECTED:%n" in command
+    exclude_file = Path(command[command.index("--exclude-from") + 1])
+    assert not exclude_file.exists()
+
+
+def test_included_fifo_is_rejected_by_source_preflight(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    fifo = source / "included-pipe"
+    try:
+        os.mkfifo(fifo)
+    except (AttributeError, NotImplementedError, OSError) as exc:
+        pytest.skip(f"FIFO creation is unavailable: {exc}")
+
+    backup = make_fs_backup(tmp_path)
+    result = MagicMock(
+        returncode=0,
+        stdout=b"BBACKUP_SELECTED:included-pipe\n",
+        stderr=b"",
+    )
+    with patch("bbackup.filesystem_backup.subprocess.run", return_value=result):
+        with patch.object(backup, "_run_rsync") as rsync:
+            assert backup.backup_path(make_target(path=str(source)), tmp_path / "output") is False
+            rsync.assert_not_called()
+
+
+def test_rsync_selection_parser_round_trips_escaped_paths():
+    assert FilesystemBackup._parse_rsync_selection(
+        b"sending incremental file list\n"
+        b"BBACKUP_SELECTED:a\\#012b\n"
+        b"BBACKUP_SELECTED:a\\#134#012b\n"
+        b"BBACKUP_SELECTED:plain\\slash\n"
+        b"BBACKUP_SELECTED:space name\n"
+        b"BBACKUP_SELECTED:\xce\xbb\n"
+    ) == ["a\nb", r"a\#012b", r"plain\slash", "space name", "λ"]
+
+
+@pytest.mark.integration
+def test_rsync_preflight_uses_native_excludes_and_escaped_names(tmp_path):
+    if shutil.which("rsync") is None:
+        pytest.skip("rsync is unavailable")
+    source = tmp_path / "source"
+    source.mkdir()
+    for name in ("newline\nname.txt", r"literal\#012name.txt", "unicode-λ.txt"):
+        (source / name).write_text("included")
+
+    excluded_fifo = source / "excluded-fifo"
+    try:
+        os.mkfifo(excluded_fifo)
+    except (AttributeError, NotImplementedError, OSError) as exc:
+        pytest.skip(f"FIFO creation is unavailable: {exc}")
+
+    excluded_socket = source / "excluded-socket"
+    listener = socket.socket(socket.AF_UNIX)
+    try:
+        listener.bind(str(excluded_socket))
+    except (AttributeError, OSError) as exc:
+        listener.close()
+        pytest.skip(f"Unix socket creation is unavailable: {exc}")
+
+    xattr_path = source / "excluded-xattr"
+    xattr_path.write_text("unsupported metadata")
+    xattr_available = False
+    if hasattr(os, "setxattr"):
+        try:
+            os.setxattr(xattr_path, "user.bbackup-test", b"unsupported")
+        except OSError:
+            pass
+        else:
+            xattr_available = True
+    else:
+        xattr_available = False
+
+    excludes = ["excluded-fifo", "excluded-socket"]
+    if xattr_available:
+        excludes.append("excluded-xattr")
+    backup = make_fs_backup(tmp_path)
+    target = make_target(path=str(source), excludes=excludes)
+    observed_exclude_contents = []
+    selected_paths = []
+    run_original = subprocess.run
+
+    def capture_preflight(cmd, **kwargs):
+        result = run_original(cmd, **kwargs)
+        selected_paths.extend(FilesystemBackup._parse_rsync_selection(result.stdout))
+        return result
+
+    def capture_copy(cmd, _callback):
+        exclude_file = Path(cmd[cmd.index("--exclude-from") + 1])
+        observed_exclude_contents.append(exclude_file.read_text(encoding="utf-8"))
+        return True
+
+    try:
+        with patch("bbackup.filesystem_backup.subprocess.run", side_effect=capture_preflight):
+            with patch.object(backup, "_run_rsync", side_effect=capture_copy):
+                assert backup.backup_path(target, tmp_path / "output") is True
+    finally:
+        listener.close()
+
+    assert observed_exclude_contents == ["\n".join(excludes)]
+    assert "newline\nname.txt" in selected_paths
+    assert r"literal\#012name.txt" in selected_paths
+    assert "unicode-λ.txt" in selected_paths
+    assert not set(excludes).intersection(selected_paths)
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +448,14 @@ class TestRunRsync:
 
 
 class TestBackupPath:
+    @pytest.fixture(autouse=True)
+    def mocked_source_preflight(self, monkeypatch):
+        # These command dispatch tests use a deliberately nonexistent source.
+        monkeypatch.setattr(
+            "bbackup.filesystem_backup.FilesystemBackup._preflight_source_selection",
+            lambda self, target, exclude_file_path: None,
+        )
+
     def test_creates_dest_dir(self, tmp_path):
         fb = make_fs_backup(tmp_path)
         target = make_target(name="docs", path="/tmp/source")
@@ -300,6 +465,7 @@ class TestBackupPath:
             fb.backup_path(target, backup_dir)
 
         assert (backup_dir / "filesystems" / "docs").exists()
+        assert stat.S_IMODE((backup_dir / "filesystems" / "docs").stat().st_mode) == 0o700
 
     def test_returns_true_on_success(self, tmp_path):
         fb = make_fs_backup(tmp_path)
@@ -321,6 +487,30 @@ class TestBackupPath:
         with patch.object(fb, "_build_rsync_cmd", side_effect=RuntimeError("boom")):
             result = fb.backup_path(target, tmp_path)
         assert result is False
+
+    def test_rejects_symlinked_staging_root(self, tmp_path):
+        fb = make_fs_backup(tmp_path)
+        target = make_target()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        backup_link = tmp_path / "backup_link"
+        backup_link.symlink_to(outside, target_is_directory=True)
+
+        with patch.object(fb, "_run_rsync", return_value=True) as run_rsync:
+            assert fb.backup_path(target, backup_link) is False
+
+        run_rsync.assert_not_called()
+        assert list(outside.iterdir()) == []
+
+    def test_rejects_target_name_traversal(self, tmp_path):
+        fb = make_fs_backup(tmp_path)
+        target = make_target(name="../outside")
+
+        with patch.object(fb, "_run_rsync", return_value=True) as run_rsync:
+            assert fb.backup_path(target, tmp_path / "backup") is False
+
+        run_rsync.assert_not_called()
+        assert not (tmp_path / "outside").exists()
 
     def test_no_excludes_skips_tempfile(self, tmp_path):
         """When target has no excludes, no --exclude-from should appear in command."""
@@ -348,7 +538,9 @@ class TestBackupPath:
         def capture(cmd, cb):
             if "--exclude-from" in cmd:
                 idx = cmd.index("--exclude-from")
-                seen_exclude_file.append(Path(cmd[idx + 1]))
+                exclude_path = Path(cmd[idx + 1])
+                seen_exclude_file.append(exclude_path)
+                assert stat.S_IMODE(exclude_path.stat().st_mode) == 0o600
             return True
 
         with patch.object(fb, "_run_rsync", side_effect=capture):
@@ -364,14 +556,15 @@ class TestBackupPath:
 
         created_files = []
 
-        original_mktemp = __import__("tempfile").mktemp
+        tempfile_module = __import__("tempfile")
+        original_mkstemp = tempfile_module.mkstemp
 
-        def track_mktemp(suffix="", **kwargs):
-            path = original_mktemp(suffix=suffix)
+        def track_mkstemp(*args, **kwargs):
+            fd, path = original_mkstemp(*args, **kwargs)
             created_files.append(path)
-            return path
+            return fd, path
 
-        with patch("tempfile.mktemp", side_effect=track_mktemp):
+        with patch("tempfile.mkstemp", side_effect=track_mkstemp):
             with patch.object(fb, "_run_rsync", return_value=True):
                 fb.backup_path(target, tmp_path)
 
@@ -384,14 +577,15 @@ class TestBackupPath:
         target = make_target(excludes=["*.pyc"])
 
         created_files = []
-        original_mktemp = __import__("tempfile").mktemp
+        tempfile_module = __import__("tempfile")
+        original_mkstemp = tempfile_module.mkstemp
 
-        def track_mktemp(suffix="", **kwargs):
-            path = original_mktemp(suffix=suffix)
+        def track_mkstemp(*args, **kwargs):
+            fd, path = original_mkstemp(*args, **kwargs)
             created_files.append(path)
-            return path
+            return fd, path
 
-        with patch("tempfile.mktemp", side_effect=track_mktemp):
+        with patch("tempfile.mkstemp", side_effect=track_mkstemp):
             with patch.object(fb, "_run_rsync", return_value=False):
                 fb.backup_path(target, tmp_path)
 
@@ -404,14 +598,15 @@ class TestBackupPath:
         target = make_target(excludes=["*.pyc"])
 
         created_files = []
-        original_mktemp = __import__("tempfile").mktemp
+        tempfile_module = __import__("tempfile")
+        original_mkstemp = tempfile_module.mkstemp
 
-        def track_mktemp(suffix="", **kwargs):
-            path = original_mktemp(suffix=suffix)
+        def track_mkstemp(*args, **kwargs):
+            fd, path = original_mkstemp(*args, **kwargs)
             created_files.append(path)
-            return path
+            return fd, path
 
-        with patch("tempfile.mktemp", side_effect=track_mktemp):
+        with patch("tempfile.mkstemp", side_effect=track_mkstemp):
             with patch.object(fb, "_run_rsync", side_effect=RuntimeError("boom")):
                 result = fb.backup_path(target, tmp_path)
 

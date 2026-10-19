@@ -10,7 +10,7 @@ Last Updated: 2026-03-04
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, TypedDict
+from typing import Any, Dict, List, Literal, NotRequired, Optional, TypedDict
 
 
 CliName = Literal["bbackup", "bbman"]
@@ -1941,13 +1941,17 @@ def get_command(cli: CliName, name: str) -> Optional[CliCommand]:
 class ProductionCommand(TypedDict):
     summary: str
     fields: dict[str, str]
+    ui: NotRequired[dict[str, dict[str, str]]]
+    label: NotRequired[str]
 
 
 PRODUCTION_COMMANDS: dict[str, ProductionCommand] = {
     "doctor": {"summary": "Inspect configured repository bindings and engine availability.", "fields": {}},
-    "setup": {"summary": "Validate and create new portable configuration and private host-binding files without enabling services.", "fields": {"configuration_file": "path", "bindings_file": "path"}},
+    "setup": {"summary": "Validate and create new version-three policy and private bindings, or explicitly migrate or enroll an existing pair without enabling services.", "fields": {"configuration_file": "optional-string", "bindings_file": "optional-string", "migrate": "boolean", "enroll": "boolean"}},
     "config show": {"summary": "Read portable configuration and its revision without exposing private bindings.", "fields": {}},
     "config save": {"summary": "Validate and replace the portable configuration only at its reviewed revision, preserving a private backup.", "fields": {"document_file": "path", "revision": "string"}},
+    "config migrate": {"summary": "Write enrolled version-three files beside untouched version-two originals.", "fields": {}},
+    "service enroll": {"summary": "Explicitly enroll the exact version-three policy and bindings on this machine and user.", "fields": {}},
     "jobs list": {"summary": "List configured capture jobs.", "fields": {}},
     "jobs run": {"summary": "Capture locally and copy explicit successful snapshots.", "fields": {"name": "string"}},
     "repositories list": {"summary": "List declared repositories without host credentials.", "fields": {}},
@@ -1960,6 +1964,7 @@ PRODUCTION_COMMANDS: dict[str, ProductionCommand] = {
     "restore": {"summary": "Restore and verify files in a new isolated directory.", "fields": {"repository": "string", "snapshot": "string", "target": "path"}},
     "runs list": {"summary": "Read sanitized operation events.", "fields": {"limit": "limit", "offset": "offset"}},
     "service render": {"summary": "Render disabled systemd service and persistent timer units.", "fields": {"name": "string", "executable": "path"}},
+    "service install": {"summary": "Install reviewed user-level units; activate the exact timer only with --activate.", "fields": {"name": "string", "executable": "path", "activate": "boolean"}},
 }
 
 
@@ -1988,6 +1993,25 @@ PRODUCTION_COMMANDS.update({
     "recovery open": {"summary": "Authenticate and decrypt a recovery kit into a new private directory.", "fields": {"kit": "path", "target": "path", "signer": "string"}},
     "recovery restore": {"summary": "Restore signed exact historical object versions into a new local repository.", "fields": {"manifest": "path", "signature": "path", "signer": "string", "password_file": "path", "repository": "string", "repository_id": "string", "snapshot": "string", "bucket": "string", "endpoint": "string", "prefix": "optional-string", "region": "optional-string", "target": "path"}},
 })
+
+_PRODUCTION_FIELD_HELP = {
+    "name": "Choose a configured job or repository by its exact name.",
+    "source": "Choose the configured source or repository named by this operation.",
+    "destination": "Choose the independent repository that receives this snapshot copy.",
+    "snapshot": "Use a complete snapshot ID from the snapshot list.",
+    "target": "Choose a new absolute destination that does not overlap protected data.",
+    "executable": "Use the absolute path to the installed bbackup executable.",
+    "approved": "Approve only the exact retention plan already reviewed.",
+    "activate": "Enable and start this job's exact user timer after installing its units.",
+    "operation_id": "Use the complete operation ID from the run ledger.",
+    "outcome": "Record the outcome already verified on the target; this does not replay work.",
+    "configuration_file": "Choose a reviewed version-three portable policy JSON file.",
+    "bindings_file": "Choose a reviewed private host-bindings JSON file.",
+    "document_file": "Choose a reviewed replacement portable policy JSON file.",
+    "revision": "Use the revision returned by config show before editing.",
+    "migrate": "Create new version-three files beside untouched version-two originals.",
+    "enroll": "Trust the reviewed exact version-three pair on this machine and user.",
+}
 
 PRODUCTION_COMMANDS["runs stream"] = {
     "summary": "Emit a bounded page of lifecycle events as explicit JSON lines, without a result envelope.",
@@ -2038,3 +2062,34 @@ PRODUCTION_COMMANDS.update({
         },
     },
 })
+
+for _definition in PRODUCTION_COMMANDS.values():
+    _definition["ui"] = {
+        _name: {"label": _name.replace("_", " ").capitalize(), "help": _PRODUCTION_FIELD_HELP[_name]}
+        for _name in _definition["fields"] if _name in _PRODUCTION_FIELD_HELP
+    }
+
+
+# Human-facing labels do not change stable command identifiers or validation.
+for _name, _label in {
+    "jobs run": "Run a backup",
+    "repositories init": "Initialize storage",
+    "repositories check": "Verify repository data",
+    "snapshots copy": "Make an additional copy",
+    "retention plan": "Preview retention",
+    "retention apply": "Apply reviewed retention",
+    "service render": "Preview schedule",
+    "service install": "Install or activate schedule",
+    "runs reconcile": "Review an interrupted operation",
+    "recovery inspect": "Inspect cloud configuration",
+    "recovery b2-inspect": "Inspect Backblaze B2 configuration",
+    "recovery checkpoint": "Create an independent recovery kit",
+    "recovery open": "Open a trusted recovery kit",
+    "recovery restore": "Recover historical repository objects",
+    "databases restore": "Restore a native database",
+    "databases reconcile": "Review an interrupted database restore",
+    "docker restore": "Restore to a new Docker container",
+    "docker recover": "Recover interrupted Docker stop intentions",
+    "docker reconcile": "Review an interrupted Docker restore",
+}.items():
+    PRODUCTION_COMMANDS[_name]["label"] = _label

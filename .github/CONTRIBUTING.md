@@ -1,14 +1,14 @@
 # Contributing
 
-Thanks for helping improve bbackup. Keep changes focused and make behavior claims match the checked-in implementation and its evidence. Version 2.0.0-alpha.1 is a pre-release; `bbackup production` remains a preview while the legacy 1.x workflow is retained.
+Thanks for helping improve bbackup. Keep changes focused and make behavior claims match the checked-in implementation and its evidence. The latest published version is v2.0.2; this checkout also contains unreleased guided setup and safety improvements. The legacy YAML workflow is retained.
 
 ## Development setup
 
 Use Python 3.12 or newer and the locked project environment:
 
 ```bash
-git clone https://github.com/CruxExperts/best-backup.git
-cd best-backup
+git clone https://github.com/CruxExperts/BestBackup.git
+cd BestBackup
 uv sync --locked
 uv run bbackup --version
 uv run bbackup production --help
@@ -20,7 +20,7 @@ Enable the repository hooks once per checkout:
 git config core.hooksPath .githooks
 ```
 
-The preview's ordinary tests use local repositories and executable fixtures. Live cloud accounts, production database credentials, and real recovery data are not required for unit tests. Never commit passwords, host bindings, customer data, or cloud tokens.
+Ordinary tests use local repositories and executable fixtures. Live cloud accounts, production database credentials, and real recovery data are not required for unit tests. Never commit passwords, host bindings, customer data, or cloud tokens.
 
 ## Validate a change
 
@@ -30,6 +30,9 @@ Run checks that cover the changed behavior. For a release-ready source change, u
 uv run ruff check bbackup/ scripts/ tests/
 uv run python -m py_compile bbackup.py bbman.py bbackup/*.py bbackup/data/*.py bbackup/management/*.py scripts/*.py
 uv run python scripts/check_markdown_standards.py
+uv run python scripts/check_assets.py
+uv run python scripts/check_publishing_ready.py
+uv run python scripts/generate_cli_skills.py --check
 uv run pytest
 git diff --check
 ```
@@ -50,7 +53,7 @@ Report behavior issues through the [bug report template](ISSUE_TEMPLATE/bug_repo
 
 <p align="center">
 Slavic Kozyuk<br>
-&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/best-backup/blob/main/LICENSE">MIT License</a>
+&copy; 2026 <a href="https://www.cruxexperts.com/">Crux Experts LLC</a> &mdash; <a href="https://github.com/CruxExperts/BestBackup/blob/main/LICENSE">MIT License</a>
 </p>
 
 <!-- project-footer:end -->

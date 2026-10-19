@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=70", "wheel"]
+requires = ["setuptools==84.0.0", "wheel==0.48.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "bbackup"
-version = "2.0.2"
+version = "2.0.3"
 description = "Local-first encrypted Linux backups with restic and a visual dashboard"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -53,9 +53,9 @@ gdrive-auth = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/CruxExperts/best-backup"
-Repository = "https://github.com/CruxExperts/best-backup"
-Issues = "https://github.com/CruxExperts/best-backup/issues"
+Homepage = "https://github.com/CruxExperts/BestBackup"
+Repository = "https://github.com/CruxExperts/BestBackup"
+Issues = "https://github.com/CruxExperts/BestBackup/issues"
 
 [project.scripts]
 bbackup = "bbackup.cli:cli"

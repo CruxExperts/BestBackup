@@ -463,10 +463,13 @@ class TestSFTP:
         mock_ssh.open_sftp.return_value = mock_sftp
 
         with patch("paramiko.SSHClient", return_value=mock_ssh), \
-             patch("paramiko.AutoAddPolicy"):
+             patch("paramiko.RejectPolicy") as reject_policy, \
+             patch("bbackup.remote.os.path.isfile", return_value=True):
             result = mgr.upload_to_sftp(remote, src, "/remote/backups")
 
         assert result is True
+        assert mock_ssh.load_system_host_keys.call_count == 4
+        mock_ssh.set_missing_host_key_policy.assert_called_once_with(reject_policy.return_value)
         mock_sftp.put.assert_called_once()
         assert mock_sftp.put.call_args.args[1] == "/remote/backups.partial"
         mock_sftp.posix_rename.assert_called_once_with("/remote/backups.partial", "/remote/backups")
@@ -482,12 +485,32 @@ class TestSFTP:
         mock_ssh.open_sftp.return_value = mock_sftp
 
         with patch("paramiko.SSHClient", return_value=mock_ssh), \
-             patch("paramiko.AutoAddPolicy"):
+             patch("paramiko.RejectPolicy"):
             mgr.upload_to_sftp(remote, src, "/remote/backups")
 
         # connect called with pkey=None
         connect_call = mock_ssh.connect.call_args
         assert connect_call.kwargs.get("pkey") is None
+
+    def test_unknown_or_changed_host_key_prevents_sftp_upload(self, tmp_path):
+        import paramiko
+
+        mgr = make_manager()
+        src = tmp_path / "file.txt"
+        src.write_text("data")
+        remote = make_remote(type_="sftp", key_file=None)
+        exceptions = [
+            paramiko.SSHException("unknown host key"),
+            paramiko.BadHostKeyException("host.example.com", MagicMock(), MagicMock()),
+        ]
+        for error in exceptions:
+            mock_ssh = MagicMock()
+            mock_ssh.connect.side_effect = error
+            with patch("paramiko.SSHClient", return_value=mock_ssh), \
+                 patch("paramiko.RejectPolicy"):
+                result = mgr.upload_to_sftp(remote, src, "/remote/backups")
+            assert result is False
+            mock_ssh.open_sftp.assert_not_called()
 
     def test_key_file_triggers_rsa_load(self, tmp_path):
         mgr = make_manager()
@@ -503,7 +526,7 @@ class TestSFTP:
         mock_key = MagicMock()
 
         with patch("paramiko.SSHClient", return_value=mock_ssh), \
-             patch("paramiko.AutoAddPolicy"), \
+             patch("paramiko.RejectPolicy"), \
              patch("paramiko.RSAKey.from_private_key_file", return_value=mock_key) as mock_rsa:
             mgr.upload_to_sftp(remote, src, "/remote/backups")
 
@@ -521,7 +544,7 @@ class TestSFTP:
         mock_ssh.open_sftp.return_value = mock_sftp
 
         with patch("paramiko.SSHClient", return_value=mock_ssh), \
-             patch("paramiko.AutoAddPolicy"), \
+             patch("paramiko.RejectPolicy"), \
              patch.object(mgr, "_upload_directory_sftp") as mock_upload_dir:
             mgr.upload_to_sftp(remote, src_dir, "/remote/backups")
 

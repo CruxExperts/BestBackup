@@ -5,7 +5,7 @@ Backup runner with status tracking for live TUI updates.
 import time
 from pathlib import Path
 from typing import List, Optional
-from .config import Config, BackupScope, FilesystemTarget
+from .config import Config, BackupScope, FilesystemTarget, ensure_private_directory
 from .docker_backup import DockerBackup
 from .filesystem_backup import FilesystemBackup
 from .remote import RemoteStorageManager
@@ -48,7 +48,7 @@ class BackupRunner:
             scope = self.config.scope
 
         backup_dir = Path(backup_dir)
-        backup_dir.mkdir(parents=True, exist_ok=True)
+        ensure_private_directory(backup_dir)
 
         results = {
             "containers": {},
@@ -88,7 +88,7 @@ class BackupRunner:
             containers_to_backup = containers or [c["name"] for c in self.docker_backup.get_all_containers()]
             
             configs_dir = backup_dir / "configs"
-            configs_dir.mkdir(parents=True, exist_ok=True)
+            ensure_private_directory(configs_dir)
             
             for container_name in containers_to_backup:
                 if self.status.get_status() == "cancelled":
@@ -137,7 +137,7 @@ class BackupRunner:
         # Backup volumes
         if scope.volumes and not self.status.get_status() == "cancelled":
             volumes_dir = backup_dir / "volumes"
-            volumes_dir.mkdir(parents=True, exist_ok=True)
+            ensure_private_directory(volumes_dir)
             
             # Get volumes for selected containers
             if containers:
@@ -241,6 +241,7 @@ class BackupRunner:
         # Backup filesystem paths
         fs_backup = FilesystemBackup(self.config)
         if scope.filesystems and fs_targets and not self.status.get_status() == "cancelled":
+            ensure_private_directory(backup_dir / "filesystems")
             for target in fs_targets:
                 if self.status.get_status() == "cancelled":
                     break

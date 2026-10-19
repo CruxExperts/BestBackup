@@ -6,6 +6,7 @@ Last Updated: 2026-02-26
 """
 
 from io import StringIO
+import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -909,3 +910,11 @@ class TestCleanupExtended:
         with patch("rich.prompt.Confirm.ask", return_value=False):
             result = run_cleanup(config=cfg, confirm=True)
         assert result["staging_removed"] == 0
+
+
+@pytest.mark.parametrize("url", ["https://github.com.evil.example/user/repo",
+    "https://evil.example/github.com/user/repo", "https://github.com@evil.example/user/repo",
+    "https://user@github.com/user/repo", "https://gitlab.com.evil.example/user/repo"])
+def test_repository_provider_requires_exact_hostname(url):
+    from bbackup.management.repo import parse_repo_url
+    assert parse_repo_url(url)["type"] == "custom"

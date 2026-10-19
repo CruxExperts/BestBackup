@@ -7,7 +7,12 @@ Last Updated: 2026-02-26
 """
 
 import json
+import os
+import io
+import tarfile
+import stat
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +20,15 @@ from docker.errors import DockerException, APIError
 
 from bbackup.config import BackupScope, Config
 from bbackup.docker_backup import DockerBackup
+
+
+@pytest.fixture(autouse=True)
+def copy_actor():
+    # Model privileged directory-copy tests without changing the filesystem
+    # identity used by shared private-directory helpers in other modules.
+    with patch("bbackup.docker_backup.os", wraps=os) as actor:
+        actor.geteuid.return_value = 0
+        yield actor
 
 
 def make_backup(mock_docker_client):
@@ -133,6 +147,8 @@ class TestBackupContainerConfig:
         assert config_file.exists()
         data = json.loads(config_file.read_text())
         assert data["Id"] == "abc"
+        assert stat.S_IMODE(config_file.stat().st_mode) == 0o600
+        assert stat.S_IMODE((tmp_path / "web_logs.txt").stat().st_mode) == 0o600
 
     def test_container_not_found_returns_false(self, mock_docker_client, tmp_path):
         mock_docker_client.containers.get.side_effect = APIError("not found")
@@ -289,6 +305,51 @@ class TestBackupVolumeRsync:
 
 
 class TestBackupVolumeTarFallback:
+    @pytest.mark.skipif(os.geteuid() == 0, reason="non-root ownership refusal")
+    def test_tar_capture_refuses_foreign_owner_before_inventory(self, mock_docker_client, mock_subprocess, tmp_path):
+        mock_run, _ = mock_subprocess
+        mock_docker_client.volumes.get.return_value = MagicMock()
+        mock_docker_client.containers.run.return_value = MagicMock()
+
+        def run(cmd, **kwargs):
+            if "which" in cmd:
+                return MagicMock(returncode=1, stdout="", stderr="")
+            if "cp" in cmd:
+                with tarfile.open(cmd[-1], "w:gz") as tar:
+                    member = tarfile.TarInfo("./private.txt")
+                    member.size = 4
+                    member.uid = os.geteuid() + 1
+                    member.gid = os.getegid()
+                    tar.addfile(member, io.BytesIO(b"data"))
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = run
+        db = make_backup(mock_docker_client)
+        assert db.backup_volume("myvolume", tmp_path) is False
+        assert not (tmp_path / "volumes" / "myvolume").exists()
+        assert not (tmp_path / "volumes" / "myvolume.tar.gz").exists()
+
+    @pytest.mark.skipif(not hasattr(os, "setxattr"), reason="extended attributes unavailable")
+    def test_encrypted_capture_checks_original_volume_before_copy(self, mock_docker_client, tmp_path):
+        mountpoint = tmp_path / "mounted_volume"
+        mountpoint.mkdir()
+        file = mountpoint / "file.txt"
+        file.write_text("data")
+        try:
+            os.setxattr(file, "user.bbackup-test", b"unsupported")
+        except OSError as exc:
+            pytest.skip(f"extended attributes unavailable: {exc}")
+        volume = MagicMock()
+        volume.attrs = {"Mountpoint": str(mountpoint)}
+        mock_docker_client.volumes.get.return_value = volume
+        cfg = Config(config_path=None)
+        cfg.encryption.enabled = True
+        db = DockerBackup(cfg)
+
+        assert db.backup_volume("myvolume", tmp_path) is False
+        mock_docker_client.containers.run.assert_not_called()
+        assert not (tmp_path / "volumes").exists()
+
     def test_tar_fallback_when_rsync_absent(self, mock_docker_client, mock_subprocess, tmp_path):
         mock_run, _ = mock_subprocess
         mock_docker_client.volumes.get.return_value = MagicMock()
@@ -322,6 +383,55 @@ class TestBackupVolumeTarFallback:
             if c.args and "tar" in c.args[0]
         ]
         assert len(calls_with_tar) > 0
+
+    def test_dot_root_tar_mode_is_restored_under_private_parent(
+        self, mock_docker_client, mock_subprocess, tmp_path
+    ):
+        mock_run, _ = mock_subprocess
+        mock_docker_client.volumes.get.return_value = MagicMock()
+        mock_docker_client.containers.run.return_value = MagicMock()
+
+        def run_side_effect(cmd, **kwargs):
+            if "which" in cmd and "rsync" in cmd:
+                return MagicMock(returncode=1, stdout="", stderr="")
+            if cmd[:2] == ["docker", "cp"]:
+                with tarfile.open(cmd[-1], "w:gz") as tar:
+                    root = tarfile.TarInfo(".")
+                    root.type = tarfile.DIRTYPE
+                    root.mode = 0o755
+                    root.uid, root.gid = os.geteuid(), os.getegid()
+                    tar.addfile(root)
+                    item = tarfile.TarInfo("data.txt")
+                    item.uid, item.gid = os.geteuid(), os.getegid()
+                    item.size = len(b"private")
+                    tar.addfile(item, io.BytesIO(b"private"))
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = run_side_effect
+        from bbackup.archive import extract_archive_safely as extract_original
+
+        observed_modes = []
+
+        def inspect_wrapper(tar, destination, **kwargs):
+            wrapper = Path(destination).parent
+            assert stat.S_IMODE(wrapper.stat().st_mode) == 0o700
+            extract_original(tar, destination, **kwargs)
+            observed_modes.append((
+                stat.S_IMODE(wrapper.stat().st_mode),
+                stat.S_IMODE(Path(destination).stat().st_mode),
+            ))
+
+        db = make_backup(mock_docker_client)
+        db.config.data.setdefault("backup", {}).setdefault("compression", {})["enabled"] = False
+        with patch("bbackup.docker_backup.extract_archive_safely", side_effect=inspect_wrapper):
+            assert db.backup_volume("myvolume", tmp_path) is True
+
+        backup_root = tmp_path / "volumes"
+        volume_root = backup_root / "myvolume"
+        assert observed_modes == [(0o700, 0o755)]
+        assert stat.S_IMODE(backup_root.stat().st_mode) == 0o700
+        assert stat.S_IMODE(volume_root.stat().st_mode) == 0o755
+        assert (volume_root / "data.txt").read_text() == "private"
 
 
 # ---------------------------------------------------------------------------
@@ -418,6 +528,7 @@ class TestBackupVolumeCompression:
 
         vol_dir = tmp_path / "volumes" / "myvolume"
         vol_dir.mkdir(parents=True)
+        vol_dir.parent.chmod(0o700)
         (vol_dir / "file.txt").write_text("data")
 
         db.backup_volume("myvolume", tmp_path)
@@ -541,3 +652,28 @@ class TestCreateBackup:
         # Verify get_all_containers was NOT called (explicit list used)
         mock_docker_client.containers.list.assert_not_called()
         assert "web" in result["containers"]
+
+
+def test_nonroot_volume_backup_uses_checked_tar_even_when_rsync_available(
+    mock_docker_client, mock_subprocess, tmp_path, copy_actor,
+):
+    copy_actor.geteuid.return_value = 1001
+    run, _ = mock_subprocess
+    commands = []
+    def execute(args, **kwargs):
+        commands.append(args)
+        if args[:2] == ["docker", "cp"]:
+            with tarfile.open(args[-1], "w:gz") as tar:
+                entry = tarfile.TarInfo(".")
+                entry.type = tarfile.DIRTYPE
+                entry.uid, entry.gid = os.geteuid(), os.getegid()
+                tar.addfile(entry)
+        return MagicMock(returncode=0, stdout="", stderr="")
+    run.side_effect = execute
+    db = make_backup(mock_docker_client)
+    with patch("bbackup.docker_backup.extract_archive_safely", side_effect=OSError("Cannot restore archive ownership")):
+        assert db.backup_volume("unrestorable", tmp_path) is False
+    assert any(args[:2] == ["docker", "exec"] and "which" in args for args in commands)
+    assert not any("rsync" in args and "which" not in args for args in commands)
+    assert not any(args[:3] == ["docker", "cp", "-a"] for args in commands)
+    assert not (tmp_path / "volumes/unrestorable").exists()

@@ -341,11 +341,6 @@ jobs:
           expected_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}" --jq '.sha')"
           actual_sha="$(jq -r '.head_sha' "$RUNNER_TEMP/build-run.json")"
           test "$actual_sha" = "$expected_sha"
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "A release for $RELEASE_TAG already exists; refusing to replace it." >&2
-            exit 1
-          fi
-
       - name: Download exact successful build artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
@@ -436,14 +431,76 @@ jobs:
           if [[ "$RELEASE_TAG" == *-* ]]; then
             release_args+=(--prerelease)
           fi
+
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            > "$RUNNER_TEMP/releases-before-create.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def pages(path):
+              text = Path(path).read_text(encoding="utf-8")
+              decoder = json.JSONDecoder()
+              position = 0
+              while position < len(text):
+                  while position < len(text) and text[position].isspace():
+                      position += 1
+                  if position == len(text):
+                      break
+                  page, position = decoder.raw_decode(text, position)
+                  if not isinstance(page, list):
+                      raise SystemExit("GitHub releases API returned a non-list page")
+                  yield page
+
+          tag = os.environ["RELEASE_TAG"]
+          matches = [release for page in pages(
+              Path(os.environ["RUNNER_TEMP"]) / "releases-before-create.json"
+          ) for release in page if release.get("tag_name") == tag]
+          if matches:
+              raise SystemExit(f"A release for {tag} already exists; refusing to create a duplicate.")
+          PY
+
           gh release create "$RELEASE_TAG" "${assets[@]}" "${release_args[@]}" \
             --repo "$GITHUB_REPOSITORY"
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
-            > "$RUNNER_TEMP/draft-release.json"
+
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            > "$RUNNER_TEMP/releases-after-create.json"
           python3 - <<'PYVERIFY'
-          import hashlib, json, os
+          import hashlib
+          import json
+          import os
           from pathlib import Path
-          draft = json.loads((Path(os.environ["RUNNER_TEMP"]) / "draft-release.json").read_text())
+
+          def pages(path):
+              text = Path(path).read_text(encoding="utf-8")
+              decoder = json.JSONDecoder()
+              position = 0
+              while position < len(text):
+                  while position < len(text) and text[position].isspace():
+                      position += 1
+                  if position == len(text):
+                      break
+                  page, position = decoder.raw_decode(text, position)
+                  if not isinstance(page, list):
+                      raise SystemExit("GitHub releases API returned a non-list page")
+                  yield page
+
+          tag = os.environ["RELEASE_TAG"]
+          matches = [release for page in pages(
+              Path(os.environ["RUNNER_TEMP"]) / "releases-after-create.json"
+          ) for release in page if release.get("tag_name") == tag]
+          if len(matches) != 1:
+              raise SystemExit(f"Expected one release for {tag}, found {len(matches)}.")
+          draft = matches[0]
+          release_id = draft.get("id")
+          if (type(release_id) is not int or release_id < 1
+                  or draft.get("tag_name") != tag or draft.get("draft") is not True):
+              raise SystemExit("The matching release is not the expected draft identity.")
+          expected_body = Path("release-inputs/release_notes.txt").read_text(encoding="utf-8").strip()
+          actual_body = draft.get("body")
+          if not isinstance(actual_body, str) or actual_body.strip() != expected_body:
+              raise SystemExit("Draft release notes differ from the signed release notes.")
           expected = {}
           for path in Path("release-inputs").iterdir():
               if path.name == "release_notes.txt":
@@ -451,7 +508,34 @@ jobs:
               with path.open("rb") as stream:
                   digest = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
               expected[path.name] = (path.stat().st_size, digest)
-          actual = {asset["name"]: (asset["size"], asset.get("digest")) for asset in draft["assets"]}
-          assert draft["draft"] and actual == expected, "Draft asset inventory or SHA256 differs"
+          actual = {}
+          for asset in draft.get("assets", []):
+              name = asset.get("name")
+              if not isinstance(name, str) or name in actual:
+                  raise SystemExit("Draft release has an invalid or duplicate asset name.")
+              actual[name] = (asset.get("size"), asset.get("digest"))
+          if actual != expected:
+              raise SystemExit("Draft asset inventory or SHA256 differs.")
+          (Path(os.environ["RUNNER_TEMP"]) / "verified-release-id").write_text(
+              f"{release_id}\n", encoding="ascii"
+          )
           PYVERIFY
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
+          release_id="$(cat "$RUNNER_TEMP/verified-release-id")"
+          [[ "$release_id" =~ ^[1-9][0-9]*$ ]]
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            -F draft=false > "$RUNNER_TEMP/published-release.json"
+          python3 - <<'PYPUBLISHED'
+          import json
+          import os
+          from pathlib import Path
+
+          release = json.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "published-release.json").read_text(encoding="utf-8")
+          )
+          expected_id = int((Path(os.environ["RUNNER_TEMP"]) / "verified-release-id").read_text())
+          if (release.get("id") != expected_id
+                  or release.get("tag_name") != os.environ["RELEASE_TAG"]
+                  or release.get("draft") is not False):
+              raise SystemExit("GitHub did not publish the verified release ID.")
+          PYPUBLISHED

@@ -785,8 +785,9 @@ from source archives and Git.
 
 ### Version 2.0.3 release provenance
 
-Version 2.0.3 is prepared from the reviewed guided-setup and recovery work above.
-Its release requires the protected pull request to merge, successful trusted CI
+Version 2.0.3 was published from the reviewed guided-setup and recovery work above;
+the publication record below identifies the exact source and verified artifacts.
+Publication required the protected pull request to merge, successful trusted CI
 on the exact resulting default-branch commit, and an annotated tag signed by the
 fixed project key. An unverified GitHub signing identity blocks the merge; local
 cryptographic verification alone does not override that requirement.
@@ -868,6 +869,44 @@ guarded-operation core and timer rendering verified by that comparison. Version 
 generated command documentation, and release provenance tooling receive their
 own candidate validation. The release does not turn same-guest repository copies
 into off-host recovery or broaden the recorded ARM64/cloud qualification.
+
+### Version 2.0.3 publication record - 2026-10-19
+
+[Version 2.0.3](https://github.com/CruxExperts/BestBackup/releases/tag/v2.0.3)
+was published at 09:57:37 UTC from signed annotated tag `v2.0.3`, resolving to
+`61750fd22158b00596262f108f8e9ba8dff4cca7`. The protected release pull request
+[#19](https://github.com/CruxExperts/BestBackup/pull/19) merged after its checks
+passed and all four source-verified review threads were resolved.
+
+Trusted [default-branch CI](https://github.com/CruxExperts/BestBackup/actions/runs/39232761634)
+passed on that exact commit. The [tag build](https://github.com/CruxExperts/BestBackup/actions/runs/39233324423)
+passed source validation and all four Ubuntu 24.04/26.04 AMD64/ARM64 package
+build and installation jobs. These jobs establish package availability and
+installation evidence, without expanding the functional qualification above.
+
+The release contains 18 assets: wheel, portable source archive, four native
+packages with their manifests and checksum sidecars, source verification,
+release provenance, `SHA256SUMS`, and its fixed-key OpenPGP signature. The
+checksum inventory SHA-256 is
+`4dad79ca1959581a5ffde776b52debdce9ea133f482f6e5ab5bf4cf5c8a068fd`.
+All public downloads matched the verified build files and GitHub's asset
+digests; the downloaded inventory signature and every listed checksum passed.
+An unauthenticated public API read confirmed the published, stable release.
+GitHub reports the release as immutable.
+
+The [publication run](https://github.com/CruxExperts/BestBackup/actions/runs/39233730520)
+stopped after uploading a complete draft because lookup by tag returned 404
+for that draft. Read-only reconciliation located release ID `417137103`,
+verified its exact tag, notes, and all 18 asset names, sizes, and digests, then
+published that existing draft by ID. No draft, tag, or asset was recreated.
+The subsequent workflow correction locates drafts through the paginated
+release inventory, refuses duplicate draft or published tags before creation,
+and verifies and publishes the exact selected release ID.
+
+The README, documentation index, repository description, and topics now address
+Linux administrators, homelab and self-hosted operators, and small infrastructure
+teams. They retain the recorded cloud, Docker, ARM64, upgrade, and off-host
+recovery limits rather than treating discoverability as additional qualification.
 
 ## Dependency evidence
 

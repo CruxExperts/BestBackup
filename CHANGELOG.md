@@ -10,6 +10,10 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+### Fixed
+
+- Release publication locates the exact draft by release ID and refuses an existing draft or published tag before creation, including drafts hidden from lookup by tag.
+
 ---
 
 ## [2.0.3] - 2026-10-19

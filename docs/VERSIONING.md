@@ -89,6 +89,9 @@ git diff --check
    release key. Dispatch `release-notes.yml` on the default branch with the
    successful `build_run_id`, exact tag, and detached signature. The workflow
    binds the run to the tag commit, verifies the complete artifact inventory
-   and fixed-fingerprint signature, then verifies a complete draft and publishes it once. Future published releases are immutable.
+   and fixed-fingerprint signature, then locates the complete draft through the
+   paginated release inventory, verifies its exact release ID and assets, and
+   publishes that ID once. Existing drafts and published releases for the tag
+   block a new creation. Future published releases are immutable.
 10. Verify the published tag, assets, checksum manifest, and signature. Never
     replace an existing tag or replay a publication after an uncertain result.

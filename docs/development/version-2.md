@@ -848,6 +848,21 @@ The release provenance verifies that evidence against the source lockfile and
 includes it in the signed inventory. This is not a complete OS, container, or
 host security audit.
 
+The October 19 release closeout repeated the complete candidate suite: **963
+tests passed with one skip** in 34.28 seconds. The public issue and pull-request
+queue contained no ordinary open issues and one release pull request, #19. Its
+four review findings are covered by the extraction, rsync-selection, Docker
+ownership, and XDG installation fixes and their regression tests described above.
+The landing page and documentation index now route Linux administrators,
+homelab operators, and small infrastructure teams to the appropriate tested
+workflows without extending the qualification scope.
+
+The October 19 dependency refresh repeated all 53 exact-version queries across
+OSV, GitHub Advisory Database, deps.dev, and PyPI. All responses succeeded and
+returned no advisory records for those versions at 09:40 UTC. The linked portable
+dependency report contains the refreshed timestamps and evidence digest; the
+lockfile and selected dependency versions are unchanged.
+
 The earlier real-guest results apply only to the unchanged service/enrollment/
 guarded-operation core and timer rendering verified by that comparison. Version metadata,
 generated command documentation, and release provenance tooling receive their

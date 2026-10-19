@@ -12,7 +12,7 @@ current uv-based install, development, and release instructions.
 
 ---
 
-## [2.0.3] - 2026-10-18
+## [2.0.3] - 2026-10-19
 
 Existing schema-2 configurations require explicit migration and enrollment before
 mutating production operations. Migration preserves the original files. The wire
@@ -31,6 +31,7 @@ complete off-host disaster recovery remain unqualified.
 - Generated banner and social artwork with embedded rights metadata and checked provenance.
 - Signed release provenance binding source/tag, trusted CI, build run, dependency lock, artwork, and package digests.
 - Fresh exact-version dependency advisory evidence and reviewed build-tool pins.
+- Operator-focused landing documentation and task-based guides for Linux administrators, homelabs, and small infrastructure teams.
 
 ### Security
 

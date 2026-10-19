@@ -16,9 +16,9 @@
     ],
     "package_version_coverage_verified_against_lockfile": true,
     "query_failures": 0,
-    "raw_evidence_sha256": "86aaef2a3c1cb361737fe5a0c7c8f687149fa446cff14b0ada379e29f3dabbb9",
+    "raw_evidence_sha256": "3ff337b3de5408e562e5f14a3f366db3010ea740e6d90f4ec8077df65be1f0fc",
     "result": "No advisory records were returned for these exact package versions by OSV, GitHub Advisory Database, deps.dev, or PyPI at retrieval time.",
-    "retrieved_at_utc": "2026-10-18T03:51:34.212451+00:00",
+    "retrieved_at_utc": "2026-10-19T09:40:08.281608+00:00",
     "scope": "All 51 exact PyPI registry package versions in uv.lock, plus the exact setuptools and wheel versions resolved for the build-system requirements.",
     "sources": [
       {
@@ -31,7 +31,7 @@
         "name": "OSV",
         "package_version_queries": 53,
         "requests": 1,
-        "retrieved_at_utc": "2026-10-18T03:51:06.585248+00:00"
+        "retrieved_at_utc": "2026-10-19T09:39:51.482880+00:00"
       },
       {
         "advisory_hits": 0,
@@ -43,8 +43,8 @@
         "name": "GitHub Advisory Database",
         "package_version_queries": 53,
         "retrieval_window_utc": [
-          "2026-10-18T03:51:08.797412+00:00",
-          "2026-10-18T03:51:30.089083+00:00"
+          "2026-10-19T09:39:52.016798+00:00",
+          "2026-10-19T09:40:05.733216+00:00"
         ]
       },
       {
@@ -57,8 +57,8 @@
         "name": "deps.dev",
         "package_version_queries": 53,
         "retrieval_window_utc": [
-          "2026-10-18T03:51:10.318316+00:00",
-          "2026-10-18T03:51:31.114433+00:00"
+          "2026-10-19T09:39:52.293682+00:00",
+          "2026-10-19T09:40:06.436922+00:00"
         ]
       },
       {
@@ -71,8 +71,8 @@
         "name": "PyPI JSON API",
         "package_version_queries": 53,
         "retrieval_window_utc": [
-          "2026-10-18T03:51:10.672943+00:00",
-          "2026-10-18T03:51:34.211582+00:00"
+          "2026-10-19T09:39:52.508368+00:00",
+          "2026-10-19T09:40:08.279763+00:00"
         ]
       }
     ]
@@ -298,7 +298,7 @@
     }
   ],
   "release": {
-    "release_date_utc": "2026-10-18",
+    "release_date_utc": "2026-10-19",
     "version": "2.0.3"
   },
   "schema_version": 1

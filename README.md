@@ -2,30 +2,35 @@
 
 **Back up with confidence. Restore with clarity.**
 
-Encrypted Linux backups with a visual dashboard, dependable local snapshots, and an automation interface that tells you what actually happened.
+bbackup is an encrypted, restic-based backup tool for Linux system administrators, homelab and self-hosted operators, and small infrastructure teams. It brings local file backups, selected database workflows, verified file restores, and observable scheduled jobs into one operator workflow.
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE) [![Version 2.0.3](https://img.shields.io/badge/version-2.0.3-22c55e?style=flat-square)](https://github.com/CruxExperts/BestBackup/releases/latest)
 
 ![bbackup: encrypted snapshot layers, an additional copy, and a restored document](docs/assets/bbackup-banner-v2.png)
 
-[Get started](QUICKSTART.md) · [Install](INSTALL.md) · [What is supported](docs/development/version-2.md) · [Automation and agents](docs/AGENT_INTEGRATION.md)
+[Get started](QUICKSTART.md) · [Install](INSTALL.md) · [Qualification evidence](docs/development/version-2.md) · [Automation and agents](docs/AGENT_INTEGRATION.md) · [All documentation](docs/README.md)
 
-## Your data deserves a clear recovery path
+## A practical backup and restore workflow
 
-A backup should leave you knowing **what was captured, where the copies are, and how to get your files back**. bbackup brings those decisions together around encrypted restic repositories.
+Use bbackup when you want to know what a job captured, whether each repository copy succeeded, and whether files can be restored into a clean destination.
 
-- **Start with a useful local backup.** Capture file trees into encrypted snapshots and restore into a new folder with file verification.
-- **Keep another copy.** Replicate the successful snapshot to a separately configured repository with its own password. Per-destination outcomes make partial failures visible.
-- **See the next step.** The terminal dashboard supports mouse and keyboard. Guided setup, labeled forms, contextual help, and inline checks reduce configuration mistakes.
-- **Automate with confidence in the result.** Named jobs, persistent systemd timers, repository locks, and structured JSON make scheduled and agent-driven work observable.
-- **Keep private details private.** Portable policy describes intent; enrolled host bindings hold machine paths and credential-file references.
-- **Recover deliberately.** New-target restores and explicit reconciliation protect existing data when an operation is interrupted.
-
-This README documents v2.0.3: guided setup, schema-3 policy enrollment, and hardened recovery. Existing schema-2 configurations require explicit migration; the originals are preserved. See the [quick start](QUICKSTART.md) and [qualification evidence](docs/development/version-2.md#development-candidate-rebootable-systemd-qualification).
+- **Set up once.** The terminal dashboard guides source, encrypted storage, schedule, and enrollment. Portable policy records job intent; private host bindings hold paths and credential-file references.
+- **Capture and copy.** Create encrypted restic snapshots of file trees and optionally copy a successful snapshot to a separately configured repository. Results show the outcome for each destination.
+- **Restore and verify.** Restore files into a new directory and ask restic to verify them. This checks file data, not application startup or full-machine recovery.
+- **Schedule and observe.** Run named jobs from the dashboard, the JSON CLI, or generated user-level systemd timers. Progress, results, repository locks, and interrupted-operation status are visible to operators and automation.
+- **Recover deliberately.** An interrupted mutation can have an uncertain result. Inspect the destination and reconcile that operation explicitly; bbackup does not automatically replay it.
 
 ![Real bbackup dashboard with disposable example data and illustrative capacity](docs/assets/bbackup-dashboard-preview.svg)
 
-## Try the guided workflow
+## v2.0.3 tested scope
+
+The qualified scope covers local file capture and restore; live capture and restore for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB 11.8.9; headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04 packages. A separate real-guest user-timer reboot drill covers only the components and conditions recorded in the [qualification evidence](docs/development/version-2.md#development-candidate-rebootable-systemd-qualification).
+
+B2/AWS, native Docker, ARM64 backup/restore, cross-application-version upgrades and rollback, root-owned systemd package templates, and cloud or off-host protection remain unqualified. ARM64 packages may be built, but build or package-install smoke checks alone do not qualify backup/restore. Keep an independently retrievable copy of repository passwords; a second repository on the same host does not protect against host loss. See [installation](INSTALL.md) for prerequisites and release install instructions.
+
+## Start with the guided workflow
+
+For packaged releases, start with the [latest release downloads](https://github.com/CruxExperts/BestBackup/releases/latest) and [installation guide](INSTALL.md).
 
 From a development checkout with Python 3.12+, uv, and restic installed:
 
@@ -36,31 +41,19 @@ uv sync --locked
 uv run bbackup production tui
 ```
 
-Choose a source folder, encrypted storage, and a schedule. Review and enroll once. The dashboard then guides you through initializing storage, running the first backup, and verifying a restore. JSON remains available under Advanced.
+Choose a source folder, encrypted storage, and a schedule. Review and enroll once. The dashboard then guides you through initializing storage, running the first backup, and restoring into a new folder. Advanced settings and the command line remain available. The [quick start](QUICKSTART.md) covers migration, password custody, replica setup, and deliberate schedule activation.
 
-Already have version-two policy files? The dashboard offers an explicit migration that preserves the originals. See the [quick start](QUICKSTART.md) for private password custody, migration, CLI commands, and schedule activation.
+## Choose a guide
 
-## Prefer a published release?
-
-```bash
-uv tool install --force 'git+https://github.com/CruxExperts/BestBackup.git@v2.0.3'
-```
-
-Stable v2.0.3 is qualified for local file capture/restore, selected PostgreSQL/MySQL/MariaDB capture/restore, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages. The [release evidence](docs/development/version-2.md) records exact versions and limits.
-
-> [!IMPORTANT]
-> B2/AWS, native Docker, ARM64 operation, and complete host-loss recovery remain unqualified. A second directory on one host is not independent disaster recovery. Keep an independent copy of repository passwords and verify restores before relying on a backup.
-
-## Explore the features
-
-- [Installation](INSTALL.md): prerequisites, release packages, and development setup.
-- [Quick start](QUICKSTART.md): guided first backup, policy migration, replica, and verified restore.
-- [Automation and agent integration](docs/AGENT_INTEGRATION.md): strict schemas, progress, results, and reconciliation.
+- [Install](INSTALL.md): prerequisites, release packages, and development setup.
+- [Quick start](QUICKSTART.md): first backup, schema-2 migration, replica, verified restore, and user-level scheduling.
+- [Automation and agent integration](docs/AGENT_INTEGRATION.md): schemas, progress, results, and uncertain-operation reconciliation.
+- [Production command reference](docs/production-cli.md): generated command and input-schema reference.
 - [Cloud storage](docs/cloud-storage.md): implemented provider paths and their qualification limits.
 - [Encryption](docs/encryption.md): password custody and legacy encryption compatibility.
 - [Architecture](docs/architecture.md): shared operations, durable state, and safety boundaries.
-- [Legacy management](docs/management.md): retained Docker/YAML commands and compatibility guidance.
-- [All documentation](docs/README.md) · [Support](SUPPORT.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+- [Legacy management](docs/management.md): retained 1.x Docker/YAML commands and compatibility guidance.
+- [Support](SUPPORT.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
 

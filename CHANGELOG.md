@@ -10,6 +10,10 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+### Added
+
+- Refreshed matching 1280×640 GitHub social preview artwork, embedded ownership metadata, checked provenance, and explicit repository-settings upload instructions.
+
 ### Fixed
 
 - Release publication locates the exact draft by release ID and refuses an existing draft or published tag before creation, including drafts hidden from lookup by tag.

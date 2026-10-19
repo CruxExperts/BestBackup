@@ -52,6 +52,21 @@
       "website": "https://www.cruxexperts.com/",
       "rights": "Private asset. Property of Crux Experts LLC. Use, reproduction, modification, distribution, or publication without prior written permission is prohibited.",
       "encoding": "JPEG quality 2 via FFmpeg; composition and dimensions unchanged; XMP and EXIF rights metadata embedded with ExifTool"
+    },
+    {
+      "path": "docs/assets/bbackup-social-v3.jpg",
+      "purpose": "GitHub social upload",
+      "generator": "OpenAI gpt-image-2-codex via built-in image generation",
+      "created": "2026-10-19",
+      "prompt": "Generate a premium GitHub social preview for bbackup, using bbackup-banner-v2.png as a style and brand reference. Deep forest-green backdrop, luminous jade glass, brushed silver metal, bone-white bold sans-serif lettering, realistic studio-lit physical snapshot-storage sculpture. Large lowercase bbackup wordmark on the left with exact two-line headline 'Back up with confidence.' / 'Restore with clarity.' Right: compact metal enclosure holding layered emerald snapshot cards, secondary copy slab and luminous restored document, subtle green tracks. Rich tactile materials, controlled reflections, crisp edges, restrained cinematic lighting, editorial simplicity. Keep lettering and important objects in a central safe area for a centered 2:1 crop; expendable dark green background above and below. Sharp correctly spelled text only; no supporting small text, people, avatars, GitHub mascot, cloud logos, locks, fake UI, extra logos, borders, watermarks, badges or feature claims.",
+      "reference": "bbackup-banner-v2.png",
+      "dimensions": [1280, 640],
+      "original_sha256": "f4bb44b15ff8786d6c6a9af9cd7aaa60e864bf04be756e69eac66eb83e42be09",
+      "sha256": "967a73f3302e4c17e5809e5efff2d21843f936a3cd8f44c5dcc790e18944cce3",
+      "copyright": "Copyright © 2026 Crux Experts LLC",
+      "website": "https://www.cruxexperts.com/",
+      "rights": "Private asset. Property of Crux Experts LLC. Use, reproduction, modification, distribution, or publication without prior written permission is prohibited.",
+      "encoding": "Generated 1536×1024 WebP; FFmpeg centered 1536×768 crop, Lanczos resize to 1280×640, JPEG quality 2; EXIF and XMP rights metadata embedded with ExifTool."
     }
   ]
 }

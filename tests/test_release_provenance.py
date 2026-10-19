@@ -1,8 +1,12 @@
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tarfile
+import textwrap
 
 import pytest
 
@@ -179,6 +183,243 @@ def test_actual_release_workflow_matrix_is_supported():
         Path(__file__).parents[1] / ".github/workflows/release-notes.yml"
     ).read_bytes()
     assert len(pinned_build_inputs(source)["targets"]) == 4
+
+
+def release_publish_script():
+    workflow = (Path(__file__).parents[1] / ".github/workflows/release-notes.yml").read_text(
+        encoding="utf-8"
+    )
+    start = workflow.index("      - name: Publish signed release\n")
+    section = workflow[start:]
+    marker = "        run: |\n"
+    body = section.split(marker, 1)[1]
+    lines = []
+    for line in body.splitlines():
+        if line.startswith("          "):
+            lines.append(line[10:])
+        elif not line.strip():
+            lines.append("")
+        else:
+            break
+    return "\n".join(lines) + "\n"
+
+
+def release_asset(name, content):
+    return {
+        "name": name,
+        "size": len(content),
+        "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+    }
+
+
+def release_record(*, release_id, tag=TAG, draft, assets=(), body=""):
+    return {
+        "id": release_id,
+        "tag_name": tag,
+        "draft": draft,
+        "assets": list(assets),
+        "body": body,
+    }
+
+
+def run_release_publish(tmp_path, *, api_responses, patched_release=None):
+    workspace = tmp_path / "workspace"
+    runner_temp = tmp_path / "runner-temp"
+    release_inputs = workspace / "release-inputs"
+    fake_bin = tmp_path / "fake-bin"
+    workspace.mkdir()
+    runner_temp.mkdir()
+    release_inputs.mkdir()
+    fake_bin.mkdir()
+    files = {
+        "bbackup-2.0.3.tar.gz": b"source archive",
+        "bbackup-2.0.3-py3-none-any.whl": b"source wheel",
+        "SHA256SUMS": b"checksums\n",
+        "release_notes.txt": b"Candidate release notes.\n\n",
+    }
+    for name, content in files.items():
+        (release_inputs / name).write_bytes(content)
+    signature = b"detached signature"
+    (runner_temp / "SHA256SUMS.asc").write_bytes(signature)
+    asset_inventory = [
+        release_asset(name, content)
+        for name, content in files.items()
+        if name != "release_notes.txt"
+    ] + [release_asset("SHA256SUMS.asc", signature)]
+
+    state_path = tmp_path / "gh-state.json"
+    state_path.write_text(json.dumps({
+        "api_responses": api_responses,
+        "api_calls": 0,
+        "commands": [],
+        "patched_release": patched_release,
+    }), encoding="utf-8")
+    gh = fake_bin / "gh"
+    gh.write_text(textwrap.dedent(f"""\
+        #!{sys.executable}
+        import json
+        import os
+        import sys
+        from pathlib import Path
+
+        state_path = Path(os.environ["GH_FIXTURE_STATE"])
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        args = sys.argv[1:]
+        state["commands"].append(args)
+
+        def save():
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        if args[:2] == ["api", "--paginate"]:
+            index = state["api_calls"]
+            state["api_calls"] += 1
+            save()
+            if index >= len(state["api_responses"]):
+                print("unexpected releases API request", file=sys.stderr)
+                raise SystemExit(90)
+            response = state["api_responses"][index]
+            if isinstance(response, dict) and "failure" in response:
+                print(response["failure"], file=sys.stderr)
+                raise SystemExit(91)
+            for page in response:
+                print(json.dumps(page, separators=(",", ":")))
+        elif args[:2] == ["release", "create"]:
+            save()
+        elif args[:2] == ["api", "--method"] and args[2] == "PATCH":
+            state["patched_id"] = args[3].rsplit("/", 1)[-1]
+            save()
+            print(json.dumps(state["patched_release"]))
+        else:
+            print("unexpected gh invocation: " + " ".join(args), file=sys.stderr)
+            raise SystemExit(92)
+        save()
+    """), encoding="utf-8")
+    gh.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update({
+        "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+        "GH_FIXTURE_STATE": str(state_path),
+        "GITHUB_REPOSITORY": REPOSITORY,
+        "GITHUB_WORKSPACE": str(workspace),
+        "GH_TOKEN": "fixture-token",
+        "RELEASE_TAG": TAG,
+        "RUNNER_TEMP": str(runner_temp),
+    })
+    result = subprocess.run(
+        ["bash", "-c", release_publish_script()],
+        cwd=workspace,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result, json.loads(state_path.read_text(encoding="utf-8")), asset_inventory
+
+
+def test_release_publish_resolves_paginated_draft_and_publishes_its_id(tmp_path):
+    notes = "Candidate release notes."
+    assets = [
+        release_asset("bbackup-2.0.3.tar.gz", b"source archive"),
+        release_asset("bbackup-2.0.3-py3-none-any.whl", b"source wheel"),
+        release_asset("SHA256SUMS", b"checksums\n"),
+        release_asset("SHA256SUMS.asc", b"detached signature"),
+    ]
+    draft = release_record(release_id=731, draft=True, assets=assets, body=notes)
+    published = release_record(release_id=731, draft=False, assets=assets, body=notes)
+
+    result, state, _ = run_release_publish(
+        tmp_path,
+        api_responses=[
+            [[release_record(release_id=701, tag="v2.0.2", draft=False)], []],
+            [[release_record(release_id=701, tag="v2.0.2", draft=False)], [draft]],
+        ],
+        patched_release=published,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert state["api_calls"] == 2
+    assert state["patched_id"] == "731"
+    assert sum(command[:2] == ["release", "create"] for command in state["commands"]) == 1
+    patch_calls = [command for command in state["commands"] if command[:2] == ["api", "--method"]]
+    assert len(patch_calls) == 1
+    assert patch_calls[0][2:4] == ["PATCH", f"repos/{REPOSITORY}/releases/731"]
+
+
+@pytest.mark.parametrize("draft", [True, False], ids=["hidden-draft", "published-release"])
+def test_release_publish_refuses_existing_tag_from_paginated_list(tmp_path, draft):
+    duplicate = release_record(release_id=842, draft=draft)
+
+    result, state, _ = run_release_publish(
+        tmp_path,
+        api_responses=[[[release_record(release_id=701, tag="v2.0.2", draft=False)], [duplicate]]],
+    )
+
+    assert result.returncode != 0
+    assert "already exists" in result.stderr
+    assert state["api_calls"] == 1
+    assert not any(command[:2] == ["release", "create"] for command in state["commands"])
+    assert "patched_id" not in state
+
+
+def test_release_publish_refuses_ambiguous_drafts_after_creation(tmp_path):
+    first = release_record(release_id=901, draft=True)
+    second = release_record(release_id=902, draft=True)
+
+    result, state, _ = run_release_publish(
+        tmp_path,
+        api_responses=[
+            [[release_record(release_id=701, tag="v2.0.2", draft=False)]],
+            [[first], [second]],
+        ],
+    )
+
+    assert result.returncode != 0
+    assert "Expected one release" in result.stderr
+    assert state["api_calls"] == 2
+    assert sum(command[:2] == ["release", "create"] for command in state["commands"]) == 1
+    assert "patched_id" not in state
+
+
+def test_release_publish_stops_on_paginated_api_failure(tmp_path):
+    result, state, _ = run_release_publish(
+        tmp_path,
+        api_responses=[{"failure": "fixture releases API failure"}],
+    )
+
+    assert result.returncode != 0
+    assert "fixture releases API failure" in result.stderr
+    assert state["api_calls"] == 1
+    assert not any(command[:2] == ["release", "create"] for command in state["commands"])
+    assert "patched_id" not in state
+
+
+@pytest.mark.parametrize("mismatch", ["body", "inventory"])
+def test_release_publish_refuses_draft_with_changed_notes_or_assets(tmp_path, mismatch):
+    assets = [
+        release_asset("bbackup-2.0.3.tar.gz", b"source archive"),
+        release_asset("bbackup-2.0.3-py3-none-any.whl", b"source wheel"),
+        release_asset("SHA256SUMS", b"checksums\n"),
+        release_asset("SHA256SUMS.asc", b"detached signature"),
+    ]
+    draft = release_record(
+        release_id=948,
+        draft=True,
+        assets=assets[:-1] if mismatch == "inventory" else assets,
+        body="Edited notes." if mismatch == "body" else "Candidate release notes.\n",
+    )
+
+    result, state, _ = run_release_publish(
+        tmp_path,
+        api_responses=[
+            [[]],
+            [[draft]],
+        ],
+    )
+
+    assert result.returncode != 0
+    assert ("release notes differ" if mismatch == "body" else "inventory or SHA256 differs") in result.stderr
+    assert "patched_id" not in state
 
 
 def test_release_note_changes_are_bound_without_copying_prose(tmp_path):

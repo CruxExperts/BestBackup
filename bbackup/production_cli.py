@@ -20,7 +20,7 @@ from .configuration_workspace import ConfigurationWorkspace
 from .enrollment import parse_pair, read_pair, verify_bytes
 from .models import ConfigurationError, strict_json
 from .operations import OperationError, RepositoryConflictError, UncertainOperationError
-from .service import ReplicaJobError, ServiceError
+from .service import ReplicaJobError, ResourceBudgetExceeded, ServiceError
 from .production_operations import _operation_lease, execute_operation
 from .progress import observe_progress
 
@@ -169,6 +169,12 @@ def _register(command, definition):
             click.echo(json.dumps({"schema_version": 2, "command": command, "success": False,
                                    "data": exc.result,
                                    "errors": [{"code": "replica_incomplete", "message": str(exc)}]},
+                                  sort_keys=True))
+            ctx.exit(3)
+        except ResourceBudgetExceeded as exc:
+            click.echo(json.dumps({"schema_version": 2, "command": command, "success": False,
+                                   "data": exc.result,
+                                   "errors": [{"code": "resource_budget_exceeded", "message": str(exc)}]},
                                   sort_keys=True))
             ctx.exit(3)
         except (ServiceError, OperationError, CaptureError, CloudError, B2Error, RecoveryError, tarfile.TarError, sqlite3.Error, OSError, ValueError, KeyError):

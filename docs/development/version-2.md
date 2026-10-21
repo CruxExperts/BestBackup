@@ -51,6 +51,16 @@ close these issues or expand the supported release scope from fixture tests.
 
 ### Existing version-2 behavior
 
+The unreleased remote-primary implementation adds HTTPS S3 primary repositories,
+versioned resource budgets, a dedicated capacity-bounded staging mount, disabled
+cache, a shared staging lease, export write checks, and continuous runner
+pressure checks. Completion results distinguish local and remote captures;
+status exposes remote-primary capture separately from local capture. Free-space
+reserves remain observed thresholds, and unsupported Docker/replica combinations
+are refused. These implementation checks do not qualify B2 or whole-machine
+recovery. Current debugging uses small workstation fixtures; the final
+remote-server drill is deliberately deferred.
+
 - Strict version-2 JSON configuration rejects duplicate keys, unknown fields,
   unsupported source types, and inconsistent repository references. Private host
   bindings and password files are separate from portable policy.

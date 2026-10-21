@@ -3,6 +3,7 @@ import gzip
 import shutil
 import sqlite3
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,7 +15,7 @@ from bbackup.operations import (
     RepositoryConflictError,
     repository_key,
 )
-from bbackup.service import BackupService, ReplicaJobError, ServiceError
+from bbackup.service import BackupService, ReplicaJobError, ResourceBudgetExceeded, ServiceError
 
 
 @pytest.fixture
@@ -51,6 +52,147 @@ def _run(plan, *, status=OperationStatus.SUCCEEDED, exit_code=0, stdout=b""):
         stdout_bytes=len(stdout),
         stderr_bytes=0,
     )
+
+
+def _remote_service(tmp_path, *, with_replica=False):
+    data = tmp_path / "large-source"
+    with data.open("wb") as stream:
+        stream.truncate(2 * 1024**2)
+    password = tmp_path / "password"
+    password.write_text("fixture-secret")
+    password.chmod(0o600)
+    staging = tmp_path / "staging"
+    staging.mkdir(mode=0o700)
+    config = Configuration.parse({
+        "schema_version": 2,
+        "repositories": [{"name": "primary", "role": "remote-primary"},
+                         *([{"name": "copy", "role": "replica"}] if with_replica else [])],
+        "sources": [{"name": "files", "kind": "files", "paths": [str(data)]}],
+        "jobs": [{"name": "daily", "repository": "primary", "sources": ["files"],
+                  "resource_budget": {"schema_version": 1, "staging_max_bytes": 1024**3,
+                                      "minimum_free_bytes": 64 * 1024**2,
+                                      "cache_max_bytes": 0}}],
+    })
+    bindings = HostBindings(tmp_path / "state", {
+        "primary": RepositoryBinding("s3:https://s3.example.test/bucket/repo", password),
+        **({"copy": RepositoryBinding(str(tmp_path / "copy"), password)} if with_replica else {}),
+    }, staging_dir=staging)
+    return BackupService(config, bindings), data, staging
+
+
+def test_remote_primary_capture_direct_source_no_cache_and_explicit_provider_env(tmp_path, monkeypatch):
+    service, data, staging = _remote_service(tmp_path)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fixture-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fixture-secret")
+    monkeypatch.setenv("RESTIC_REPOSITORY", "poisoned")
+    monkeypatch.setenv("AWS_PROFILE", "poisoned")
+    monkeypatch.setattr("bbackup.service.shutil.disk_usage", lambda _path: SimpleNamespace(free=1))
+
+    class Monitor:
+        def __init__(self, *_args):
+            self.checks = 0
+
+        def check(self, _upcoming=0):
+            self.checks += 1
+
+        def result(self):
+            return {"staging_capacity_bounded": True, "free_space_reserve_hard_guaranteed": False}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("bbackup.service.ResourceMonitor", Monitor)
+    observed = {}
+
+    def run(plan, **kwargs):
+        observed["argv"] = plan.argv
+        observed["env"] = plan.env
+        observed["tick"] = kwargs.get("on_tick")
+        kwargs["on_tick"]()
+        return _run(plan, stdout=(json.dumps({"message_type": "summary", "snapshot_id": "a" * 64}) + "\n").encode())
+
+    monkeypatch.setattr(service.runner, "run", run)
+    captured = service.capture("daily")
+    assert captured["primary_destination"] == {"repository": "primary", "kind": "remote"}
+    assert captured["cloud_complete"] and not captured["local_complete"]
+    assert captured["resource_observation"]["staging_capacity_bounded"]
+    assert "--no-cache" in observed["argv"]
+    assert str(data) in observed["argv"]
+    assert observed["env"]["TMPDIR"] == str(staging)
+    assert "RESTIC_REPOSITORY" not in observed["env"]
+    assert "AWS_PROFILE" not in observed["env"]
+    assert observed["env"]["AWS_ACCESS_KEY_ID"] == "fixture-key"
+    assert list(staging.iterdir()) == []
+
+
+def test_manual_remote_primary_copy_is_refused_before_any_dispatch(tmp_path, monkeypatch):
+    service, _data, _staging = _remote_service(tmp_path, with_replica=True)
+    monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "unbudgeted copy child was dispatched"))
+    with pytest.raises(ServiceError, match="bounded resource support"):
+        service.copy("primary", "copy", "a" * 64)
+
+
+def test_remote_capture_retains_real_staging_lease_until_receipt_finalization(tmp_path, monkeypatch):
+    from bbackup.resource_limits import ResourceMonitor
+
+    service, _data, staging = _remote_service(tmp_path)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fixture-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fixture-secret")
+    monkeypatch.setattr("bbackup.resource_limits.os.path.ismount", lambda path: path == staging)
+    budget = service.config.jobs[0].resource_budget
+    monkeypatch.setattr("bbackup.resource_limits._volume", lambda path: (
+        budget.staging_max_bytes, budget.staging_max_bytes))
+
+    def run(plan, **kwargs):
+        kwargs["on_tick"]()
+        return _run(plan, stdout=(json.dumps({"message_type": "summary", "snapshot_id": "b" * 64}) + "\n").encode())
+
+    monkeypatch.setattr(service.runner, "run", run)
+    captured = service.capture("daily")
+    assert captured["snapshot_id"] == "b" * 64
+    assert any(row["status"] == "succeeded" for row in service.ledger.summary())
+    # Capture completed and released the shared lease; its stable lock remains.
+    with ResourceMonitor(staging, service.state, budget) as next_run:
+        next_run.check()
+
+
+def test_remote_primary_budget_failure_is_structured_and_uncertain_after_dispatch(tmp_path, monkeypatch):
+    from bbackup.resource_limits import ResourceLimitError
+    service, _data, _staging = _remote_service(tmp_path)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fixture-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fixture-secret")
+
+    class Monitor:
+        calls = 0
+
+        def __init__(self, *_args):
+            pass
+
+        def check(self, _upcoming=0):
+            self.calls += 1
+            if self.calls > 1:
+                raise ResourceLimitError("Observed free-space reserve fell below the configured threshold")
+
+        def result(self):
+            return {"staging_capacity_bounded": True}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("bbackup.service.ResourceMonitor", Monitor)
+
+    def run(_plan, **kwargs):
+        kwargs["on_tick"]()
+
+    monkeypatch.setattr(service.runner, "run", run)
+    with pytest.raises(ResourceBudgetExceeded) as failure:
+        service.capture("daily")
+    assert failure.value.result["resource_budget_exceeded"] is True
+    assert failure.value.result["local_complete"] is False
+    assert failure.value.result["cloud_complete"] is False
+    assert "large-source" not in str(failure.value.result)
+    assert any(row["status"] == "uncertain" for row in service.ledger.summary())
 
 
 def test_replica_failure_isolated_and_later_destination_runs(service, monkeypatch):

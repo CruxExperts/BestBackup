@@ -86,6 +86,23 @@ def test_runner_cancels_child_when_event_is_set(tmp_path: Path) -> None:
     assert result.elapsed_seconds < 5
 
 
+def test_runner_tick_interrupts_silent_child(tmp_path: Path) -> None:
+    from bbackup.resource_limits import ResourceLimitError
+    calls = 0
+
+    def tick():
+        nonlocal calls
+        calls += 1
+        if calls >= 3:
+            raise ResourceLimitError("Observed free-space reserve fell below the configured threshold")
+
+    with pytest.raises(ResourceLimitError, match="reserve"):
+        OperationRunner().run(OperationPlan.create(tmp_path / "repo", "silent",
+            (sys.executable, "-c", "import time; time.sleep(30)"), timeout_seconds=10),
+            on_tick=tick)
+    assert calls >= 3
+
+
 def test_runner_streams_giant_line_in_bounded_chunks_and_caps_tails(tmp_path: Path) -> None:
     output = b"z" * 300_000 + b"\n"
     received: list[bytes] = []

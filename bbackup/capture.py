@@ -15,6 +15,7 @@ import time
 
 from .models import DatabaseBinding, Source, strict_json
 from .operations import OperationPlan, OperationRunner, OperationStatus
+from .resource_limits import ResourceLimitError, ResourceMonitor
 
 
 class CaptureError(RuntimeError):
@@ -75,6 +76,7 @@ def _run_native(
     timeout: float,
     cancel,
     on_stdout=None,
+    monitor: ResourceMonitor | None = None,
 ):
     plan = OperationPlan.create(
         f"capture:{source.connection}:{source.name}",
@@ -84,7 +86,12 @@ def _run_native(
         timeout_seconds=timeout,
     )
     try:
-        result = runner.run(plan, on_stdout=on_stdout, cancel_event=cancel)
+        options = {"on_stdout": on_stdout, "cancel_event": cancel}
+        if monitor is not None:
+            options["on_tick"] = monitor.check
+        result = runner.run(plan, **options)
+    except ResourceLimitError:
+        raise
     except Exception:
         raise CaptureError("Native database capture command failed") from None
     if result.status is not OperationStatus.SUCCEEDED or result.exit_code != 0:
@@ -94,9 +101,16 @@ def _run_native(
     return result
 
 
-def _capture_postgresql(source, binding, target, runner, deadline, cancel):
+def _bounded_write(output, chunk: bytes, monitor: ResourceMonitor | None):
+    if monitor is not None:
+        monitor.check(len(chunk))
+    return output.write(chunk)
+
+
+def _capture_postgresql(source, binding, target, runner, deadline, cancel, monitor=None):
     assert binding.service_file is not None and binding.service_name is not None
-    env_values = {"PGSERVICEFILE": str(binding.service_file), "PGPASSFILE": "/dev/null"}
+    env_values = {"PGSERVICEFILE": str(binding.service_file), "PGPASSFILE": "/dev/null",
+                  "TMPDIR": str(target.parent)}
     if binding.password_file is not None:
         env_values["PGPASSFILE"] = str(binding.password_file)
     env = _native_environment(**env_values)
@@ -120,6 +134,7 @@ def _capture_postgresql(source, binding, target, runner, deadline, cancel):
         env=env,
         timeout=max(0.001, deadline - time.monotonic()),
         cancel=cancel,
+        monitor=monitor,
     )
     try:
         if inspected.stdout_bytes != len(inspected.stdout_tail):
@@ -157,7 +172,8 @@ def _capture_postgresql(source, binding, target, runner, deadline, cancel):
                 env=env,
                 timeout=max(0.001, deadline - time.monotonic()),
                 cancel=cancel,
-                on_stdout=output.write,
+                on_stdout=lambda chunk: _bounded_write(output, chunk, monitor),
+                monitor=monitor,
             )
             output.flush()
             os.fsync(output.fileno())
@@ -173,12 +189,12 @@ def _capture_postgresql(source, binding, target, runner, deadline, cancel):
     return options
 
 
-def _capture_mysql(source, binding, target, runner, deadline, cancel):
+def _capture_mysql(source, binding, target, runner, deadline, cancel, monitor=None):
     assert binding.options_file is not None and source.database is not None
     options = f"--defaults-file={binding.options_file}"
     client = "mysql" if source.kind == "mysql" else "mariadb"
     login_path_option = ["--no-login-paths"] if source.kind == "mysql" else []
-    env_values = {}
+    env_values = {"TMPDIR": str(target.parent)}
     if source.kind == "mariadb":
         # MariaDB clients may read ~/.mylogin.cnf; confine HOME to this private
         # staging directory and explicitly disable the login-path file.
@@ -206,6 +222,7 @@ def _capture_mysql(source, binding, target, runner, deadline, cancel):
         env=env,
         timeout=max(0.001, deadline - time.monotonic()),
         cancel=cancel,
+        monitor=monitor,
     )
     if inspected.stdout_bytes != len(inspected.stdout_tail):
         raise CaptureError("MySQL and MariaDB database metadata is invalid")
@@ -258,6 +275,7 @@ def _capture_mysql(source, binding, target, runner, deadline, cancel):
         timeout=max(0.001, deadline - time.monotonic()),
         cancel=cancel,
         on_stdout=inspect_engine,
+        monitor=monitor,
     )
     if non_innodb:
         raise CaptureError("MySQL and MariaDB capture requires InnoDB tables")
@@ -286,7 +304,8 @@ def _capture_mysql(source, binding, target, runner, deadline, cancel):
                 env=env,
                 timeout=max(0.001, deadline - time.monotonic()),
                 cancel=cancel,
-                on_stdout=output.write,
+                on_stdout=lambda chunk: _bounded_write(output, chunk, monitor),
+                monitor=monitor,
             )
             output.flush()
             os.fsync(output.fileno())
@@ -315,6 +334,7 @@ def capture_sources(
     protected_paths: tuple[Path, ...] = (),
     operation_id: str | None = None,
     runner: OperationRunner | None = None,
+    resource_monitor: ResourceMonitor | None = None,
 ):
     """Yield source paths plus temporary native exports and private Docker metadata.
 
@@ -332,6 +352,8 @@ def capture_sources(
     if docker_sources and (docker_runtime is None or operation_id is None):
         raise CaptureError("Docker source capture requires the shared local Docker runtime")
     with tempfile.TemporaryDirectory(prefix="capture-", dir=state_dir) as temporary:
+        if resource_monitor is not None:
+            resource_monitor.check()
         paths = []
         exports = []
         for source in sources:
@@ -354,12 +376,20 @@ def capture_sources(
                         raise CaptureError("SQLite capture timed out")
                     if cancel is not None and cancel.is_set():
                         raise CaptureError("Capture cancelled")
+                    if resource_monitor is not None:
+                        resource_monitor.check()
 
                 try:
                     with sqlite3.connect(original.as_uri() + "?mode=ro", uri=True) as src:
+                        if resource_monitor is not None:
+                            page_size = src.execute("PRAGMA page_size").fetchone()[0]
+                            page_count = src.execute("PRAGMA page_count").fetchone()[0]
+                            resource_monitor.check(page_size * page_count)
                         with sqlite3.connect(target) as dst:
                             target.chmod(0o600)
                             src.backup(dst, pages=256, progress=progress, sleep=0.05)
+                            if resource_monitor is not None:
+                                resource_monitor.check()
                             if dst.execute("PRAGMA quick_check").fetchone() != ("ok",):
                                 raise CaptureError("SQLite capture validation failed")
                 except sqlite3.Error as exc:
@@ -375,11 +405,11 @@ def capture_sources(
                 target = Path(temporary) / f"{source.name}{suffix}"
                 if source.kind == "postgresql":
                     database_options = _capture_postgresql(
-                        source, binding, target, runner, deadline, cancel
+                        source, binding, target, runner, deadline, cancel, resource_monitor
                     )
                 else:
                     mysql_metadata = _capture_mysql(
-                        source, binding, target, runner, deadline, cancel
+                        source, binding, target, runner, deadline, cancel, resource_monitor
                     )
                 paths.append(str(target))
                 exports.append({

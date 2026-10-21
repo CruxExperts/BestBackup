@@ -35,6 +35,41 @@ def test_sqlite_transactional_export_and_cleanup(tmp_path):
     writer.close()
 
 
+def test_sqlite_budget_preflight_refuses_export_before_writing(tmp_path):
+    from bbackup.resource_limits import ResourceLimitError
+    original = tmp_path / "live.sqlite"
+    with sqlite3.connect(original) as database:
+        database.execute("CREATE TABLE data(value TEXT)")
+        database.execute("INSERT INTO data VALUES ('committed')")
+
+    class Monitor:
+        def check(self, upcoming=0):
+            if upcoming > 10:
+                raise ResourceLimitError("Observed free-space reserve fell below the configured threshold")
+
+    with pytest.raises(ResourceLimitError, match="reserve"):
+        with capture_sources((Source("db", "sqlite", (str(original),)),), tmp_path,
+                             resource_monitor=Monitor()):
+            pass
+    assert not list(tmp_path.glob("capture-*"))
+
+
+def test_native_export_checks_budget_before_writing():
+    import io
+    from bbackup.capture import _bounded_write
+    from bbackup.resource_limits import ResourceLimitError
+
+    class Monitor:
+        def check(self, upcoming=0):
+            if upcoming > 4:
+                raise ResourceLimitError("Observed free-space reserve fell below the configured threshold")
+
+    output = io.BytesIO()
+    with pytest.raises(ResourceLimitError, match="reserve"):
+        _bounded_write(output, b"database export", Monitor())
+    assert output.getvalue() == b""
+
+
 def test_files_not_copied(tmp_path):
     source = Source("files", "files", (str(tmp_path),))
     with capture_sources((source,), tmp_path) as paths:

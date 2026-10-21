@@ -92,6 +92,24 @@ def test_central_acceptance_dispatch_uses_independent_recovery_owner(monkeypatch
     assert {"kit", "verifier", "source_signer", "repository_id", "snapshot"} <= set(schema["required"])
 
 
+def test_resource_failure_keeps_structured_evidence_without_source_paths(service, monkeypatch):
+    from bbackup.service import BackupService, ResourceBudgetExceeded
+
+    evidence = {"resource_budget_exceeded": True, "repository": "cloud", "replayed": False,
+                "local_complete": False, "cloud_complete": False}
+
+    def fail(*args, **kwargs):
+        raise ResourceBudgetExceeded(evidence)
+
+    monkeypatch.setattr(BackupService, "run_job", fail)
+    result = invoke(service, ["jobs", "run", "--name", "daily"])
+    assert result.exit_code == 3
+    payload = json.loads(result.output)
+    assert payload["success"] is False
+    assert payload["errors"][0]["code"] == "resource_budget_exceeded"
+    assert payload["data"] == evidence
+
+
 def test_cli_reports_enrollment_next_action(service):
     assert invoke(service, ["jobs", "list"]).exit_code == 0
     config = service.state / "cli-config.json"

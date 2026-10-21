@@ -76,9 +76,33 @@ class Repository:
     def parse(cls, raw):
         raw = _object(raw, {"name", "role"}, {"name"})
         role = raw.get("role", "local")
-        if role not in ("local", "replica"):
-            raise ConfigurationError("Repository role must be local or replica")
+        if role not in ("local", "replica", "remote-primary"):
+            raise ConfigurationError("Repository role must be local, remote-primary, or replica")
         return cls(_name(raw["name"]), role)
+
+
+@dataclass(frozen=True)
+class ResourceBudget:
+    """Portable remote-primary staging ceiling and observed free-space reserve."""
+
+    staging_max_bytes: int
+    minimum_free_bytes: int
+    cache_max_bytes: int = 0
+    schema_version: int = 1
+
+    @classmethod
+    def parse(cls, raw):
+        raw = _object(raw, set(cls.__dataclass_fields__),
+                      {"schema_version", "staging_max_bytes", "minimum_free_bytes", "cache_max_bytes"})
+        if type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+            raise ConfigurationError("Unsupported resource budget version")
+        ceiling = _positive(raw["staging_max_bytes"])
+        reserve = _positive(raw["minimum_free_bytes"])
+        if type(raw["cache_max_bytes"]) is not int or raw["cache_max_bytes"] != 0:
+            raise ConfigurationError("Remote-primary cache must be disabled")
+        if reserve >= ceiling:
+            raise ConfigurationError("Resource reserve must be below staging capacity")
+        return cls(ceiling, reserve)
 
 
 @dataclass(frozen=True)
@@ -191,6 +215,7 @@ class Job:
     overdue_hours: int = 26
     timeout_seconds: int = 3600
     retention: Retention = field(default_factory=Retention)
+    resource_budget: ResourceBudget | None = None
 
     @classmethod
     def parse(cls, raw):
@@ -214,6 +239,7 @@ class Job:
             raise ConfigurationError(
                 "Schedule must be a single nonempty systemd calendar expression"
             )
+        budget = ResourceBudget.parse(raw["resource_budget"]) if "resource_budget" in raw else None
         return cls(
             _name(raw["name"]),
             _name(raw["repository"]),
@@ -223,6 +249,7 @@ class Job:
             _positive(raw.get("overdue_hours", 26)),
             _positive(raw.get("timeout_seconds", 3600)),
             Retention.parse(raw.get("retention", {})),
+            budget,
         )
 
 
@@ -260,11 +287,13 @@ class Configuration:
         repositories = {repo.name: repo for repo in config.repositories}
         sources = {source.name for source in config.sources}
         for job in config.jobs:
-            if (
-                job.repository not in repositories
-                or repositories[job.repository].role != "local"
-            ):
-                raise ConfigurationError("Jobs require a declared local repository")
+            if (job.repository not in repositories
+                    or repositories[job.repository].role not in ("local", "remote-primary")):
+                raise ConfigurationError("Jobs require a declared primary repository")
+            if (repositories[job.repository].role == "remote-primary") != (job.resource_budget is not None):
+                raise ConfigurationError("Remote-primary jobs require a resource budget; local jobs cannot use one")
+            if repositories[job.repository].role == "remote-primary" and job.replicas:
+                raise ConfigurationError("Remote-primary jobs cannot dispatch unbudgeted replica copies")
             if not set(job.sources) <= sources:
                 raise ConfigurationError("Job references an undeclared source")
             if any(
@@ -439,6 +468,7 @@ class HostBindings:
     docker_bindings: dict[str, DockerBinding] = field(default_factory=dict)
     source_bindings: dict[str, SourceBinding] = field(default_factory=dict)
     schema_version: int = 2
+    staging_dir: Path | None = None
     @classmethod
     def load(cls, path: Path, configuration: Configuration | None = None):
         if path.stat().st_mode & 0o077:
@@ -453,7 +483,7 @@ class HostBindings:
     def parse(cls, raw, configuration: Configuration | None = None):
         raw = _object(
             raw,
-            {"schema_version", "state_dir", "repositories", "database_bindings", "docker_bindings", "source_bindings"},
+            {"schema_version", "state_dir", "repositories", "database_bindings", "docker_bindings", "source_bindings", "staging_dir"},
             {"schema_version", "state_dir", "repositories"},
         )
         version = raw["schema_version"]
@@ -474,6 +504,16 @@ class HostBindings:
             _name(key): RepositoryBinding.parse(value)
             for key, value in raw["repositories"].items()
         }
+        staging_dir = None
+        if "staging_dir" in raw:
+            location = raw["staging_dir"]
+            if not isinstance(location, str) or not Path(location).is_absolute() or "\0" in location:
+                raise ConfigurationError("Staging directory must be an absolute private path")
+            staging_dir = Path(location)
+        if configuration is not None:
+            needs_staging = any(r.role == "remote-primary" for r in configuration.repositories)
+            if needs_staging != (staging_dir is not None):
+                raise ConfigurationError("Remote-primary bindings require a private staging directory")
         locations = [value.repository for value in repositories.values()]
         if len(set(locations)) != len(locations):
             raise ConfigurationError("Multiple names for one repository are forbidden")
@@ -503,7 +543,7 @@ class HostBindings:
                 for source in configuration.sources
             }
         return cls(Path(state), repositories, database_bindings, docker_bindings,
-                   source_bindings, version)
+                   source_bindings, version, staging_dir)
 
     @property
     def sensitive_paths(self) -> tuple[Path, ...]:

@@ -14,12 +14,14 @@ import shutil
 import sqlite3
 import tempfile
 import uuid
+from urllib.parse import urlsplit
 
 from .capture import capture_sources
 from .config import SnapshotProfile
 from .models import Configuration, HostBindings
 from .docker_recovery import DockerRecoveryError, DockerRecoveryUncertainError, DockerRuntime
 from .snapshot import ResticRunner
+from .resource_limits import ResourceLimitError, ResourceMonitor
 from .progress import stdout_progress_handler
 from .operations import (
     OperationLedger,
@@ -44,6 +46,21 @@ class ReplicaJobError(ServiceError):
         super().__init__("One or more replica copies failed; review each destination before retrying")
 
 
+class ResourceBudgetExceeded(ServiceError):
+    """Sanitized capacity failure with evidence and no credential or source paths."""
+
+    def __init__(self, result: dict):
+        self.result = result
+        super().__init__("Remote-primary resource budget was exceeded or cannot be verified")
+
+
+class _RemoteResticRunner(ResticRunner):
+    def base_args(self):
+        args = super().base_args()
+        args.insert(1, "--no-cache")
+        return args
+
+
 def _snapshot_id(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
         raise ServiceError("A complete snapshot ID is required")
@@ -61,6 +78,19 @@ class BackupService:
             raise ServiceError("Policy and private binding versions must match")
         if set(bindings.repositories) != {r.name for r in config.repositories}:
             raise ServiceError("Host bindings must match declared repositories")
+        self.repository_roles = {repository.name: repository.role for repository in config.repositories}
+        for name, role in self.repository_roles.items():
+            if role != "remote-primary":
+                continue
+            location = bindings.repositories[name].repository
+            try:
+                remote = urlsplit(location[3:]) if location.startswith("s3:") else None
+            except ValueError:
+                remote = None
+            if (remote is None or remote.scheme != "https" or not remote.hostname
+                    or not remote.path.strip("/") or remote.username or remote.password
+                    or remote.query or remote.fragment or bindings.staging_dir is None):
+                raise ServiceError("Remote-primary requires an HTTPS S3 binding and private staging")
         if config.schema_version == 3:
             if set(bindings.source_bindings) != {source.name for source in config.sources}:
                 raise ServiceError("Private source bindings must match portable sources")
@@ -212,8 +242,42 @@ class BackupService:
         binding = self.bindings.repositories[name]
         if not binding.password_file.is_file() or binding.password_file.stat().st_mode & 0o077:
             raise ServiceError("Repository password file must exist and be private")
-        return ResticRunner(SnapshotProfile(name=name, repository=binding.repository,
+        runner_type = _RemoteResticRunner if self.repository_roles[name] == "remote-primary" else ResticRunner
+        return runner_type(SnapshotProfile(name=name, repository=binding.repository,
                                            password_file=str(binding.password_file), retry_lock="0s"))
+
+    def _resource_monitor(self, name):
+        if self.repository_roles[name] != "remote-primary":
+            return None
+        budgets = [job.resource_budget for job in self.config.jobs if job.repository == name]
+        if not budgets or self.bindings.staging_dir is None:
+            raise ServiceError("Remote-primary requires a configured resource budget and private staging")
+        # One repository has one physical staging volume; every job must agree on its ceiling.
+        if any(budget != budgets[0] for budget in budgets):
+            raise ServiceError("Remote-primary jobs sharing a repository require one resource budget")
+        try:
+            return ResourceMonitor(self.bindings.staging_dir, self.state, budgets[0])
+        except ResourceLimitError as exc:
+            raise ResourceBudgetExceeded({"resource_budget_exceeded": True, "reason": str(exc),
+                                          "repository": name, "local_complete": False,
+                                          "cloud_complete": False, "replayed": False}) from None
+
+    def _operation_environment(self, name):
+        if name not in self.repository_roles:
+            raise ServiceError("Unknown repository")
+        if self.repository_roles[name] != "remote-primary":
+            return {k: v for k, v in os.environ.items() if not k.startswith("RESTIC_")}
+        if not os.environ.get("AWS_ACCESS_KEY_ID") or not os.environ.get("AWS_SECRET_ACCESS_KEY"):
+            raise ServiceError("Remote-primary requires explicit provider environment credentials")
+        staging = self.bindings.staging_dir
+        assert staging is not None
+        environment = {"PATH": os.environ.get("PATH", os.defpath), "HOME": str(staging),
+                       "TMPDIR": str(staging)}
+        for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                    "AWS_DEFAULT_REGION", "AWS_REGION", "AWS_CA_BUNDLE", "SSL_CERT_FILE"):
+            if key in os.environ:
+                environment[key] = os.environ[key]
+        return environment
 
     def _identity(self, name):
         if name not in self.bindings.repositories:
@@ -235,14 +299,19 @@ class BackupService:
         mutating=False,
         finalize: Callable[[OperationPlan, OperationRun], object] | None = None,
         on_stdout=None,
+        resource_monitor=None,
         after_run: Callable[[], None] | None = None,
         timeout_seconds: int = 3600,
     ):
         if cancel is not None and cancel.is_set():
             raise ServiceError("Operation cancelled before dispatch")
         # Restic configuration cannot be redirected by inherited RESTIC_* options.
-        env = {k: v for k, v in os.environ.items() if not k.startswith("RESTIC_")}
         repositories = sorted(set((name, *other)), key=self._identity)
+        remote_participants = [repository for repository in repositories
+                               if self.repository_roles[repository] == "remote-primary"]
+        env = self._operation_environment(remote_participants[0] if remote_participants else name)
+        if remote_participants and argv and argv[0] == "restic" and "--no-cache" not in argv:
+            argv = (argv[0], "--no-cache", *argv[1:])
         plans = {}
         for repository in repositories:
             identity = self._identity(repository)
@@ -255,6 +324,9 @@ class BackupService:
                 timeout_seconds=timeout_seconds,
             )
         with ExitStack() as stack:
+            if remote_participants and resource_monitor is None:
+                resource_monitor = self._resource_monitor(remote_participants[0])
+                stack.callback(resource_monitor.close)
             leases = []
             try:
                 for plan in plans.values():
@@ -270,20 +342,31 @@ class BackupService:
             on_stdout = stdout_progress_handler(plan.operation_id, label, on_stdout)
             if on_stdout is not None:
                 run_options["on_stdout"] = on_stdout
+            if resource_monitor is not None:
+                run_options["on_tick"] = resource_monitor.check
             try:
                 try:
                     result = self.runner.run(plan, **run_options)
                 finally:
                     if after_run is not None:
                         after_run()
+                if resource_monitor is not None:
+                    resource_monitor.check()
                 if finalize is not None and result.status is OperationStatus.SUCCEEDED:
                     finalize(plan, result)
-            except BaseException:
+            except BaseException as exc:
                 # Source is a read-only copy participant. Only the destination
                 # can be uncertain after a failed or interrupted dispatch.
                 for repository, lease in zip(plans, leases):
                     if repository != name:
                         lease.finish(OperationStatus.FAILED, None)
+                if isinstance(exc, ResourceLimitError):
+                    raise ResourceBudgetExceeded({
+                        "resource_budget_exceeded": True, "reason": str(exc),
+                        "repository": name, "operation_id": plan.operation_id,
+                        "local_complete": False, "cloud_complete": False,
+                        "replayed": False, "resource_observation": resource_monitor.result(),
+                    }) from None
                 raise
             if mutating and result.status is not OperationStatus.SUCCEEDED:
                 # These outcomes can leave repository state partially changed.
@@ -324,8 +407,16 @@ class BackupService:
 
     def capture(self, job_name, *, cancel=None):
         job = self._job(job_name)
+        remote_primary = self.repository_roles[job.repository] == "remote-primary"
+        if remote_primary:
+            self._operation_environment(job.repository)
         sources = tuple(source for source in self.sources if source.name in job.sources)
+        if remote_primary and any(source.kind == "docker" for source in sources):
+            raise ServiceError("Remote-primary Docker capture has no bounded export support")
+        monitor = None
         protected = [self.state]
+        if remote_primary:
+            protected.append(self.bindings.staging_dir.resolve())
         for binding in self.bindings.repositories.values():
             if binding.repository.startswith("/"):
                 protected.append(Path(binding.repository).resolve())
@@ -334,14 +425,15 @@ class BackupService:
             for raw in source.paths:
                 if any(_overlap(Path(raw).resolve(), path) for path in protected):
                     raise ServiceError("Capture source overlaps repository, runtime state, or credentials")
-        local = self.bindings.repositories[job.repository].repository
-        if not local.startswith("/"):
-            raise ServiceError("Local-first jobs require an absolute local repository path")
-        ancestor = Path(local)
-        while not ancestor.exists():
-            ancestor = ancestor.parent
-        if shutil.disk_usage(ancestor).free < 64 * 1024 * 1024:
-            raise ServiceError("Insufficient local space; existing recovery points retained")
+        if not remote_primary:
+            local = self.bindings.repositories[job.repository].repository
+            if not local.startswith("/"):
+                raise ServiceError("Local-first jobs require an absolute local repository path")
+            ancestor = Path(local)
+            while not ancestor.exists():
+                ancestor = ancestor.parent
+            if shutil.disk_usage(ancestor).free < 64 * 1024 * 1024:
+                raise ServiceError("Insufficient local space; existing recovery points retained")
         engine = self._engine(job.repository)
         capture_id = uuid.uuid4().hex
         receipt = {}
@@ -371,18 +463,29 @@ class BackupService:
                 )
             receipt["snapshot"] = snapshot
 
-        with ExitStack() as capture_stack:
+        with ExitStack() as resource_stack, ExitStack() as capture_stack:
+            if remote_primary:
+                monitor = self._resource_monitor(job.repository)
+                resource_stack.callback(monitor.close)
             try:
                 paths = capture_stack.enter_context(capture_sources(
                     sources,
-                    self.state,
+                    self.bindings.staging_dir if remote_primary else self.state,
                     timeout=job.timeout_seconds,
                     cancel=cancel,
                     database_bindings=self.bindings.database_bindings,
                     docker_runtime=self.docker_runtime,
                     protected_paths=tuple(protected),
                     operation_id=capture_id,
+                    resource_monitor=monitor,
                 ))
+            except ResourceLimitError as exc:
+                raise ResourceBudgetExceeded({
+                    "resource_budget_exceeded": True, "reason": str(exc),
+                    "repository": job.repository, "operation_id": capture_id,
+                    "local_complete": False, "cloud_complete": False,
+                    "replayed": False, "resource_observation": monitor.result(),
+                }) from None
             except DockerRecoveryError as exc:
                 raise ServiceError(str(exc)) from None
             lifecycle = capture_stack.pop_all()
@@ -403,6 +506,7 @@ class BackupService:
                     cancel=cancel,
                     operation_id=capture_id,
                     mutating=True,
+                    resource_monitor=monitor,
                     finalize=finalize_capture,
                     after_run=finish_lifecycle,
                     timeout_seconds=job.timeout_seconds,
@@ -410,10 +514,18 @@ class BackupService:
             finally:
                 finish_lifecycle()
         snapshot = receipt["snapshot"]
-        return {"operation_id": plan.operation_id, "repository": job.repository, "snapshot_id": snapshot,
-                "local_complete": True, "required_replicas": list(job.replicas), "cloud_complete": not job.replicas}
+        response = {"operation_id": plan.operation_id, "repository": job.repository, "snapshot_id": snapshot,
+                    "primary_destination": {"repository": job.repository,
+                                            "kind": "remote" if remote_primary else "local"},
+                    "local_complete": not remote_primary, "required_replicas": list(job.replicas),
+                    "cloud_complete": remote_primary, "required_replicas_complete": not job.replicas}
+        if monitor is not None:
+            response["resource_observation"] = monitor.result()
+        return response
 
     def copy(self, source, destination, snapshot, *, cancel=None, timeout_seconds=3600):
+        if any(self.repository_roles.get(name) == "remote-primary" for name in (source, destination)):
+            raise ServiceError("Remote-primary copies do not yet have bounded resource support")
         snapshot = _snapshot_id(snapshot)
         if source == destination or self._identity(source) == self._identity(destination):
             raise ServiceError("Copy requires independent repositories")
@@ -1158,12 +1270,17 @@ class BackupService:
                     result["repository"], destination, result["snapshot_id"], cancel=cancel,
                     timeout_seconds=self._job(job_name).timeout_seconds,
                 ))
+                if self.bindings.repositories.get(destination) is not None:
+                    if self.bindings.repositories[destination].repository.startswith("/"):
+                        result["local_complete"] = True
+                    else:
+                        result["cloud_complete"] = True
             except (ServiceError, RuntimeError, OSError, sqlite3.Error, ValueError):
                 result["replica_failures"].append({"destination_repository": destination,
                                                    "reason": "copy_failed_or_uncertain"})
                 if cancel is not None and cancel.is_set():
                     break
-        result["cloud_complete"] = not result["replica_failures"]
+        result["required_replicas_complete"] = not result["replica_failures"]
         if result["replica_failures"]:
             raise ReplicaJobError(result)
         return result

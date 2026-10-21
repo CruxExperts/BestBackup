@@ -215,3 +215,13 @@ def test_schedules_detect_duplicate_user_and_system_timers(monkeypatch):
     schedule, = _schedules((job,))
     assert schedule["active_timer"] == "conflicting timers"
     assert schedule["next_run"] is None
+
+
+def test_remote_primary_capture_does_not_report_local_capture(tmp_path):
+    cloud = "s3:https://storage.example/bucket/machine"
+    service = _StatusService(tmp_path / "state", tmp_path / "local", cloud, (
+        _summary(repository_key(cloud), "capture", "succeeded", "2026-10-20T12:00:00+00:00"),
+    ))
+    facts = operational_status(service)
+    assert facts["last_local_capture"] is None
+    assert facts["last_remote_primary_capture"] == "2026-10-20T12:00:00+00:00"

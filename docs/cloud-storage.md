@@ -158,6 +158,77 @@ succeeded; reconcile uncertain operations before retrying.
 
 ## Retries, backoff, and interruption
 
+### Remote primary with bounded staging (unreleased)
+
+An experimental `remote-primary` repository can capture ordinary files directly
+through Restic into an HTTPS S3 endpoint. It does not create a second local
+repository or archive. Local-first capture and replication remain available.
+This implementation has local regression evidence; live B2 qualification and
+the final remote-server drill are deferred.
+
+For example, the portable repository and job declarations are:
+
+```json
+{
+  "repositories": [{"name": "cloud", "role": "remote-primary"}],
+  "jobs": [{
+    "name": "daily", "repository": "cloud", "sources": ["files"],
+    "resource_budget": {
+      "schema_version": 1, "staging_max_bytes": 67108864,
+      "minimum_free_bytes": 8388608, "cache_max_bytes": 0
+    }
+  }]
+}
+```
+
+These are fragments of a schema-3 policy, not a complete configuration. Bind the
+repository to its HTTPS S3 URL and private password file as above, and set
+`staging_dir` in private host bindings. The staging directory must be an owned,
+mode-0700, dedicated mounted filesystem whose entire capacity is at most the
+configured staging budget. It must contain only the stable bbackup staging lock
+before an operation starts. Arrange the mount separately, including persistence
+for scheduled jobs; bbackup neither mounts it nor deletes unrelated content.
+Choose the limits from actual available capacity and export requirements.
+
+This first profile requires `cache_max_bytes: 0` and uses Restic `--no-cache`.
+Explicit `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` credentials must be in
+the supervised process environment. Inherited Restic options and AWS profiles
+cannot redirect the operation. The default schedule remains `daily` (24 hours).
+Database sources retain consistent native exports or the SQLite backup API;
+their staging writes are checked before writing, and unsupported combinations
+fail rather than fall back to copying a live database file. Native Docker and
+manual or scheduled replica copies involving a remote primary are currently
+refused because they lack the same bounded export/copy support.
+
+A staging-wide nonblocking lease serializes users of that volume. The runner
+checks disk pressure even while a child is silent; it terminates a child on a
+pressure failure and preserves uncertain-operation reconciliation. Results
+include `primary_destination`, separate local/cloud completion, and resource
+observations. Failures use `resource_budget_exceeded`. The dedicated filesystem
+provides a hard staging-capacity ceiling. Free-space reserve checks are observed
+thresholds, not a guarantee against unrelated writers between checks; results
+report `free_space_reserve_hard_guaranteed: false`. Observed changes in filesystem
+use are not attributed exclusively to the backup process.
+
+### Credential roles
+
+Least-privilege source credentials are the standard production profile: read,
+list, and new writes within one machine's encrypted repository, with historical
+backup versions protected against permanent deletion or alteration. Management
+credentials are also supported when explicitly supplied for provisioning,
+verification, retention, or recovery. Keep those roles and their process
+environments separate. A management key's failure to satisfy the restricted
+source profile does not make it unusable for its intended management operation.
+Supplying a broad key never expands the reviewed target or retention grant.
+
+For local development, distinct names such as `BBACKUP_B2_PROVISIONER_KEY_ID`
+and `BBACKUP_B2_PROVISIONER_KEY` avoid collisions with source credentials. Transfer
+only the intended role's values into the provider's standard environment names
+inside that operation's private process. Never put provisioning keys on a source
+host by default. B2 `writeFiles` permits hiding names and uploading replacement
+versions; strict append-only current names are not claimed. Tests must prove
+that protected historical recovery points remain unchanged and recoverable.
+
 Native B2 inspection uses pinned Backblaze SDK retries and runs in a supervised
 child process with a 120-second deadline. Cancellation stops and reaps the
 process group, including SDK backoff waits. Credentials remain in memory.

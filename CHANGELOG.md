@@ -15,6 +15,9 @@ current uv-based install, development, and release instructions.
 - Unreleased restricted B2 source-key metadata assessment and independently
   checked, separately signed central recovery acceptance. Live B2 protection
   and complete-machine recovery remain unqualified.
+- Experimental HTTPS S3 remote-primary capture with a dedicated bounded staging
+  filesystem, disabled cache, shared staging lease, pressure checks and
+  structured resource failures. Final remote-server qualification is deferred.
 - Refreshed matching 1280×640 GitHub social preview artwork, embedded ownership metadata, checked provenance, and explicit repository-settings upload instructions.
 
 ### Fixed

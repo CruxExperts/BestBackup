@@ -46,6 +46,7 @@ class CheckpointStatus(TypedDict):
 
 class OperationalStatus(TypedDict):
     last_local_capture: str | None
+    last_remote_primary_capture: str | None
     last_independent_copy: str | None
     last_cloud_copy: str | None
     last_repository_check: str | None
@@ -239,7 +240,8 @@ def operational_status(service: BackupService) -> OperationalStatus:
 
     now = datetime.now(timezone.utc)
     return {
-        "last_local_capture": latest("capture", allowed=identities),
+        "last_local_capture": latest("capture", allowed=identities - cloud_identities),
+        "last_remote_primary_capture": latest("capture", allowed=cloud_identities),
         "last_independent_copy": latest("copy", allowed=identities),
         "last_cloud_copy": latest("copy", allowed=cloud_identities),
         "last_repository_check": latest("check", allowed=identities),

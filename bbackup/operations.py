@@ -620,6 +620,7 @@ class OperationRunner:
         *,
         on_stdout: Callable[[bytes], None] | None = None,
         on_stderr: Callable[[bytes], None] | None = None,
+        on_tick: Callable[[], None] | None = None,
         cancel_event: Event | None = None,
     ) -> OperationRun:
         """Execute a plan and return bounded output tails and an explicit code."""
@@ -691,6 +692,8 @@ class OperationRunner:
         callback_error: BaseException | None = None
         try:
             while selector.get_map() or process.poll() is None:
+                if on_tick is not None:
+                    on_tick()
                 if cancel_event is not None and cancel_event.is_set():
                     status = OperationStatus.CANCELLED
                     self._terminate_group(process)

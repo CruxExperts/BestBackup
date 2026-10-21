@@ -32,6 +32,31 @@ def test_defaults(config):
     assert parsed.jobs[0].schedule == "daily"
 
 
+def test_remote_primary_requires_versioned_zero_cache_resource_budget(config):
+    config["repositories"][0]["role"] = "remote-primary"
+    with pytest.raises(ConfigurationError, match="resource budget"):
+        Configuration.parse(config)
+    config["jobs"][0]["resource_budget"] = {
+        "schema_version": 1, "staging_max_bytes": 1024**3,
+        "minimum_free_bytes": 64 * 1024**2, "cache_max_bytes": 0,
+    }
+    config["jobs"][0]["replicas"] = []
+    parsed = Configuration.parse(config)
+    assert parsed.repositories[0].role == "remote-primary"
+    assert parsed.jobs[0].resource_budget.cache_max_bytes == 0
+    config["jobs"][0]["replicas"] = ["cloud"]
+    with pytest.raises(ConfigurationError, match="replica copies"):
+        Configuration.parse(config)
+    config["jobs"][0]["replicas"] = []
+    config["jobs"][0]["resource_budget"]["cache_max_bytes"] = 1
+    with pytest.raises(ConfigurationError, match="cache"):
+        Configuration.parse(config)
+    config["jobs"][0]["resource_budget"]["cache_max_bytes"] = 0
+    config["jobs"][0]["resource_budget"]["schema_version"] = 2
+    with pytest.raises(ConfigurationError, match="version"):
+        Configuration.parse(config)
+
+
 @pytest.mark.parametrize(
     "text", ['{"a":1,"a":2}', '{"a":{"b":1,"b":2}}', '{"a":NaN}', '{"a":Infinity}']
 )

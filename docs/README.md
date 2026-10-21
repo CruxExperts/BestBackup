@@ -2,7 +2,7 @@
 
 bbackup is for Linux administrators, homelab and self-hosted operators, and small infrastructure teams who need encrypted local backups, verified file restores, and visible scheduled jobs. Choose a guide by the work you are doing.
 
-These guides describe v2.0.3. The [qualification record](development/version-2.md) is the authority for the exact qualified scope, version-specific evidence, and remaining limits; an implemented path alone does not establish support. Operators still using v2.0.2 can follow its [versioned documentation](https://github.com/CruxExperts/BestBackup/tree/v2.0.2/docs) until they migrate.
+These guides describe v2.0.4. The [qualification record](development/version-2.md) is the authority for the exact qualified scope, version-specific evidence, and remaining limits; an implemented path alone does not establish support. The v2.0.4 release retains the v2.0.3 tested core scope, while new cloud and Linux workflows are experimental and unqualified. Operators still using v2.0.2 can follow its [versioned documentation](https://github.com/CruxExperts/BestBackup/tree/v2.0.2/docs) until they migrate.
 
 The [release dependency evidence](development/release-dependencies.json) records the reviewed versions, source timestamps, lock hash, and audit limits.
 
@@ -14,7 +14,8 @@ The [release dependency evidence](development/release-dependencies.json) records
 | Migrate an existing schema-2 setup | [Quick start: migrate an existing configuration](../QUICKSTART.md#migrate-an-existing-schema-2-configuration) |
 | Maintain an older Docker/YAML workflow | [Legacy management](management.md) and [encryption compatibility](encryption.md) |
 | Schedule jobs or integrate with scripts and agents | [Quick start: apply a schedule](../QUICKSTART.md#apply-a-schedule-deliberately), [agent integration](AGENT_INTEGRATION.md), and the [production command reference](production-cli.md) |
-| Check what v2.0.3 qualifies | [Version 2 qualification record](development/version-2.md) |
+| Check what v2.0.4 qualifies | [Version 2 qualification record](development/version-2.md) |
+| Evaluate experimental cloud recovery, retention or Linux coverage | [Experimental program and limits](development/version-2.md#experimental-cloud-and-machine-recovery-features) and [cloud storage](cloud-storage.md) |
 
 ## Operator references
 

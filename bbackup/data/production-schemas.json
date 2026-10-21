@@ -1,4 +1,315 @@
 {
+  "cloud-maintenance apply": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "grant_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "maintenance_bindings_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "plan_id": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "plan_sha256": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "policy_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "quiescent_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      },
+      "records_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "policy_file",
+      "grant_file",
+      "records_file",
+      "maintenance_bindings_file",
+      "plan_id",
+      "plan_sha256"
+    ],
+    "type": "object"
+  },
+  "cloud-maintenance catalog-enroll": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "grant_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "policy_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "policy_file",
+      "grant_file"
+    ],
+    "type": "object"
+  },
+  "cloud-maintenance plan": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "grant_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "maintenance_bindings_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "policy_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "quiescent_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      },
+      "records_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "policy_file",
+      "grant_file",
+      "records_file",
+      "maintenance_bindings_file"
+    ],
+    "type": "object"
+  },
+  "cloud-maintenance reconcile": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "grant_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "maintenance_bindings_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "plan_id": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "plan_sha256": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "policy_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "quiescent_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      },
+      "records_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "policy_file",
+      "grant_file",
+      "records_file",
+      "maintenance_bindings_file",
+      "plan_id",
+      "plan_sha256"
+    ],
+    "type": "object"
+  },
+  "cloud-maintenance records-enroll": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "grant_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "policy_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "records_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "policy_file",
+      "grant_file",
+      "records_file"
+    ],
+    "type": "object"
+  },
+  "cloud-retention apply": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "grant_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "plan_id": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "plan_sha256": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "policy_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "quiescent_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      },
+      "records_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "policy_file",
+      "grant_file",
+      "records_file",
+      "plan_id",
+      "plan_sha256"
+    ],
+    "type": "object"
+  },
+  "cloud-retention catalog-enroll": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "grant_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "policy_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "policy_file",
+      "grant_file"
+    ],
+    "type": "object"
+  },
+  "cloud-retention plan": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "grant_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "policy_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "quiescent_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      },
+      "records_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "policy_file",
+      "grant_file",
+      "records_file"
+    ],
+    "type": "object"
+  },
+  "cloud-retention reconcile": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "plan_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "policy_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "policy_file",
+      "plan_file"
+    ],
+    "type": "object"
+  },
   "config migrate": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -30,6 +341,92 @@
     "additionalProperties": false,
     "properties": {},
     "required": [],
+    "type": "object"
+  },
+  "coverage check": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "quiet_administrative_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "coverage discover": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "quiet_administrative_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "coverage recovery-evidence": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "evidence_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "name": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "quiet_administrative_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      },
+      "snapshot": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "snapshot"
+    ],
+    "type": "object"
+  },
+  "coverage review": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "candidate_digest": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "name": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "quiet_administrative_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "name",
+      "candidate_digest"
+    ],
     "type": "object"
   },
   "databases reconcile": {
@@ -222,10 +619,76 @@
       "name": {
         "minLength": 1,
         "type": "string"
+      },
+      "quiet_administrative_window_confirmed": {
+        "default": false,
+        "type": "boolean"
       }
     },
     "required": [
       "name"
+    ],
+    "type": "object"
+  },
+  "recovery accept": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "bucket": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "endpoint": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "kit": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "prefix": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "region": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository_id": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "snapshot": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "source_signer": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "target": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "verifier": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "kit",
+      "target",
+      "source_signer",
+      "verifier",
+      "repository",
+      "repository_id",
+      "snapshot",
+      "bucket",
+      "endpoint"
     ],
     "type": "object"
   },
@@ -529,6 +992,30 @@
     ],
     "type": "object"
   },
+  "runs discard-exports": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "artifact_record_sha256": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "operation_id": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "operation_id",
+      "artifact_record_sha256"
+    ],
+    "type": "object"
+  },
   "runs list": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -558,6 +1045,10 @@
         "minLength": 1,
         "type": "string"
       },
+      "quiescent_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      },
       "repository": {
         "minLength": 1,
         "type": "string"
@@ -571,6 +1062,29 @@
       "repository",
       "operation_id",
       "outcome"
+    ],
+    "type": "object"
+  },
+  "runs retained-exports": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "limit": {
+        "maximum": 1000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "offset": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository"
     ],
     "type": "object"
   },
@@ -622,6 +1136,25 @@
     "type": "object"
   },
   "service render": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "executable": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "name": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "executable"
+    ],
+    "type": "object"
+  },
+  "service render-system": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
     "properties": {

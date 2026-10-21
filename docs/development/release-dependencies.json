@@ -16,72 +16,74 @@
     ],
     "package_version_coverage_verified_against_lockfile": true,
     "query_failures": 0,
-    "raw_evidence_sha256": "3ff337b3de5408e562e5f14a3f366db3010ea740e6d90f4ec8077df65be1f0fc",
+    "raw_evidence_sha256": "1c04489e2becf51c2ed9d2acea18bfbbc2db210c9f5a2d331c53ec7263eaf3b8",
     "result": "No advisory records were returned for these exact package versions by OSV, GitHub Advisory Database, deps.dev, or PyPI at retrieval time.",
-    "retrieved_at_utc": "2026-10-19T09:40:08.281608+00:00",
+    "retrieved_at_utc": "2026-10-21T09:12:55.211479+00:00",
     "scope": "All 51 exact PyPI registry package versions in uv.lock, plus the exact setuptools and wheel versions resolved for the build-system requirements.",
     "sources": [
       {
         "advisory_hits": 0,
         "endpoint": "https://api.osv.dev/v1/querybatch",
         "http_status_counts": {
-          "200": 1
+          "200": 2
         },
         "independence_class": "A",
         "name": "OSV",
         "package_version_queries": 53,
-        "requests": 1,
-        "retrieved_at_utc": "2026-10-19T09:39:51.482880+00:00"
+        "requests": 2,
+        "retrieved_at_utc": "2026-10-21T09:12:55.211479+00:00"
       },
       {
         "advisory_hits": 0,
         "endpoint": "https://api.github.com/advisories?ecosystem=pip&affects=PACKAGE%40VERSION",
         "http_status_counts": {
-          "200": 53
+          "200": 54
         },
         "independence_class": "B",
         "name": "GitHub Advisory Database",
         "package_version_queries": 53,
-        "retrieval_window_utc": [
-          "2026-10-19T09:39:52.016798+00:00",
-          "2026-10-19T09:40:05.733216+00:00"
-        ]
+        "retrieved_at_utc": "2026-10-21T09:12:55.211479+00:00",
+        "requests": 54
       },
       {
         "advisory_hits": 0,
         "endpoint": "https://api.deps.dev/v3/systems/pypi/packages/PACKAGE/versions/VERSION",
         "http_status_counts": {
-          "200": 53
+          "200": 54
         },
         "independence_class": "E",
         "name": "deps.dev",
         "package_version_queries": 53,
-        "retrieval_window_utc": [
-          "2026-10-19T09:39:52.293682+00:00",
-          "2026-10-19T09:40:06.436922+00:00"
-        ]
+        "retrieved_at_utc": "2026-10-21T09:12:55.211479+00:00",
+        "requests": 54
       },
       {
         "advisory_hits": 0,
         "endpoint": "https://pypi.org/pypi/PACKAGE/VERSION/json",
         "http_status_counts": {
-          "200": 53
+          "200": 54
         },
         "independence_class": "E",
         "name": "PyPI JSON API",
         "package_version_queries": 53,
-        "retrieval_window_utc": [
-          "2026-10-19T09:39:52.508368+00:00",
-          "2026-10-19T09:40:08.279763+00:00"
-        ]
+        "retrieved_at_utc": "2026-10-21T09:12:55.211479+00:00",
+        "requests": 54
       }
-    ]
+    ],
+    "remediation": {
+      "advisory": "GHSA-6q48-6c7w-9gw2",
+      "package": "certifi",
+      "previous_version": "2026.5.20",
+      "resolved_version": "2026.10.19",
+      "source": "https://github.com/advisories/GHSA-6q48-6c7w-9gw2",
+      "note": "The initial lookup identified the affected version; the fixed version was separately queried across the same four sources. Other exact package versions are unchanged."
+    }
   },
   "lockfile": {
-    "local_project_version": "2.0.3",
+    "local_project_version": "2.0.4",
     "locked_pypi_packages": 51,
     "path": "uv.lock",
-    "sha256": "7cf0bfc2b287378e4fe893a2f2ffc20379d165ce55fe6a518bc749f5a701c9fb"
+    "sha256": "d1163858fc14e6aa811e96ca6ae2136def3482b681bfe08434254b112203d6e9"
   },
   "package_versions": [
     {
@@ -106,7 +108,7 @@
     },
     {
       "name": "certifi",
-      "version": "2026.5.20"
+      "version": "2026.10.19"
     },
     {
       "name": "cffi",
@@ -298,8 +300,48 @@
     }
   ],
   "release": {
-    "release_date_utc": "2026-10-19",
-    "version": "2.0.3"
+    "release_date_utc": "2026-10-21",
+    "version": "2.0.4"
   },
-  "schema_version": 1
+  "schema_version": 1,
+  "external_build_tools": {
+    "uv": {
+      "version": "0.13.4",
+      "source": "https://pypi.org/project/uv/0.13.4/",
+      "usage": "Hashed bootstrap for CI and the four supported Ubuntu release-build targets.",
+      "artifacts": [
+        {
+          "platform": "linux-amd64",
+          "filename": "uv-0.13.4-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "sha256": "05e4332791b4d55b6dde8695b7fa6079b26991519f44760887c5dfbd5ca4fe53",
+          "yanked": false
+        },
+        {
+          "platform": "linux-arm64",
+          "filename": "uv-0.13.4-py3-none-manylinux_2_28_aarch64.whl",
+          "sha256": "7b3cdf868e5415631fe797b648c0d6945d38d388f23367bdd0b6332e80a1fcb0",
+          "yanked": false
+        }
+      ],
+      "security_review": {
+        "advisory": "GHSA-hq85-5cpj-mr62",
+        "result": "No advisory records returned for the exact uv 0.13.4 version by OSV, GitHub Advisory Database, deps.dev, or the PyPI JSON API.",
+        "exact_version_only": true,
+        "raw_evidence_sha256": "d5f443900b224786589136f8447b405d25142b2355790f5bb97e0c3ec1082135"
+      }
+    },
+    "restic": {
+      "version": "0.19.1",
+      "role": "Pinned executable supplied to release package builds and used by bbackup backup/restore operations.",
+      "advisory": {
+        "id": "GO-2026-5932",
+        "source": "https://pkg.go.dev/vuln/GO-2026-5932",
+        "scope": "The advisory concerns the separate self-update OpenPGP verification path present in restic 0.19.1.",
+        "bbackup_usage": "Packaging does not invoke restic self-update; release archives are version-pinned and SHA-256 checked, and the package builder verifies supplied executable bytes.",
+        "limitation": "This records the unused self-update-path caveat only and makes no broader claim about backup or restore behavior.",
+        "versioned_source": "https://github.com/restic/restic/blob/v0.19.1/internal/selfupdate/verify.go",
+        "upstream_fix_pull_request": "https://github.com/restic/restic/pull/21997"
+      }
+    }
+  }
 }

@@ -1953,7 +1953,7 @@ PRODUCTION_COMMANDS: dict[str, ProductionCommand] = {
     "config migrate": {"summary": "Write enrolled version-three files beside untouched version-two originals.", "fields": {}},
     "service enroll": {"summary": "Explicitly enroll the exact version-three policy and bindings on this machine and user.", "fields": {}},
     "jobs list": {"summary": "List configured capture jobs.", "fields": {}},
-    "jobs run": {"summary": "Capture locally and copy explicit successful snapshots.", "fields": {"name": "string"}},
+    "jobs run": {"summary": "Capture locally and copy explicit successful snapshots.", "fields": {"name": "string", "quiet_administrative_window_confirmed": "boolean"}},
     "repositories list": {"summary": "List declared repositories without host credentials.", "fields": {}},
     "repositories init": {"summary": "Initialize an encrypted repository.", "fields": {"name": "string", "source": "optional-string"}},
     "repositories check": {"summary": "Read and verify repository data.", "fields": {"name": "string"}},
@@ -1961,9 +1961,50 @@ PRODUCTION_COMMANDS: dict[str, ProductionCommand] = {
     "snapshots copy": {"summary": "Copy a successful snapshot into an independent repository.", "fields": {"source": "string", "destination": "string", "snapshot": "string"}},
     "retention plan": {"summary": "Review a read-only local retention plan bound to current snapshot and replica evidence.", "fields": {"job": "string"}},
     "retention apply": {"summary": "Apply only a reviewed local retention plan after explicit approval; never prunes repository data.", "fields": {"job": "string", "plan_token": "string", "approved": "boolean"}},
+    "cloud-retention catalog-enroll": {
+        "summary": "Explicitly enroll a new central exact-version retention catalog; never replace a missing established catalog.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path"},
+    },
+    "cloud-retention plan": {
+        "summary": "Plan noncurrent object-version deletion from independently accepted checkpoints and private authority.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path", "records_file": "path", "quiescent_window_confirmed": "boolean"},
+    },
+    "cloud-retention apply": {
+        "summary": "Apply one reviewed exact-version plan under the shared repository lease; never replay uncertain deletes.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path", "records_file": "path", "plan_id": "string", "plan_sha256": "string", "quiescent_window_confirmed": "boolean"},
+    },
+    "cloud-retention reconcile": {
+        "summary": "Reconcile a cloud-version deletion journal using read-only observations without replaying it.",
+        "fields": {"repository": "string", "policy_file": "path", "plan_file": "path"},
+    },
+    "cloud-maintenance catalog-enroll": {
+        "summary": "Explicitly initialize the central catalog under a current-repository maintenance grant.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path"},
+    },
+    "cloud-maintenance records-enroll": {
+        "summary": "Explicitly register independently signed accepted recovery records without changing version-age evidence.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path", "records_file": "path"},
+    },
+    "cloud-maintenance plan": {
+        "summary": "Plan exact accepted and unprotected snapshot removal using read-only Restic observations.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path", "records_file": "path", "maintenance_bindings_file": "path", "quiescent_window_confirmed": "boolean"},
+    },
+    "cloud-maintenance apply": {
+        "summary": "Apply a reviewed snapshot-forget and no-repack prune plan under one repository lease.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path", "records_file": "path", "maintenance_bindings_file": "path", "plan_id": "string", "plan_sha256": "string", "quiescent_window_confirmed": "boolean"},
+    },
+    "cloud-maintenance reconcile": {
+        "summary": "Observe an interrupted maintenance attempt without replaying forget or prune.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path", "records_file": "path", "maintenance_bindings_file": "path", "plan_id": "string", "plan_sha256": "string", "quiescent_window_confirmed": "boolean"},
+    },
     "restore": {"summary": "Restore and verify files in a new isolated directory.", "fields": {"repository": "string", "snapshot": "string", "target": "path"}},
     "runs list": {"summary": "Read sanitized operation events.", "fields": {"limit": "limit", "offset": "offset"}},
     "service render": {"summary": "Render disabled systemd service and persistent timer units.", "fields": {"name": "string", "executable": "path"}},
+    "service render-system": {"summary": "Render root system service and persistent timer units after validating root-controlled executable and configuration paths; never installs them.", "fields": {"name": "string", "executable": "path"}},
+    "coverage discover": {"summary": "Inventory exact private Linux scope and record a bounded candidate for review.", "fields": {"name": "string", "quiet_administrative_window_confirmed": "boolean"}},
+    "coverage review": {"summary": "Approve an exact complete Linux coverage candidate for the enrolled machine, user, policy and bindings.", "fields": {"name": "string", "candidate_digest": "string", "quiet_administrative_window_confirmed": "boolean"}},
+    "coverage check": {"summary": "Check reviewed Linux coverage and structural drift without exposing private paths.", "fields": {"name": "string", "quiet_administrative_window_confirmed": "boolean"}},
+    "coverage recovery-evidence": {"summary": "Assess private local recovery evidence against the exact current baseline and snapshot; never qualifies whole-machine recovery.", "fields": {"name": "string", "snapshot": "string", "evidence_file": "optional-string", "quiet_administrative_window_confirmed": "boolean"}},
     "service install": {"summary": "Install reviewed user-level units; activate the exact timer only with --activate.", "fields": {"name": "string", "executable": "path", "activate": "boolean"}},
 }
 
@@ -1991,6 +2032,14 @@ PRODUCTION_COMMANDS.update({
     "recovery inspect": {"summary": "Inspect cloud versioning and lifecycle without a protection claim.", "fields": {"bucket": "string", "endpoint": "string", "prefix": "optional-string", "region": "optional-string"}},
     "recovery checkpoint": {"summary": "Check a quiescent repository and seal an independent recovery kit.", "fields": {"repository": "string", "snapshot": "string", "bucket": "string", "endpoint": "string", "prefix": "optional-string", "region": "optional-string", "target": "path", "signer": "string", "recipient": "string", "quiescent_window_confirmed": "boolean"}},
     "recovery open": {"summary": "Authenticate and decrypt a recovery kit into a new private directory.", "fields": {"kit": "path", "target": "path", "signer": "string"}},
+    "recovery accept": {
+        "summary": "Independently reconstruct and check a historical repository, then sign central acceptance with a separate verifier key.",
+        "fields": {
+            "kit": "path", "target": "path", "source_signer": "string", "verifier": "string",
+            "repository": "string", "repository_id": "string", "snapshot": "string",
+            "bucket": "string", "endpoint": "string", "prefix": "optional-string", "region": "optional-string",
+        },
+    },
     "recovery restore": {"summary": "Restore signed exact historical object versions into a new local repository.", "fields": {"manifest": "path", "signature": "path", "signer": "string", "password_file": "path", "repository": "string", "repository_id": "string", "snapshot": "string", "bucket": "string", "endpoint": "string", "prefix": "optional-string", "region": "optional-string", "target": "path"}},
 })
 
@@ -2025,7 +2074,16 @@ PRODUCTION_COMMANDS["skills"] = {
 
 PRODUCTION_COMMANDS["runs reconcile"] = {
     "summary": "Record an administrator-reviewed outcome for an uncertain operation without replaying it.",
-    "fields": {"repository": "string", "operation_id": "string", "outcome": "string", "repository_reviewed": "boolean"},
+    "fields": {"repository": "string", "operation_id": "string", "outcome": "string", "repository_reviewed": "boolean", "quiescent_window_confirmed": "boolean"},
+}
+
+PRODUCTION_COMMANDS["runs retained-exports"] = {
+    "summary": "List bounded private remote capture artifact records, including captures stopped before dispatch; counts and digests are declared, not file-hash verification.",
+    "fields": {"repository": "string", "limit": "limit", "offset": "offset"},
+}
+PRODUCTION_COMMANDS["runs discard-exports"] = {
+    "summary": "Explicitly discard the exact retained exports of a reviewed failed or abandoned remote capture, bound to its current private record digest.",
+    "fields": {"repository": "string", "operation_id": "string", "artifact_record_sha256": "string"},
 }
 
 PRODUCTION_COMMANDS["databases restore"] = {

@@ -38,7 +38,7 @@ It requires restic and never touches user backup repositories.
 The test container in [Dockerfile.test](../Dockerfile.test) uses the official
 Python 3.12.15 slim Trixie multiarchitecture index
 `sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1`.
-It installs `uv` 0.11.21 from the wheel and SHA-256 in
+It installs `uv` 0.13.4 from the wheel and SHA-256 in
 [uv-bootstrap.txt](../.github/uv-bootstrap.txt) with pip hash checking. Docker
 backup, restore, and integration helpers share the official Alpine 3.23.6
 multiarchitecture index
@@ -51,7 +51,7 @@ arm64 wheel hash is not a native arm64 runtime qualification. `apt-get` and `apk
 distribution packages at build time, so these recipes are not byte-for-byte
 reproducible. Sources: [Python official image](https://hub.docker.com/_/python),
 [Alpine official image](https://hub.docker.com/_/alpine), and
-[uv on PyPI](https://pypi.org/project/uv/0.11.21/).
+[uv on PyPI](https://pypi.org/project/uv/0.13.4/).
 
 ### Rebootable systemd qualification
 
@@ -62,14 +62,18 @@ catch-up after a missed schedule, overlap refusal, and an abrupt guest reset
 without automatic replay of an uncertain operation. Both repositories share the
 guest; this does not prove off-host disaster recovery.
 
-The host needs Docker, KVM access, `genisoimage`, `gpgv`, and the Ubuntu cloud-image
-public keyring. Review the script's pinned image/toolchain before running it.
+The host needs Docker, `genisoimage`, `gpgv`, and the Ubuntu cloud-image public
+keyring. KVM hardware virtualization is the default. On hosts without KVM,
+`--accelerator tcg` selects slower software emulation and does not expose
+`/dev/kvm` to the container. The evidence records the selected accelerator;
+an emulated run does not measure native performance. Review the script's pinned
+image/toolchain before running it.
 Supply previously reviewed restic and uv executables, a target-compatible runtime
 wheelhouse, and hash-locked requirements exported from `uv.lock`:
 
 ```bash
 uv run python scripts/qualify_systemd.py \
-  --artifact dist/bbackup-2.0.3-py3-none-any.whl \
+  --artifact dist/bbackup-2.0.4-py3-none-any.whl \
   --wheel-sha256 '<SHA-256 of that exact wheel>' \
   --ubuntu-codename noble \
   --wheelhouse /path/to/reviewed-runtime-wheels \
@@ -86,10 +90,22 @@ passwords, guest disks, and machine identifiers remain under ignored
 See [recorded qualification scope](../docs/development/version-2.md) before
 making support claims.
 
+Add `--scenario covered-root` to the same command for a separate root-coverage
+and replacement rehearsal. It installs units inside disposable guests, reviews
+their real Linux inventory, and captures a tiny files/SQLite application fixture.
+A fresh replacement overlay receives the small recovery disk and candidate
+inputs, then restores data, reconstructs fixture identities and metadata, and
+checks application startup. The source operating-system overlay is not attached
+to the replacement. Evidence is classified as local emulation; it does not
+qualify off-host custody, provider protection or complete-machine recovery.
+The default `timer-reboot` scenario remains the ordinary user-timer drill.
+
 ### Build a native Ubuntu package
 
 
 The `build_deb.py` script builds a `.deb` from the supplied bbackup wheel, this repository's `uv.lock`, and a supplied restic 0.19.1 executable. The builder requires an already installed `uv`, `dpkg-deb`, and the `packaging` module in its Python interpreter; on supported Ubuntu/Mint hosts, install `python3-packaging` and invoke `/usr/bin/python3`. It does not download restic, install packages on the host, update `uv.lock`, or install Python packages into system Python. Run it as an unprivileged user.
+
+The upstream [GO-2026-5932 advisory](https://pkg.go.dev/vuln/GO-2026-5932) concerns restic 0.19.1's separate `self-update` OpenPGP verification path. bbackup packaging does not invoke `restic self-update`: release jobs use versioned archives with fixed SHA-256 digests, and `build_deb.py` checks the supplied executable bytes. This caveat is limited to the unused self-update path; it makes no broader claim about backup or restore behavior.
 The locked dependency export explicitly uses the same native interpreter that
 ran the builder, so a repository-level `.python-version` pin cannot force a
 different Python version.

@@ -17,12 +17,13 @@ def _argument(path: Path) -> str:
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
 
 
-def _service_unit(command: str) -> str:
+def _service_unit(command: str, *, private_tmp: bool = True) -> str:
     return (
         "[Unit]\nDescription=bbackup scheduled capture\nWants=network-online.target\n"
         "After=network-online.target\n\n[Service]\nType=exec\n"
         f"ExecStart={command}\nUMask=0077\nKillMode=control-group\n"
-        "TimeoutStopSec=30\nNoNewPrivileges=yes\nPrivateTmp=yes\n"
+        "TimeoutStopSec=30\nNoNewPrivileges=yes\n"
+        f"PrivateTmp={'yes' if private_tmp else 'no'}\n"
     )
 
 
@@ -40,11 +41,50 @@ def job_units(job: Job, *, executable: Path, config: Path, bindings: Path) -> di
                         "--bindings", _argument(bindings), "jobs", "run", "--name", job.name))
     service_unit = f"bbackup-{job.name}.service"
     return {
-        service_unit: _service_unit(command),
+        # Covered capture must see the same explicitly reviewed filesystem
+        # namespace as discovery, including any approved temporary paths.
+        service_unit: _service_unit(command, private_tmp=job.coverage_policy is None),
         f"bbackup-{job.name}.timer": _timer_unit(
             job.schedule, service_unit, "bbackup capture schedule"
         ),
     }
+
+
+def _root_owned_path(path: Path, *, executable: bool = False, private: bool = False) -> None:
+    """Check the privilege boundary before rendering a root system unit."""
+    if not path.is_absolute() or ".." in path.parts or any(c in str(path) for c in "\0\r\n"):
+        raise ValueError("Root unit inputs require canonical absolute paths")
+    current = Path("/")
+    for part in path.parts[1:-1]:
+        current /= part
+        try:
+            info = current.lstat()
+        except OSError:
+            raise ValueError("Root unit input ancestor is unavailable") from None
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022):
+            raise ValueError("Root unit input ancestor is not root controlled")
+    try:
+        info = path.lstat()
+    except OSError:
+        raise ValueError("Root unit input is unavailable") from None
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022
+            or (private and info.st_mode & 0o077)
+            or (executable and not info.st_mode & 0o111)):
+        raise ValueError("Root unit input is not root controlled")
+
+
+def system_job_units(job: Job, *, executable: Path, config: Path, bindings: Path) -> dict[str, str]:
+    """Render a root system service and persistent timer without installing them."""
+    if os.geteuid() != 0:
+        raise ValueError("Root system unit rendering requires root identity")
+    _root_owned_path(executable, executable=True)
+    _root_owned_path(config)
+    _root_owned_path(bindings, private=True)
+    units = job_units(job, executable=executable, config=config, bindings=bindings)
+    service = f"bbackup-{job.name}.service"
+    units[service] = units[service].replace("[Service]\nType=exec\n",
+                                              "[Service]\nType=exec\nUser=root\nGroup=root\n")
+    return units
 
 
 def unit_templates(

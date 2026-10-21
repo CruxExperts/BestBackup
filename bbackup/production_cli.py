@@ -15,12 +15,13 @@ from .capture import CaptureError
 from .b2 import B2Error
 from .cloud import CloudError
 from .recovery import RecoveryError
+from .linux_coverage import CoverageError
 from .cli_metadata import PRODUCTION_COMMANDS, production_schema
 from .configuration_workspace import ConfigurationWorkspace
 from .enrollment import parse_pair, read_pair, verify_bytes
 from .models import ConfigurationError, strict_json
 from .operations import OperationError, RepositoryConflictError, UncertainOperationError
-from .service import ReplicaJobError, ServiceError
+from .service import ReplicaJobError, ResourceBudgetExceeded, ServiceError
 from .production_operations import _operation_lease, execute_operation
 from .progress import observe_progress
 
@@ -171,7 +172,13 @@ def _register(command, definition):
                                    "errors": [{"code": "replica_incomplete", "message": str(exc)}]},
                                   sort_keys=True))
             ctx.exit(3)
-        except (ServiceError, OperationError, CaptureError, CloudError, B2Error, RecoveryError, tarfile.TarError, sqlite3.Error, OSError, ValueError, KeyError):
+        except ResourceBudgetExceeded as exc:
+            click.echo(json.dumps({"schema_version": 2, "command": command, "success": False,
+                                   "data": exc.result,
+                                   "errors": [{"code": "resource_budget_exceeded", "message": str(exc)}]},
+                                  sort_keys=True))
+            ctx.exit(3)
+        except (ServiceError, OperationError, CaptureError, CloudError, B2Error, RecoveryError, CoverageError, tarfile.TarError, sqlite3.Error, OSError, ValueError, KeyError):
             _emit(command, error={"code": "operation_failed", "message": "Operation failed; inspect sanitized run state before retrying"})
             ctx.exit(3)
     params = [click.Option(["--input-json"], type=str), click.Option(["--schema"], is_flag=True),

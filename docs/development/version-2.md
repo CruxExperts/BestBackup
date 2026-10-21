@@ -1,12 +1,39 @@
 # Version 2 development
 
-> Stable v2.0.2 production qualification is limited to the tested scope
-> recorded below. Other implemented paths remain unqualified or deferred.
-> See the 2026-10-17 qualification record for exact evidence and limits.
+> Stable v2.0.4 production qualification retains the tested core scope recorded
+> below. Experimental additions remain unqualified. The 2026-10-17 record keeps
+> the original v2.0.3 evidence and limits.
+
+## v2.0.4 release scope and known limits
+
+The v2.0.4 stable qualified scope is unchanged from v2.0.3: local file capture
+and restore; live capture and restore for PostgreSQL 17.11, MySQL 8.4.12, and
+MariaDB 11.8.9; headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04
+packages. The separate user-timer reboot qualification applies only to the
+components and conditions recorded in its dated evidence below.
+
+This release also ships experimental restricted B2 source-key assessment and
+central recovery acceptance, central maintenance and noncurrent-version
+retention, HTTPS S3 remote-primary capture with bounded staging, and opt-in
+reviewed Linux file and SQLite coverage with a manual PostgreSQL covered-capture
+path. These additions are implemented workflows, not new production support.
+They do not establish B2 or AWS protection, a guaranteed thirty-day recovery
+window, off-host custody, final remote-server qualification, complete-machine
+recovery, or general automated PostgreSQL coverage. `protection_qualified`
+remains false. Requests #23–#26 remain open; this release does not close them.
+
+On 2026-10-21, the v2.0.4 candidate passed the full local suite with 1,242
+passed tests and one skipped test. The exact wheel and source archive built
+and passed isolated installed-artifact smoke tests. Ruff, Python compilation,
+version alignment, generated CLI catalogs, Markdown standards, publishing
+readiness, and artwork provenance checks passed. The dependency audit found
+and corrected the affected `certifi` pin to 2026.10.19; exact-version lookups
+for the corrected dependency returned no advisory records at retrieval time.
+These checks do not expand the production qualification boundary above.
 
 ## Direction and delivery order
 
-The selected stable v2.0.2 release scope is local/file capture and restore,
+The selected stable v2.0.4 release scope is local/file capture and restore,
 live capture-restore drills for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB
 11.8.9, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages.
 The CLI and Textual dashboard share one operations service. Existing 1.x commands
@@ -25,6 +52,715 @@ An implemented capability does not establish completion of its entire delivery s
 
 ## Implemented capabilities
 
+### Experimental cloud and machine recovery features
+
+Open requests are sequenced as restricted B2 recovery
+([#23](https://github.com/CruxExperts/BestBackup/issues/23)), central retention
+([#25](https://github.com/CruxExperts/BestBackup/issues/25)), remote-primary disk
+budgets ([#26](https://github.com/CruxExperts/BestBackup/issues/26)), and integrated
+privileged Linux recovery ([#24](https://github.com/CruxExperts/BestBackup/issues/24)).
+Linux coverage discovery can proceed independently. Each request needs its own
+implementation, focused regressions, documentation, review, signed commit, and
+acceptance evidence before closeout. Stable qualification and issue closeout
+require completion and final source/artifact validation; this release ships the
+current workflows experimentally without closing the requests. A mocked
+provider result cannot qualify B2. All four requests remain open; the live
+trials below do not close them.
+
+The experimental B2 slice adds a restricted source-key metadata assessment to
+native B2 inspection and an independent `recovery accept` command. Acceptance
+reconstructs signed exact versions using the escrow kit, checks the repository
+and snapshot, and signs a central record with a separate verifier fingerprint.
+It does not establish independently controlled key custody by itself.
+
+A small live B2 source-path trial and seven denied-operation checks passed on
+2026-10-20; details and limits are recorded below. Historical-version recovery
+after simulated source compromise also passed on this workstation. A separate
+live lifecycle-overlap guard trial verifies only the configured guard and its
+central-retention refusal; elapsed lifecycle expiry, physical reclamation, the
+thirty-day grace period, measured transfer costs, and independently controlled
+off-host escrow remain outstanding. No live AWS result is recorded.
+Complete privileged Linux capture and replacement-machine recovery also remain
+unqualified. Do not close these issues or expand the supported release scope
+from fixture tests.
+
+### Reviewed Linux coverage (experimental)
+
+An opt-in schema-3 job can declare `coverage_policy` and map its job name to a
+private `coverage_declarations` path in host bindings. Ordinary jobs keep their
+existing source-selection behavior. Coverage discovery records bounded Linux
+account/group, mount, package, application-unit and selected-tree metadata in
+private state. Public results contain counts, digests and reason codes only.
+`coverage_status: complete` means the exact declared scope is accounted for;
+it is not a claim that every machine file or application is recoverable.
+
+Restic service operations use an explicit cache-free fallback when their child
+environment provides neither `HOME` nor `XDG_CACHE_HOME` and no cache option was
+selected. This supports verified restore from minimal system-service
+environments without relying on an interactive login environment.
+
+For example, this is a portable job-field fragment:
+
+```json
+{
+  "coverage_policy": {
+    "schema_version": 1,
+    "approved_roots": ["system", "homes"],
+    "require_privileged": true,
+    "filesystem_boundaries": "explicit",
+    "metadata_expectations": {
+      "numeric_owner": true, "mode": true, "acl": true,
+      "xattr": true, "links": true
+    }
+  }
+}
+```
+
+The separate mode-0600 declaration is schema 1. `roots` maps each approved root
+ID to an absolute `path`, configured `source_id` and `adapter`. It also requires
+`exclusions`, `mount_decisions`, `identity_decisions`, `applications`,
+`package_reconstruction`, and `reconstruction_evidence`. Empty arrays are
+permitted, but unresolved inventory gaps block approval. See the maintained
+[fixture declarations](../../tests/test_linux_coverage.py) for the exact shapes.
+Covered capture supports ordinary files and individually transactional SQLite
+exports. Each SQLite root requires an application declaration whose state root
+is that exact database path and whose reconstruction procedure has verified
+private evidence. An experimental manual PostgreSQL extension is described
+below. MySQL/MariaDB and Docker remain unsupported for covered jobs; ordinary
+jobs retain their existing adapters. Existing schema-1 private declarations
+and the portable schema-1 coverage policy keep their current shapes. The
+PostgreSQL extension uses a schema-2 private declaration and does not change
+ordinary native PostgreSQL capture or restore.
+
+Application declarations use service-unit stems without the `.service` suffix.
+Ordinary names, templates and instances such as `serial-getty@ttyS0`, including
+valid systemd hex escapes, are supported. Names remain literal inventory keys;
+malformed escapes, path separators and overlength names fail discovery.
+
+SQLite review binds the database's device/inode, numeric owner, mode, link count
+and bounded extended attributes, including filesystem ACL attributes when
+present. The database must be a readable regular file without symlink ancestors
+or additional hard links. Replacement or metadata changes require fresh review;
+ordinary database writes and journal-file churn do not. Unsafe journal links and
+user exclusions covering the database prevent approval.
+
+Capture uses the existing SQLite backup API and omits the live database and its
+`-wal`, `-shm` and `-journal` files from file-tree capture. The encrypted capture
+manifest binds the export hash to the reviewed root, source identity, original
+metadata, reconstruction recipe and baseline. Generic restore returns that
+export and manifest; the reviewed reconstruction procedure must place the
+database and restore its original metadata. This does not provide automatic
+in-place application recovery or a shared transaction across files or databases.
+
+#### Experimental PostgreSQL covered capture
+
+The private schema-2 declaration adds `database_roots` for selected logical
+databases and one `postgresql_clusters` entry. Each captured database maps to
+the exact portable PostgreSQL source and private connection alias; the alias
+and source selector must agree with the private host bindings. Here is only the
+logical-root fragment, not a complete declaration; see the maintained
+[PostgreSQL coverage fixture](../../tests/test_postgresql_coverage.py) for the
+full valid shape:
+
+```json
+{
+  "database_roots": [
+    {"id": "application_db", "adapter": "postgresql",
+     "source_id": "application_source", "cluster_id": "primary",
+     "connection": "private_connection_alias", "database": "application"}
+  ]
+}
+```
+
+The declaration accounts for every database in the selected cluster,
+including templates and databases that reject connections. Each gets an
+explicit `capture` or `reconstruct` decision tied to its current name and OID;
+nonconnectable databases must be reconstructed. A reconstructed database needs
+actual procedure-execution and result-verification evidence bound to the
+reviewed database and cluster inventory. The local administrative connection
+must have the native inspection privileges needed to read cluster, database,
+role, membership, and configuration metadata. `pg_controldata` must be
+available on `PATH` at the matching major version. Its control-file system ID
+must equal the SQL-reported ID, and SQL `data_directory` must exactly match the
+declared absolute local path in the same filesystem namespace. Review also
+binds that directory's device, inode, numeric owner and group, and mode, plus digests for
+the private connection and password files, database and global inventories,
+roles, authentication files, and configuration.
+
+Only one local primary cluster is supported. `pg_wal` must be inside the same
+filesystem as the declared data directory; non-default tablespaces, external
+WAL, external configuration or authentication includes, authentication
+`@file` references, SSL-enabled arrangements, standbys, and unsupported
+extensions, languages, or foreign objects are rejected. This is a bounded
+local path, not general PostgreSQL cluster backup support.
+
+The administrator must coordinate a quiet window for role, database,
+configuration, and schema changes throughout discovery, review, checks, and
+capture. Normal row writes may continue. The boolean confirmation defaults to
+false and does not stop external changes; scheduled covered PostgreSQL jobs
+remain blocked because their timer dispatch cannot assert that window. Set the
+flag only while that external coordination is active. A capture uses one
+transactional native `pg_dump` custom archive per selected database. It does
+not create one shared transaction across databases or between database and
+file roots.
+
+After database accounting and restoration evidence pass, the literal reviewed
+`data_directory` (including its live raw files and `pg_wal`) is excluded from
+file-tree capture. Recovery procedure, evidence, and actual recovery-material
+files must be private regular files inside the same job's approved file roots,
+outside the data directory and declared exclusions. Individual file roots are
+allowed. Their bytes are included in the encrypted snapshot. Its encrypted
+manifest binds the reviewed approval, each database export hash, and each
+recovery-artifact hash. Covered PostgreSQL restore verifies the archive and
+all referenced recovery-material bytes from that snapshot before its first
+target-database mutation. Existing trusted-archive acknowledgement and new
+target database safeguards still apply. The source connection alias is
+provenance only: restore uses a fresh destination-host connection alias and
+does not require the original source binding.
+
+Captured databases also require a reviewed reconstruction procedure for
+database-level metadata. Native restore creates a new database with the
+captured encoding and locale, then runs `pg_restore`; it does not restore the
+database owner, database ACL, or connection limit. The recovered procedure
+must apply and verify those settings for the chosen destination name,
+including PUBLIC revocations and grant options, and account for other reviewed
+database attributes. Its execution evidence must
+compare the reviewed source metadata with a reconstructed database before
+coverage review and capture. Repeat that procedure from the recovered materials
+after the final restore. The native `database_validated` result means that
+`SELECT 1` succeeded after archive restore; `application_validated` remains
+false. Neither result establishes completion of the reconstruction procedure.
+
+Use the manual commands only during the coordinated window; replace the
+candidate digest, snapshot ID, and evidence path with the reviewed values:
+
+```bash
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage discover --name application-stack --quiet-administrative-window-confirmed
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage review --name application-stack --candidate-digest FULL_CANDIDATE_SHA256 \
+  --quiet-administrative-window-confirmed
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage check --name application-stack --quiet-administrative-window-confirmed
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage recovery-evidence --name application-stack --snapshot FULL_SNAPSHOT_ID \
+  --evidence-file PRIVATE_EVIDENCE_FILE --quiet-administrative-window-confirmed
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  jobs run --name application-stack --quiet-administrative-window-confirmed
+```
+
+On 2026-10-21, a local PostgreSQL 17.11 rehearsal passed in two isolated
+containers with distinct machine identities, data directories, and recovery
+workspaces. The source passed native enrollment, coverage discovery, review,
+readiness checks, and manual capture. Its final encrypted snapshot contained
+16 files totaling 10,006 logical bytes, including a 2,307-byte database archive
+and five digest-bound recovery files; no raw PostgreSQL data-directory nodes
+were present. A full repository read-data check passed over four snapshots
+and eight packs. Adding an unaccounted database separately blocked coverage
+and manual capture while preserving the accepted snapshot.
+
+The replacement restored from a copy of the encrypted repository and separate
+test password escrow, using a fresh connection alias and a previously absent,
+differently named target database. The native restore verified all five recovery
+file hashes and completed in 6.82 seconds; this measures that command alone,
+not application reconstruction or a production recovery deadline. The corrected
+reconstruction procedure was executed and verified before final coverage review
+and capture, then recovered from that snapshot and executed again. Separate SQL
+comparisons matched database ownership, all three ACL entries, connection limit
+7, table ownership and reader permissions, and three committed UTF-8 rows.
+An application-role query returned all three rows. The CLI still reported
+`application_validated: false`; these separate fixture checks supply the
+application evidence.
+
+This is local emulation of the bounded manual path. It does not qualify
+off-host custody, provider access, whole-machine recovery, or unattended
+PostgreSQL coverage. The path ships experimentally in v2.0.4 and adds no
+qualification to the v2.0.3 core scope; native PostgreSQL support for ordinary
+jobs is unchanged.
+
+The full regression run reported 1,241 passed, one known Docker skip, and one
+dashboard assertion failure. That assertion was updated to expect the new
+quiet-window field's false default; all seven dashboard tests then passed.
+Runtime code was unchanged between those runs. Version, publishing-readiness,
+generated-interface, compilation, Markdown, lint, and diff checks passed.
+
+Each exclusion or reconstruction decision names a reason, consequence, recipe
+ID and procedure SHA-256. A referenced private procedure and private evidence
+record must match their digests and identify verified local execution. These
+records account for local scope decisions; they do not independently establish
+machine recovery. Symlinked homes or application state outside approved scope,
+unreadable data, unaccounted users/services/mounts and missing reconstruction
+evidence leave coverage incomplete. Declared exclusions become literal Restic
+exclusion patterns during capture, including paths containing glob characters.
+
+```bash
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage discover --name system
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage review --name system --candidate-digest EXACT_CANDIDATE_SHA256
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage check --name system
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  jobs run --name system
+```
+
+Discovery never approves coverage. Review binds an exact complete candidate to
+the enrolled machine, user, configuration, bindings, declaration and scope.
+Capture checks the current baseline again and refuses changed mappings or
+structural drift. Coverage receipts are separate per declaration/scope. Secrets
+inside an explicitly reviewed file root may enter the encrypted snapshot;
+runtime state, repositories and staging remain excluded from source overlap.
+
+`service render-system` renders root service/timer units without installing
+them or elevating privileges. It requires root identity and root-controlled
+executable, configuration, bindings and path ancestors. The system timer is
+persistent and the service dispatches through the same production command.
+Review and install those units deliberately using the system administrator's
+normal procedure. User-level `service install` remains unchanged.
+
+Units for opt-in covered jobs use `PrivateTmp=no` so scheduled discovery and
+capture see the same reviewed `/tmp` and `/var/tmp` sources. Ordinary jobs retain
+`PrivateTmp=yes`; their existing hardening is unchanged. Coverage still refuses
+runtime-state/repository recursion and detects real scoped mount changes.
+
+`coverage recovery-evidence` assesses a private record against the exact current
+baseline and snapshot. Local fixture records can produce `recovery_status:
+emulated`; absent, incomplete or unverified independent records stay `untested`.
+No command marks complete-machine recovery qualified. Current tests include
+small real Restic capture/restore with enforced exclusions, account and service
+drift, private evidence integrity and unprivileged readability. A local WAL-mode
+SQLite/files drill restores committed rows, omits uncommitted rows and raw
+database/journal files, validates export provenance, and reconstructs original
+metadata with the reviewed recipe. Privileged
+complete-machine recovery and final remote-server qualification remain
+outstanding for #24.
+
+On 2026-10-21, the opt-in `covered-root` scenario in
+[`qualify_systemd.py`](../../scripts/qualify_systemd.py) passed a separate
+workstation rehearsal in two fresh Ubuntu 24.04 AMD64 guests. Both installed
+the exact wheel built from signed commit `3755ee0`; its SHA-256 was
+`7106094a242975cc51365d45c72f5518fb76eb2a0feadaee3a4211edd85748da`.
+The source used actual Linux inventory, root-owned enrollment and rendered
+system units, then captured through the root timer and performed a verified
+production restore. The replacement used a distinct machine identity and OS
+overlay; it received the dedicated recovery disk and candidate inputs, without
+access to the source OS overlay or a plaintext application-data fallback.
+
+All twelve evidence checks passed: committed-only SQLite export and manifest
+hashes, raw database/sidecar exclusion, restored synthetic secret and application
+output, reconstructed fixture account, and numeric ownership, mode, hard/symbolic
+links, extended attributes and an actual named-user ACL. Reconstruction executed
+the reviewed procedures and started the restored application through systemd;
+the fixture and backup units were verified afterward. The logical fixture contained
+56,293 bytes on a 256 MiB recovery disk. The two-guest run took 90.1 seconds;
+replacement completion appeared 18.5 seconds after its kernel boot, including
+5.8 seconds in its qualification stage. These small-fixture measurements do not
+estimate production recovery time. The harness's 39 focused tests passed.
+
+The result is `local-emulation-only`. Shared local recovery media does not
+establish independently controlled off-host escrow, provider protection, or
+complete-machine recovery. It does not extend the published v2.0.3 support
+scope or complete the final remote-server acceptance.
+
+### Remote-primary and central retention (experimental)
+
+The experimental remote-primary implementation adds HTTPS S3 primary repositories,
+versioned resource budgets, a dedicated capacity-bounded staging mount, disabled
+cache, a shared staging lease, export write checks, and continuous runner
+pressure checks. Completion results distinguish local and remote captures;
+status exposes remote-primary capture separately from local capture. Free-space
+reserves remain observed thresholds, and unsupported Docker/replica combinations
+are refused. These implementation checks do not qualify B2 or whole-machine
+recovery. A small live B2 workstation source trial is recorded below; the final
+remote-server drill and production recovery qualification remain deferred.
+
+Remote database captures preserve completed exports in operation-owned staging
+with private size/hash records until a successful receipt or verified read-only
+reconciliation permits cleanup. Failed or uncertain uploads, receipt failures
+and later-export failures retain completed artifacts and block new captures.
+`runs retained-exports` exposes bounded IDs, declared counts and record digests,
+including pre-dispatch captures without a ledger row; `runs list` remains a
+ledger event stream. `runs discard-exports` requires the exact current record
+digest and a persisted reviewed failed outcome, verifies owned files under the
+staging lease, and keeps a disposal audit. It does not upload or replay a capture.
+Persistent dedicated staging is required for reboot survival; `tmpfs` retains
+exports only across process exit. Missing or changed retained data fails closed.
+Remote capture reconciliation requires an explicitly acknowledged quiet window
+and uses Restic `--no-lock` reads to avoid creating cloud lock objects. Lock
+observations before and after inspection reject active locks but cannot enforce
+quiescence across machines; repository writers must remain stopped throughout.
+
+The experimental central retention slice adds explicit catalog enrollment and
+private recurring grants, signed central acceptance selection, exact manifest
+dependency preservation, central observation-based noncurrent grace, conservative
+lock/lifecycle checks, and single-request journaled deletion with read-only
+reconciliation. It uses the enrolled repository's shared lease. Missing protected
+versions or catalog records stop deletion. A schema-2 B2 policy can select a
+native lock-metadata reader; schema-1 generic S3 policy behavior is unchanged.
+This reclaims only noncurrent object versions; aged B2 reclamation, AWS behavior
+and production savings remain outstanding for #25. Focused tests
+include actual GPG-signed acceptance records and uncertainty before/after deletion.
+
+The separate experimental `cloud-maintenance` workflow uses the same central
+catalog and independently accepted records to retire only visible accepted
+snapshots that are no longer protected. It leaves unknown snapshots untouched,
+uses a separate explicit Restic credential profile, and runs no-repack prune
+before any later historical-version reclamation. Policy schema 3 and action-bound
+schema-2 grants bind resource limits and immutable plans; explicit record
+enrollment preserves established acceptance and first-seen state. Read-only
+inspection requires operator-maintained quiescence and uses `--no-lock`, while
+mutations keep native locks and journal intent without automatic replay.
+Healthy reconciliation alone does not certify completed prune. Repacking,
+aged live deletion and the promised recovery window remain unqualified.
+See the [central maintenance workflow](../cloud-storage.md#central-snapshot-maintenance-experimental).
+
+Local validation includes a real three-snapshot Restic repository: the exact
+obsolete accepted ID was forgotten, no-repack prune completed, and both the
+protected and unknown snapshots restored afterward. That drill uses a test
+double for the central cloud session; it is not live B2 maintenance evidence.
+At maintenance-slice acceptance, the runtime suite passed 1,158 tests with two
+skips. The Unix-socket case skipped
+because the test temporary path exceeded the platform limit, then passed in a
+separate short-path run. The legacy Docker roundtrip still skipped after its
+backup returned false and supplies no Docker recovery qualification.
+
+#### Live B2 central-maintenance trial
+
+On 2026-10-21, development code at `d33354a` passed a live B2
+workstation trial using the previously measured two-snapshot fixture. Both
+snapshots received genuine, separately signed central acceptance records.
+The reviewed immutable plan protected both snapshots and their ten dependency
+versions, covering 201,834 current payload bytes, and selected no snapshots to
+forget. Production CLI execution completed all six phases, including an actual
+`prune --max-repack-size 0`. A zero-forget plan still performs native mutations.
+
+A subsequent full read-data check and restores of both snapshots passed.
+Payload, hidden-file, symlink, and initial/incremental contents matched the
+fixture. All 32 versions observed before maintenance remained present, and the
+central catalog digest was unchanged. The final inventory added 16 lock-object
+versions and 16 hide markers, with no new index versions; permanent version
+deletion was not observed. These changes include maintenance and its subsequent
+verification, rather than measuring prune alone.
+
+The isolated central process used distinct read-only verifier and inspection
+keys and a bucket/prefix-restricted Restic read/list/write key. Provisioning and
+permanent-deletion credentials were absent. The maintenance phase used a 1 MiB
+staging mount, a configured 65,536-byte free-space threshold, and disabled cache.
+Checkpoint preparation and independent acceptance used a separate central
+workspace; that preparation is not covered by the maintenance disk budget.
+
+A separate changed-plan scenario created a fresh zero-forget plan, then wrote
+one eight-byte probe under the same restricted repository prefix. Its single
+stale apply was rejected before maintenance-ledger entry, forget, or prune.
+All 65 previously observed versions, including the probe, remained exactly
+unchanged. Normal pre-validation Restic inspection created and released two
+temporary locks, adding two object versions and two hide markers. This is not
+a zero-object-mutation guarantee.
+
+The original fault helper stopped because it required an unchanged version
+inventory even for inspection locks. Its blocked result remains preserved.
+A read-only continuation bound the exact plan, rejection receipt, before/after
+inventories and four new lock versions, without repeating apply. A no-lock
+full read-data check passed, both protected snapshot identities remained
+visible, all 69 post-inspection inventory rows stayed unchanged, and the
+catalog digest was unchanged. The eight-byte probe was deliberately retained.
+
+This qualifies only the small, zero-forget maintenance exercise. It does not
+demonstrate aged reclamation, an elapsed protection window, independently held
+off-host escrow, or final remote-server recovery. `protection_qualified` remains
+false, the feature ships experimentally in v2.0.4, and #25 remains open.
+
+#### Live B2 central-maintenance interruption trial
+
+A separate 2026-10-21 live workstation trial exercised interruption recovery
+with one zero-forget plan and one small, approximately 200 KiB fixture; it made
+no additional backup sets. A temporary wrapper limited downloads to 1 KiB/s
+only for native `prune`, making that phase easier to observe with the small
+fixture. One SIGINT was
+sent to the owned CLI only after the actual native prune process and its pinned
+launch identity, durable prune intent, and a fresh current-lock witness were
+verified. The native process stopped and the CLI exited with status 3. The
+operation ledger and production prune phase both recorded `uncertain`; the
+drill does not claim prune completed.
+
+After Restic processes were confirmed quiescent, one production read-only
+reconciliation recorded `partial_abandoned` and `reconciled_abandoned`, while
+the prune outcome remained uncertain. The apply was not replayed. A no-lock full
+read and fresh restores of both protected snapshots matched payload,
+hidden-file, symlink, and incremental-file expectations. All 69 previously observed provider objects
+and markers survived, the catalog stayed unchanged, and no permanent version
+deletion was observed. This is evidence for one small interrupted maintenance
+operation and recovery check; it does not qualify prune completion, aged
+reclamation, the protection window, off-host recovery, or production recovery.
+
+#### Live Backblaze B2 source trial
+
+On 2026-10-20, the workstation checkout at commit
+`4378e6efbb04de35ad41d377e461fe5d170fab1d` passed a small live B2 S3 source-path
+trial in a retained isolated Docker container without the whole checkout or
+central state mounted and without central or provisioner credentials.
+The 196,682-byte source fixture contained a 192 KiB deterministic payload, a
+small hidden synthetic credential file, a symlink, and an incremental file.
+The drill used a 1 MiB tmpfs staging mount and a zero-byte Restic cache budget.
+
+The source key was restricted to one exact bucket and machine prefix. The SDK
+profile reported exactly `listBuckets`, `listFiles`, `readFiles`, and
+`writeFiles`. Repository initialization, two captures, a repository check, and
+restores of both snapshots passed. The older restore omitted the incremental
+file; the newer restore contained it. Both restores preserved the hidden file
+and symlink. Separate live canaries uploaded, read, and listed an object, then
+replaced and hid it while confirming old versions remained available. Seven
+forbidden-operation checks were denied and read back: permanent-version delete,
+cross-prefix read, cross-prefix write, key administration, bucket
+administration, file-retention administration, and legal-hold administration.
+The last two used a fresh, explicitly unprotected disposable canary. The central
+retention key then deleted that exact 37-byte version, and independent readback
+confirmed its absence. This tests authority on an unprotected object; it does
+not test the retention planner's aged candidates. Separate protected-object
+checks are recorded below.
+
+This is narrow workstation evidence, not production qualification. No large
+backup set was measured. Read-only Restic raw-data statistics reported 197,784
+bytes for the initial snapshot, 197,943 bytes for the incremental snapshot, and
+198,997 bytes for their union. The union is smaller than the two per-snapshot
+totals combined, demonstrating shared repository data across these snapshots.
+These raw-data figures do not measure network transfer bytes, bandwidth, or cost
+savings.
+
+A fresh isolated fixture at commit
+`f34945826bdb177dfa0858dd1dbe9470464980ed` subsequently passed initialization,
+both captures, a full repository check and both restores. Its final fixture size
+was 196,682 bytes. The source container used an archived copy of that exact
+commit, the restricted source credential, a 1 MiB staging mount and no cache.
+The controller verified the mount allowlist and unchanged source files; central
+and provisioning credentials were absent from its mounts and configured
+environment. Initialization observed an empty exact-prefix version inventory.
+
+- Initial capture: interface TX/RX was 221,039/28,033 bytes; provider-reported
+  stored-version bytes grew by 199,080, including retained noncurrent versions.
+  Observed additional staging use peaked at 208,896 bytes.
+- Incremental capture: interface TX/RX was 22,065/29,811 bytes; stored-version
+  bytes grew by 2,457. Observed additional staging use peaked at 12,288 bytes.
+
+Interface counters bracketed each capture, excluding the surrounding inventory
+requests, and include protocol and any concurrent interface traffic. Stored-byte
+totals sum provider-reported object payload sizes, including noncurrent lock
+versions; delete markers are counted separately. Neither measure establishes
+provider billing or costs. Local filesystem observations remain unattributed.
+The smaller incremental growth is fixture evidence, not a large-dataset or
+long-term savings estimate. This run did not inject database-export failures or
+qualify reboot recovery, remote-server deployment or aged retention.
+
+Initial SDK-wrapped retention errors and rejected canary setup attempts remain
+preserved separately; they were not counted as passes or replayed. The successful
+fresh canary required observed retention `NONE` and legal hold `OFF` before its
+authority checks. A verifier lifecycle request initially received HTTP 403;
+after adding only `readBucketLifecycleRules` to the separate central identities,
+readback confirmed enabled versioning and no applicable lifecycle expiration
+rules. The source key stayed unchanged. Backblaze's
+[S3-compatible app-key capability guide](https://www.backblaze.com/docs/cloud-storage-s3-compatible-app-keys)
+maps that capability to `Get Lifecycle Configuration`; no
+`writeBucketLifecycleRules` capability was added.
+
+A separate central verifier authenticated the source-signed encrypted kit,
+reconstructed the exact historical repository versions, checked all data, and
+signed an acceptance with a distinct key. The source identity then hid the
+configuration object and replaced one data object with invalid bytes. Using the
+kit and read-only historical-version access, the central verifier reconstructed
+and fully checked the repository again, verified repository/snapshot identity,
+and restored the older snapshot with matching payload, hidden file, symlink,
+and no later incremental file. Ten repository objects totaling 201,853 bytes
+were reconstructed. The named temporary source-password copy was removed only
+after baseline acceptance; recovery read its password from the encrypted kit.
+
+The drill exposed a receipt bug after the kit was written: a checkpoint without
+an expiry date could not be inserted into the legacy non-null expiry field.
+Checkpoint receipts now permit absent expiry, and an existing owning schema is
+migrated transactionally after a private compressed backup. Existing rows are
+preserved; schemas with additional constraints are refused. The failed attempt
+remains recorded, and its authenticated kit was accepted separately without
+resealing or replaying the failed operation. No expiry date is invented, and
+absence of an expiry does not qualify a guaranteed protection window.
+
+Separate fresh disposable versions tested governance retention and legal hold.
+The routine central retention identity, which has no governance-bypass
+capability, was denied permanent deletion of each exact version. Independent
+readback confirmed both survived, and the native metadata reader observed the
+future governance expiry and active legal hold. The provisioning identity then
+removed protection and deleted only those test canaries. Earlier inconclusive
+attempts remain separate and are not counted as successful denial checks. These
+checks do not demonstrate aged candidate deletion or a thirty-day recovery window.
+
+A separate probe created two further 39-byte protected canaries and issued a
+versionless S3 delete with the restricted source key. Both governance retention
+and legal hold allowed current-name hiding: each acquired exactly one marker,
+while independent native inspection verified the original exact version and
+unchanged active protection. Current-name reads reported absence. Read-only
+reconciliation recorded no uncertain operations, and exact scoped provisioning
+cleanup removed only those two uploads and their markers. This confirms that
+Object Lock protects historical versions without making current names append-only;
+it does not establish a thirty-day window or aged planner behavior.
+
+Thirty-day elapsed grace, overlapping lifecycle behavior, aged retention,
+off-host custody, clean replacement, final remote-server qualification, and all
+live AWS behavior remain unproven. Central acceptance still records
+`protection_qualified: false`. The v2.0.4 stable support scope remains the
+v2.0.3 tested core scope.
+
+#### Central B2 retention planning rehearsal
+
+A live rehearsal enrolled a catalog, generated a plan with a fresh
+thirty-day first-seen grace period, ran a guarded zero-apply, and reconciled an
+empty plan. It counted 10 protected versions in a 31-version inventory; the
+before/after inventory matched and no S3 delete was sent. Empty reconciliation
+made zero provider reads and does not test uncertain-delete recovery. The S3
+Object Lock configuration read returned ambiguous
+`ObjectLockConfigurationNotFoundError`. The new native reader separately passed
+live reads of both exact original configuration/data versions, normalizing only
+authorized null settings and running even when the S3 lock flag was false.
+The production CLI then completed setup and deliberate local schema-3
+enrollment, followed by schema-2 native-metadata planning, zero-candidate apply,
+and empty reconciliation against the same existing catalog and repository
+lease. It again protected 10 versions among 31, preserved established first-seen
+times and the original policy/grant files, and left the version inventory
+unchanged. This verifies the production integration with fresh grace; it does
+not exercise an aged deletion or an uncertain mutation. No cost/savings,
+off-host, or remote-server qualification is established.
+
+#### Live B2 lifecycle-overlap guard trial
+
+On 2026-10-21, a new `allPrivate` B2 bucket was created with File Lock enabled,
+default retention `NONE`, and two overlapping native lifecycle rules. The
+broader prefix hides files after 3,650 days; the nested prefix deletes
+noncurrent versions after 3,651 days. Backblaze documents that native rules may
+overlap and combine the smallest non-null value for each action
+([native lifecycle rules](https://www.backblaze.com/docs/en/cloud-storage-lifecycle-rules)).
+Its S3-compatible `Get Lifecycle Configuration` returned the corresponding
+three actions: hide after 3,650 days, remove orphan markers, and delete
+noncurrent versions after 3,651 days
+([S3 Get Lifecycle Configuration](https://www.backblaze.com/apidocs/s3-get-lifecycle-configuration)).
+S3 `Put Lifecycle Configuration` rejects overlapping prefixes, so this test
+configured the rules natively at bucket creation
+([S3 Put Lifecycle Configuration](https://www.backblaze.com/apidocs/s3-put-lifecycle-configuration)).
+
+A one-hour bucket-scoped reader had exactly `listBuckets`, `readBuckets`,
+`readBucketLifecycleRules`, and `readBucketRetentions`; it had no object
+read/list/write/delete or administration capabilities. Verification ran as a
+nonroot process with a read-only root and fixture mounts, a separate writable
+work mount, and no Envman or provisioner credentials. Native readback confirmed
+the bucket type, File Lock setting, default retention, and both rules; S3
+readback confirmed enabled versioning and the three mapped actions. The actual
+central-retention bucket inspection raised
+`CloudError: Enabled bucket lifecycle expiration blocks central retention`.
+The read-only inventory observation found no versions in its first entry; that
+receipt is bounded to the first page. No object was uploaded, no bucket setting
+was updated, and no deletion was attempted.
+
+This establishes only the configured overlap guard and central-retention
+refusal. It does not test elapsed lifecycle expiry, physical reclamation, or
+any file-level lock/retention window; no actual file objects were created.
+Central acceptance remains `protection_qualified: false`, requests #23–#26
+remain open, and the v2.0.4 stable scope remains the v2.0.3 tested core scope.
+
+On 2026-10-20 a workstation-only Garage S3 drill captured a 2,184,000-byte file
+fixture directly to the emulator using a 1,048,576-byte staging mount, ran an
+incremental capture and full repository check, and restored the older snapshot
+including a hidden synthetic credential file and a symlink. Initial/incremental
+PUT payloads were 4,979/4,113 bytes; internet backup traffic was zero. The source
+was intentionally repetitive and small, so these numbers are fixture evidence,
+not performance or cost estimates. This does not qualify provider permissions,
+independent disaster recovery or an entire Linux machine.
+
+A second small local drill also refused a SQLite export larger than the 1 MiB
+staging capacity before uploading any export data. A subsequent full repository
+check passed, preserving the earlier recovery points after the budget failure.
+The export source was about 2 MiB; no large backup set or internet transfer was
+used.
+
+#### Aggregate-capacity and active-pressure trial
+
+On 2026-10-21, code at `d33354a` captured a small, compressible
+2,245,463-byte logical baseline to a local Garage S3 emulator. The isolated
+source had a read-only root filesystem and read-only fixture inputs. Its total
+writable filesystem capacity was 1,769,472 bytes: 1,048,576 for staging,
+524,288 for private state, 131,072 for temporary files, and 65,536 for shared
+memory. The baseline exceeded that combined capacity, not just staging.
+Restic cache was disabled. Capture used a loopback HTTPS proxy; internet backup
+traffic was zero.
+
+A second capture included a new 32-byte trigger. While its native Restic child
+was sending a data PUT, a task-owned filler crossed the configured
+131,072-byte free-space threshold; the observed minimum was 126,976 bytes.
+The runner stopped the child and reported `resource_budget_exceeded`, with
+both completion flags false and no replay. A subsequent capture was blocked.
+After checked filler removal, read-only reconciliation recorded the failed
+capture without repeating upload; its recovery artifacts remained preserved.
+The operation ledger also records a successful full read-data check.
+
+The original harness then stopped at a symlink metadata assertion because
+Restic's JSON listing omitted the link target. That blocked result remains
+unchanged. Preserved state and staging archives bound a separate read-only
+continuation in a new verification container. Its no-lock full read-data check
+and verified restore passed. All three files matched source sizes and SHA-256
+digests, including the hidden synthetic credential file and 2,184,000-byte
+data file. The restored symlink targeted `data.txt`; the pressure-only trigger
+was absent. The continuation did not replay capture or reconciliation.
+
+This qualifies only the small local scenario. It does not measure normal peak
+storage, incompressible-data scale, host memory, persistent staging across
+reboot, off-host recovery, or production recovery timing. Reserve checks remain
+observed thresholds rather than a hard guarantee. Final remote-server
+qualification for #26 remains deferred.
+
+### Workstation implementation checks - 2026-10-20
+
+The initial implementation suite passed **1,057 tests with one skip**, using
+eight workers under the shared CPU budget. The subsequent nullable-receipt fix
+passed **1,067 tests with one skip**; the native B2 metadata follow-up passed
+**1,087 tests with one skip**. Focused schema-2 tests cover authorized-null and
+held/retained versions, target and credential binding, generic S3 compatibility,
+and changed or unknown native evidence before deletion. Focused regressions and independent source
+review covered restricted-key assessment, separately signed central acceptance,
+retention dependency loss and uncertain deletion, remote-primary resource
+failure, enforced Linux exclusions and mount-namespace drift. Generated CLI
+catalogs/schemas, version synchronization, publishing readiness, Markdown and
+asset provenance checks passed. Changed Python paths passed Ruff and compilation.
+
+The subsequent reviewed SQLite coverage and remote-export lifecycle fixes at
+`f34945826bdb177dfa0858dd1dbe9470464980ed` passed **1,122 tests with one skip** in
+99.31 seconds using eight workers. The skipped legacy Docker restore round trip
+suppressed a failed fixture backup; its underlying cause was not identified, so
+it is not restore evidence. Focused regressions cover raw sidecar refusal,
+transactional restore and metadata reconstruction, retained exports after
+interruption or receipt failure, streamed remote-byte verification, crash-window
+recovery, explicit digest-bound disposal and legacy reconciliation compatibility.
+Generated catalogs/schemas, version, publishing, compilation, Markdown, Ruff and
+diff checks passed.
+
+An offline wheel/source build passed portable source-archive checks and an
+isolated installed-wheel smoke test. These are historical checks of a
+development checkout still carrying package version 2.0.3; they are not the
+v2.0.4 release-candidate validation or published release artifacts, and they do
+not claim that the open live qualification work is complete. All tracked README
+entry points were reviewed, with current-state links and support boundaries
+aligned while preserving historical release records.
+The wheel and portable source archive built from the same `f349458` commit also
+passed source-content checks and an isolated installed-wheel smoke test. The
+private wheel SHA-256 is
+`ecef6617633a6547b460109dca7d9264aaa5d0a1607901331842856c9dc83a59`.
+
+A fresh Ubuntu 24.04.5 KVM guest passed all ten existing user-timer checks across
+three boots in 333.9 seconds. The tested development wheel SHA-256 was
+`e9ad97c9d9575bc1ca1ca0a0bb1efaf43f6512fc75aa8377d69f00e19df94bbc`.
+It exercised enrollment, capture/copy/byte-matched restore, missed-timer
+catch-up, disabled timers, overlap refusal, interrupted-operation uncertainty
+and no replay. Both repositories remained in that guest. This does not qualify
+root covered jobs, live B2 or off-host recovery. The subsequent covered-timer
+temporary-source-view correction passed all 29 focused scheduling/coverage
+checks; ordinary timer rendering remained unchanged.
+
+### Existing version-2 behavior
+
 - Strict version-2 JSON configuration rejects duplicate keys, unknown fields,
   unsupported source types, and inconsistent repository references. Private host
   bindings and password files are separate from portable policy.
@@ -41,8 +777,9 @@ An implemented capability does not establish completion of its entire delivery s
 
 ### Native Docker capture and recovery
 
-This implemented path is not production-qualified and is outside the selected
-stable v2.0.2 release scope. Docker capture is opt-in and requires a local Docker Unix socket in the private
+This implemented path is not production-qualified and is outside the current
+stable support scope, which is unchanged from v2.0.3. Docker capture is opt-in
+and requires a local Docker Unix socket in the private
 host bindings. The portable source policy names one container and requires an
 explicit stop-and-restart window:
 
@@ -290,12 +1027,17 @@ another host using a different ledger. Restic provides its own repository locks,
 but independent recovery checkpoints additionally need a coordinated quiescent
 window across all writers.
 
-The v2 retention workflow has no automatic deletion or pruning schedule. Local retention can
+The local snapshot-retention workflow has no automatic deletion or pruning schedule. It can
 forget explicitly reviewed snapshots using restic's daily selection policy,
 grouped by host and filtered by the job tag. Seven local daily recovery points
 is the default; this is not a count of the last seven captures. Cloud defaults
 of thirty daily, eight weekly, and twelve monthly points remain policy, not a
 qualified provider lifecycle or pruning implementation.
+
+Experimental central cloud retention is a separate catalog/grant and reviewed
+plan/apply workflow for noncurrent object versions. It never runs Restic
+`forget`/`prune` or compacts current packs. See the
+[central retention guide](../cloud-storage.md#central-noncurrent-version-retention-experimental).
 
 ```bash
 bbackup production --config config.json --bindings bindings.json retention plan --job daily
@@ -543,11 +1285,11 @@ A disposable real-restic capture, independent-password replication, full-data
 check, and restore preserved exact file bytes, mode 0640, and a symbolic link.
 These local checks do not qualify a cloud provider or application recovery.
 
-No live B2/AWS provider qualification is recorded. A local Garage S3-compatible
-test does not qualify those providers. Provider checks require disposable
-authorized resources; without such evidence, B2/AWS remain outside the stable
-support scope. Do not replay uncertain backup mutations or change live provider
-policy during a recovery.
+No B2/AWS production qualification is recorded. The small live B2 source trial
+above does not qualify provider protection, and a local Garage S3-compatible
+test does not qualify either provider. B2/AWS remain outside the stable support
+scope. Do not replay uncertain backup mutations or change live provider policy
+during a recovery.
 
 The signed [2.0.0-alpha.1 prerelease](https://github.com/CruxExperts/BestBackup/releases/tag/v2.0.0-alpha.1) was published on October 3, 2026 from commit `b10ed84`. GitHub CI passed on Python 3.12, 3.13, and 3.14, and the release workflow built and smoke-tested its wheel and source archive. `SHA256SUMS` and its OpenPGP signature cover the exact downloadable artifacts. The release remains explicitly marked as a prerelease; it does not establish production qualification.
 
@@ -656,9 +1398,11 @@ recorded passing evidence. The following paths are not production-qualified or
 remain deferred; their implementation does not expand the selected support
 boundary:
 
-- **B2/AWS:** No live provider capture/check/restore result is recorded. These
-  implemented paths are not production-qualified and remain outside the selected
-  stable support boundary. Garage S3 testing is not provider qualification.
+- **B2/AWS:** A small live B2 source capture/check/restore trial and denied
+  forbidden-operation checks are recorded above. Provider protection and
+  production recovery remain unqualified; AWS has no live result. These paths
+  remain outside the selected stable support boundary. Garage S3 testing is not
+  provider qualification.
 - **Native Docker:** Implemented, but no qualifying capture/restore happy path is
   recorded. It is not production-qualified and remains outside the selected
   stable support boundary.

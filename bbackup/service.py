@@ -12,15 +12,21 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import stat
+import sys
 import tempfile
 import uuid
+from urllib.parse import urlsplit
 
-from .capture import capture_sources
+from .capture import CaptureError, DurableCaptureArtifacts, capture_sources
+from .cloud import _retention_json_bytes
 from .config import SnapshotProfile
-from .models import Configuration, HostBindings
+from .models import Configuration, HostBindings, ResourceBudget, strict_json
 from .docker_recovery import DockerRecoveryError, DockerRecoveryUncertainError, DockerRuntime
 from .snapshot import ResticRunner
+from .resource_limits import ResourceLimitError, ResourceMonitor
 from .progress import stdout_progress_handler
+from .enrollment import _read_regular
 from .operations import (
     OperationLedger,
     OperationPlan,
@@ -44,6 +50,21 @@ class ReplicaJobError(ServiceError):
         super().__init__("One or more replica copies failed; review each destination before retrying")
 
 
+class ResourceBudgetExceeded(ServiceError):
+    """Sanitized capacity failure with evidence and no credential or source paths."""
+
+    def __init__(self, result: dict):
+        self.result = result
+        super().__init__("Remote-primary resource budget was exceeded or cannot be verified")
+
+
+class _RemoteResticRunner(ResticRunner):
+    def base_args(self):
+        args = super().base_args()
+        args.insert(1, "--no-cache")
+        return args
+
+
 def _snapshot_id(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
         raise ServiceError("A complete snapshot ID is required")
@@ -54,13 +75,92 @@ def _overlap(a: Path, b: Path) -> bool:
     return a == b or a in b.parents or b in a.parents
 
 
+def _covered_postgresql_refs(entry: dict, *, source: str,
+                             snapshot_paths: list[str]) -> list[dict]:
+    """Validate the covered export and its file routes before restore dispatch."""
+    coverage = entry.get("coverage")
+    if coverage is None:
+        return []
+    if (not isinstance(snapshot_paths, list)
+            or any(not isinstance(path, str) for path in snapshot_paths)):
+        raise ServiceError("Covered PostgreSQL snapshot paths are invalid")
+    digest = re.compile(r"[0-9a-f]{64}\Z")
+    if (not isinstance(coverage, dict) or coverage.get("source_id") != source
+            or not isinstance(coverage.get("connection"), str)
+            or not coverage["connection"]
+            or not isinstance(coverage.get("database"), str)
+            or coverage.get("database") != entry.get("source_database")
+            or not isinstance(coverage.get("root_id"), str)
+            or not isinstance(coverage.get("cluster_id"), str)
+            or not isinstance(coverage.get("major_version"), str)
+            or not isinstance(coverage.get("data_directory"), str)
+            or not isinstance(entry.get("export_sha256"), str)
+            or not digest.fullmatch(entry["export_sha256"])):
+        raise ServiceError("Covered PostgreSQL export identity is invalid")
+    for key in ("baseline_digest", "system_identifier_sha256", "cluster_inventory_sha256",
+                "global_inventory_sha256", "role_inventory_sha256", "configuration_sha256",
+                "connection_material_sha256", "database_inventory_sha256", "recipe_sha256"):
+        if not isinstance(coverage.get(key), str) or not digest.fullmatch(coverage[key]):
+            raise ServiceError("Covered PostgreSQL evidence is invalid")
+    identity = coverage.get("data_directory_identity")
+    if (not isinstance(identity, dict) or set(identity) != {"device", "inode", "uid", "gid", "mode"}
+            or any(type(value) is not int or value < 0 for value in identity.values())):
+        raise ServiceError("Covered PostgreSQL directory identity is invalid")
+    roots = coverage.get("recovery_file_roots")
+    artifacts = coverage.get("recovery_artifacts")
+    if (not isinstance(roots, list) or not roots or len(roots) > 64
+            or not isinstance(artifacts, list) or len(artifacts) < 3 or len(artifacts) > 130):
+        raise ServiceError("Covered PostgreSQL recovery routes are invalid")
+    root_paths = {}
+    for root in roots:
+        if (not isinstance(root, dict) or set(root) != {"root_id", "path"}
+                or not isinstance(root["root_id"], str)
+                or not isinstance(root["path"], str)):
+            raise ServiceError("Covered PostgreSQL recovery routes are invalid")
+        path = Path(root["path"])
+        if (not path.is_absolute() or ".." in path.parts or root["path"] not in snapshot_paths
+                or root["root_id"] in root_paths):
+            raise ServiceError("Covered PostgreSQL recovery route was not captured")
+        root_paths[root["root_id"]] = path
+    seen = set()
+    for item in artifacts:
+        if (not isinstance(item, dict) or set(item) != {"path", "sha256", "root_id"}
+                or not isinstance(item["path"], str)
+                or not isinstance(item["root_id"], str)
+                or not isinstance(item["sha256"], str)
+                or not digest.fullmatch(item["sha256"]) or item["path"] in seen):
+            raise ServiceError("Covered PostgreSQL recovery artifact is invalid")
+        path = Path(item["path"])
+        root = root_paths.get(item["root_id"])
+        if (root is None or not path.is_absolute() or ".." in path.parts
+                or (path != root and root not in path.parents)):
+            raise ServiceError("Covered PostgreSQL recovery artifact route is invalid")
+        seen.add(item["path"])
+    return artifacts
+
+
 class BackupService:
-    def __init__(self, config: Configuration, bindings: HostBindings):
+    def __init__(self, config: Configuration, bindings: HostBindings, *,
+                 policy_bytes: bytes | None = None, binding_bytes: bytes | None = None):
         self.config, self.bindings = config, bindings
+        self.policy_bytes, self.binding_bytes = policy_bytes, binding_bytes
         if config.schema_version != bindings.schema_version:
             raise ServiceError("Policy and private binding versions must match")
         if set(bindings.repositories) != {r.name for r in config.repositories}:
             raise ServiceError("Host bindings must match declared repositories")
+        self.repository_roles = {repository.name: repository.role for repository in config.repositories}
+        for name, role in self.repository_roles.items():
+            if role != "remote-primary":
+                continue
+            location = bindings.repositories[name].repository
+            try:
+                remote = urlsplit(location[3:]) if location.startswith("s3:") else None
+            except ValueError:
+                remote = None
+            if (remote is None or remote.scheme != "https" or not remote.hostname
+                    or not remote.path.strip("/") or remote.username or remote.password
+                    or remote.query or remote.fragment or bindings.staging_dir is None):
+                raise ServiceError("Remote-primary requires an HTTPS S3 binding and private staging")
         if config.schema_version == 3:
             if set(bindings.source_bindings) != {source.name for source in config.sources}:
                 raise ServiceError("Private source bindings must match portable sources")
@@ -105,8 +205,49 @@ class BackupService:
                 table: {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
                 for table in expected
             }
+            checkpoint_info = list(db.execute("PRAGMA table_info(checkpoints)"))
+            legacy_checkpoint_expiry = any(
+                row[1] == "expires_at" and row[3] == 1 for row in checkpoint_info
+            )
+            if legacy_checkpoint_expiry:
+                # Rebuild only the exact owning legacy definition. PRAGMA
+                # table_info omits CHECK, DEFAULT, COLLATE, and inline UNIQUE;
+                # recreating such a table would silently discard constraints.
+                legacy_sql = """CREATE TABLE checkpoints (
+                    repository TEXT NOT NULL, repository_identity TEXT NOT NULL,
+                    snapshot TEXT NOT NULL, operation TEXT PRIMARY KEY,
+                    manifest_sha256 TEXT NOT NULL, captured_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                )"""
+                stored_sql = db.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='checkpoints'"
+                ).fetchone()
+                normalized = re.sub(r"\s+", "", stored_sql[0]).upper() if stored_sql and stored_sql[0] else ""
+                expected_sql = re.sub(r"\s+", "", legacy_sql).upper()
+                known_definitions = {expected_sql,
+                                     expected_sql.replace("CREATETABLE", "CREATETABLEIFNOTEXISTS", 1)}
+                expected_layout = (
+                    ("repository", "TEXT", 1, 0),
+                    ("repository_identity", "TEXT", 1, 0),
+                    ("snapshot", "TEXT", 1, 0),
+                    ("operation", "TEXT", 0, 1),
+                    ("manifest_sha256", "TEXT", 1, 0),
+                    ("captured_at", "TEXT", 1, 0),
+                    ("expires_at", "TEXT", 1, 0),
+                )
+                layout = tuple((row[1], row[2].upper(), row[3], row[5])
+                               for row in checkpoint_info)
+                additions = db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE tbl_name='checkpoints' "
+                    "AND type IN ('index', 'trigger') AND sql IS NOT NULL"
+                ).fetchone()
+                if (normalized not in known_definitions or layout != expected_layout
+                        or additions is not None
+                        or list(db.execute("PRAGMA foreign_key_list(checkpoints)"))):
+                    raise ServiceError("Checkpoint receipt schema has unsupported constraints")
             if any(existing.values()) and (
                 any(not columns.issubset(existing[table]) for table, columns in expected.items())
+                or legacy_checkpoint_expiry
                 or db.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='trigger' "
                     "AND name='snapshots_required_replicas_immutable'"
@@ -156,9 +297,33 @@ class BackupService:
                     repository TEXT NOT NULL, repository_identity TEXT NOT NULL,
                     snapshot TEXT NOT NULL, operation TEXT PRIMARY KEY,
                     manifest_sha256 TEXT NOT NULL, captured_at TEXT NOT NULL,
-                    expires_at TEXT NOT NULL
+                    expires_at TEXT
                 )"""
             )
+            if legacy_checkpoint_expiry:
+                replacement = "checkpoints_nullable_upgrade"
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (replacement,)).fetchone():
+                    raise ServiceError("Checkpoint receipt migration name is occupied")
+                prior_count = db.execute("SELECT count(*) FROM checkpoints").fetchone()[0]
+                db.execute(
+                    """CREATE TABLE checkpoints_nullable_upgrade (
+                        repository TEXT NOT NULL, repository_identity TEXT NOT NULL,
+                        snapshot TEXT NOT NULL, operation TEXT PRIMARY KEY,
+                        manifest_sha256 TEXT NOT NULL, captured_at TEXT NOT NULL,
+                        expires_at TEXT
+                    )"""
+                )
+                db.execute(
+                    """INSERT INTO checkpoints_nullable_upgrade
+                       (repository, repository_identity, snapshot, operation,
+                        manifest_sha256, captured_at, expires_at)
+                       SELECT repository, repository_identity, snapshot, operation,
+                              manifest_sha256, captured_at, expires_at FROM checkpoints"""
+                )
+                if db.execute("SELECT count(*) FROM checkpoints_nullable_upgrade").fetchone()[0] != prior_count:
+                    raise ServiceError("Checkpoint receipt migration did not preserve rows")
+                db.execute("DROP TABLE checkpoints")
+                db.execute("ALTER TABLE checkpoints_nullable_upgrade RENAME TO checkpoints")
             db.execute(
                 """CREATE TRIGGER IF NOT EXISTS snapshots_required_replicas_immutable
                    BEFORE UPDATE OF required_replicas ON snapshots
@@ -212,8 +377,45 @@ class BackupService:
         binding = self.bindings.repositories[name]
         if not binding.password_file.is_file() or binding.password_file.stat().st_mode & 0o077:
             raise ServiceError("Repository password file must exist and be private")
-        return ResticRunner(SnapshotProfile(name=name, repository=binding.repository,
+        runner_type = _RemoteResticRunner if self.repository_roles[name] == "remote-primary" else ResticRunner
+        return runner_type(SnapshotProfile(name=name, repository=binding.repository,
                                            password_file=str(binding.password_file), retry_lock="0s"))
+
+    def _resource_monitor(self, name, *, read_only_reconcile=False):
+        if self.repository_roles[name] != "remote-primary":
+            return None
+        budgets = [job.resource_budget for job in self.config.jobs if job.repository == name]
+        if not budgets or self.bindings.staging_dir is None:
+            raise ServiceError("Remote-primary requires a configured resource budget and private staging")
+        # One repository has one physical staging volume; every job must agree on its ceiling.
+        if any(budget != budgets[0] for budget in budgets):
+            raise ServiceError("Remote-primary jobs sharing a repository require one resource budget")
+        try:
+            if read_only_reconcile:
+                return ResourceMonitor(self.bindings.staging_dir, self.state, budgets[0],
+                                       read_only_reconcile=True)
+            return ResourceMonitor(self.bindings.staging_dir, self.state, budgets[0])
+        except ResourceLimitError as exc:
+            raise ResourceBudgetExceeded({"resource_budget_exceeded": True, "reason": str(exc),
+                                          "repository": name, "local_complete": False,
+                                          "cloud_complete": False, "replayed": False}) from None
+
+    def _operation_environment(self, name):
+        if name not in self.repository_roles:
+            raise ServiceError("Unknown repository")
+        if self.repository_roles[name] != "remote-primary":
+            return {k: v for k, v in os.environ.items() if not k.startswith("RESTIC_")}
+        if not os.environ.get("AWS_ACCESS_KEY_ID") or not os.environ.get("AWS_SECRET_ACCESS_KEY"):
+            raise ServiceError("Remote-primary requires explicit provider environment credentials")
+        staging = self.bindings.staging_dir
+        assert staging is not None
+        environment = {"PATH": os.environ.get("PATH", os.defpath), "HOME": str(staging),
+                       "TMPDIR": str(staging)}
+        for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                    "AWS_DEFAULT_REGION", "AWS_REGION", "AWS_CA_BUNDLE", "SSL_CERT_FILE"):
+            if key in os.environ:
+                environment[key] = os.environ[key]
+        return environment
 
     def _identity(self, name):
         if name not in self.bindings.repositories:
@@ -222,6 +424,243 @@ class BackupService:
         if value.startswith("/"):
             value = str(Path(value).resolve())
         return value
+
+    def _maintenance_bindings(self, path, adapter):
+        """Resolve the separate Restic pair from one bounded private declaration."""
+        try:
+            raw = _read_regular(Path(path), private=True)
+            value = strict_json(raw.decode("utf-8"))
+        except (OSError, UnicodeError, ValueError):
+            raise ServiceError("Private maintenance bindings are invalid") from None
+        required = {"schema_version", "staging_dir", "access_key_id_env", "secret_access_key_env"}
+        if (not isinstance(value, dict) or set(value) - required - {"credential_profile"}
+                or not required <= set(value) or value["schema_version"] != 1
+                or type(value["schema_version"]) is not int):
+            raise ServiceError("Private maintenance bindings are invalid")
+        profile = value.get("credential_profile", "restricted")
+        if profile not in {"restricted", "management"}:
+            raise ServiceError("Maintenance credential profile is invalid")
+        staging_value = value["staging_dir"]
+        if (not isinstance(staging_value, str) or not Path(staging_value).is_absolute()
+                or Path(staging_value).resolve() != Path(staging_value)):
+            raise ServiceError("Maintenance staging directory must be canonical and absolute")
+        names = (value["access_key_id_env"], value["secret_access_key_env"])
+        if (any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
+                for name in names) or names[0] == names[1]):
+            raise ServiceError("Maintenance credential environment references are invalid")
+        pair = tuple(os.environ.get(name) for name in names)
+        if (not all(pair) or any("\0" in item for item in pair)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", pair[0])):
+            raise ServiceError("Maintenance Restic credentials are unavailable")
+        if getattr(adapter, "_credential_pair", None) == pair:
+            raise ServiceError("Maintenance Restic credentials must differ from adapter credentials")
+        staging = Path(staging_value)
+        environment = {
+            "PATH": os.environ.get("PATH", os.defpath),
+            "HOME": str(staging),
+            "TMPDIR": str(staging),
+            "AWS_ACCESS_KEY_ID": pair[0],
+            "AWS_SECRET_ACCESS_KEY": pair[1],
+        }
+        endpoint_host = urlsplit(getattr(adapter, "endpoint_url", "") or "").hostname or ""
+        region = re.fullmatch(r"s3\.([a-z0-9-]+)\.backblazeb2\.com", endpoint_host)
+        if region is None:
+            raise ServiceError("Maintenance requires a canonical B2 endpoint")
+        environment["AWS_DEFAULT_REGION"] = region.group(1)
+        environment["AWS_REGION"] = region.group(1)
+        for name in ("SSL_CERT_FILE", "AWS_CA_BUNDLE"):
+            if name in os.environ:
+                environment[name] = os.environ[name]
+        return hashlib.sha256(raw).hexdigest(), {"key_id": pair[0], "profile": profile}, staging, environment, pair
+
+    def _maintenance_inspect_b2(self, adapter, identity, environment, pair, profile, cancel):
+        """Authenticate target and observed capabilities in a credential-limited child."""
+        from .b2 import B2Error
+
+        endpoint = getattr(adapter, "endpoint_url", None)
+        parsed = urlsplit(endpoint or "")
+        if (parsed.scheme != "https" or not re.fullmatch(
+            r"s3\.[a-z0-9-]+\.backblazeb2\.com", parsed.netloc
+        ) or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+            raise ServiceError("Maintenance requires a canonical B2 S3 endpoint")
+        inspection_env = {
+            "PATH": environment["PATH"], "HOME": environment["HOME"],
+            "TMPDIR": environment["TMPDIR"],
+            "B2_APPLICATION_KEY_ID": pair[0], "B2_APPLICATION_KEY": pair[1],
+        }
+        argv = (sys.executable, "-m", "bbackup.b2", "--bucket", adapter.bucket,
+                "--prefix", adapter.prefix, "--key-id-env", "B2_APPLICATION_KEY_ID",
+                "--key-env", "B2_APPLICATION_KEY")
+        result = self.runner.run(OperationPlan.create(
+            identity, "maintenance-b2-inspect", argv, env=inspection_env,
+            timeout_seconds=120), cancel_event=cancel)
+        if (result.status is not OperationStatus.SUCCEEDED or result.exit_code != 0
+                or result.stdout_bytes != len(result.stdout_tail)):
+            raise ServiceError("Maintenance B2 credential inspection failed")
+        try:
+            inspection = strict_json(result.stdout_tail.decode("utf-8"))
+            if (not isinstance(inspection, dict) or inspection.get("bucket") != adapter.bucket
+                    or inspection.get("prefix") != adapter.prefix
+                    or inspection.get("s3_endpoint") != endpoint
+                    or inspection.get("bucket_access_verified") is not True
+                    or inspection.get("version_listing_verified") is not True
+                    or inspection.get("write_capability_present") is not True
+                    or inspection.get("read_capability_present") is not True):
+                raise ValueError()
+            if profile == "restricted" and inspection.get("restricted_source_profile", {}).get("status") != "eligible_from_observed_metadata":
+                raise ValueError()
+        except (ValueError, UnicodeError, TypeError, AttributeError, B2Error):
+            raise ServiceError("Maintenance B2 key scope or target is unqualified") from None
+
+    def _maintenance_restic(self, identity, password_file, environment, monitor, argv,
+                            *, cancel, timeout, complete_output=False):
+        base = ("restic", "-r", identity, "--password-file", str(password_file),
+                "--no-cache", "--retry-lock", "0s")
+        plan = OperationPlan.create(identity, "maintenance-restic", (*base, *argv),
+                                    env=environment, timeout_seconds=timeout)
+        monitor.check()
+        result = self.runner.run(plan, on_tick=monitor.check, cancel_event=cancel)
+        monitor.check()
+        if result.status is not OperationStatus.SUCCEEDED or result.exit_code != 0:
+            raise ServiceError("Maintenance Restic inspection or command failed")
+        if complete_output and result.stdout_bytes != len(result.stdout_tail):
+            raise ServiceError("Maintenance Restic metadata exceeded bounded capture")
+        return result
+
+    def _maintenance_observe(self, identity, password_file, environment, monitor,
+                             *, cancel, timeout, no_lock, check):
+        prefix = ("--no-lock",) if no_lock else ()
+        def query(*args, complete=True):
+            return self._maintenance_restic(
+                identity, password_file, environment, monitor, (*prefix, *args),
+                cancel=cancel, timeout=timeout, complete_output=complete,
+            )
+        if no_lock and query("list", "locks").stdout_tail.strip() not in {b"", b"[]"}:
+            raise ServiceError("Maintenance observed an active Restic lock")
+        try:
+            config = strict_json(query("cat", "config").stdout_tail.decode("utf-8"))
+            snapshots = strict_json(query("snapshots", "--json").stdout_tail.decode("utf-8"))
+            repository_id = config["id"]
+            ids = sorted(item["id"] for item in snapshots)
+            if (not re.fullmatch(r"[0-9a-f]{64}", repository_id) or len(ids) != len(set(ids))
+                    or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids)):
+                raise ValueError()
+        except (ValueError, UnicodeError, KeyError, TypeError):
+            raise ServiceError("Maintenance Restic metadata is invalid or incomplete") from None
+        if check:
+            query("check", complete=False)
+        if no_lock and query("list", "locks").stdout_tail.strip() not in {b"", b"[]"}:
+            raise ServiceError("Maintenance observed a new Restic lock")
+        evidence = {"config_repository_id": repository_id, "visible_snapshot_ids": ids}
+        evidence["snapshot_inventory_sha256"] = hashlib.sha256(_retention_json_bytes(evidence)).hexdigest()
+        return evidence
+
+    def cloud_maintenance(self, command, adapter, values, directories, *, lease_id, cancel=None):
+        """Run one central maintenance operation using the existing catalog and ledger."""
+        from .resource_limits import ResourceMonitor
+
+        repository = values["repository"]
+        identity = self._identity(repository)
+        binding = self.bindings.repositories[repository]
+        if not binding.password_file.is_file() or binding.password_file.stat().st_mode & 0o077:
+            raise ServiceError("Maintenance repository password file must be private")
+        if values["quiescent_window_confirmed"] is not True:
+            raise ServiceError("Maintenance requires a confirmed quiet window")
+        digest, credential, staging, environment, pair = self._maintenance_bindings(
+            values["maintenance_bindings_file"], adapter
+        )
+        with adapter.maintenance_session(
+            values["policy_file"], values["grant_file"], directories,
+            quiescent_window_confirmed=True, repository_lease_id=lease_id,
+            reconcile_only=command == "cloud-maintenance reconcile",
+        ) as session:
+            budget = ResourceBudget.parse(dict(session.selection.resources["resource_budget"]))
+            timeout = session.selection.resources["timeout_seconds"]
+            try:
+                monitor = ResourceMonitor(staging, self.state, budget,
+                    read_only_reconcile=command != "cloud-maintenance apply")
+            except ResourceLimitError:
+                raise ServiceError("Maintenance staging mount or reserve is unqualified") from None
+            with monitor:
+                self._maintenance_inspect_b2(adapter, identity, environment, pair, credential["profile"], cancel)
+                if command == "cloud-maintenance plan":
+                    observed = self._maintenance_observe(
+                        identity, binding.password_file, environment, monitor,
+                        cancel=cancel, timeout=timeout, no_lock=True, check=False)
+                    return session.plan(observed, bindings_sha256=digest,
+                                        credential_identity=credential)
+                plan_id, plan_sha = values["plan_id"], values["plan_sha256"]
+                if command == "cloud-maintenance reconcile":
+                    plan = session.reconciliation_plan(plan_id, plan_sha,
+                        bindings_sha256=digest, credential_identity=credential)
+                    observed = self._maintenance_observe(
+                        identity, binding.password_file, environment, monitor,
+                        cancel=cancel, timeout=timeout, no_lock=True, check=True)
+                    outcome = session.finish_reconciliation(plan, {
+                        "schema_version": 1, "repository_health": "healthy", **observed})
+                    ledger_state = self.ledger.inspect(lease_id, plan_id)
+                    if ledger_state is not None and ledger_state[1] in {
+                        OperationStatus.RUNNING, OperationStatus.UNCERTAIN,
+                    }:
+                        self.ledger.reconcile(lease_id, plan_id,
+                            ReconciliationOutcome.SUCCEEDED if outcome["outcome"] == "succeeded"
+                            else ReconciliationOutcome.ABANDONED)
+                    return outcome
+                observed = self._maintenance_observe(
+                    identity, binding.password_file, environment, monitor,
+                    cancel=cancel, timeout=timeout, no_lock=False, check=False)
+                plan = session.validate_plan(plan_id, plan_sha, observed,
+                    bindings_sha256=digest, credential_identity=credential)
+                ledger_plan = OperationPlan(plan_id, lease_id, "cloud-maintenance",
+                    ("restic", "check"), destructive=True)
+                with self.ledger.begin(ledger_plan) as lease:
+                    mutation_started = False
+                    try:
+                        def phase(name, command_args=None, evidence=None):
+                            nonlocal mutation_started
+                            session.record_phase(plan, name, "intent")
+                            try:
+                                result = None
+                                if command_args is not None:
+                                    if name in {"forget", "prune"}:
+                                        mutation_started = True
+                                    result = self._maintenance_restic(
+                                        identity, binding.password_file, environment, monitor,
+                                        command_args, cancel=cancel, timeout=timeout,
+                                        complete_output=name == "prune")
+                                value = evidence(result) if callable(evidence) else evidence
+                                session.record_phase(plan, name, "completed", evidence=value)
+                            except BaseException:
+                                session.record_phase(plan, name,
+                                    "uncertain" if name in {"forget", "prune"} else "failed")
+                                raise
+                        before = self._maintenance_observe(
+                            identity, binding.password_file, environment, monitor,
+                            cancel=cancel, timeout=timeout, no_lock=False, check=True)
+                        phase("check_before", evidence={"repository_health": "healthy", **before})
+                        phase("forget", ("forget", "--", *plan["target_snapshot_ids"])
+                              if plan["target_snapshot_ids"] else None,
+                              {"forgotten_snapshot_ids": plan["target_snapshot_ids"]})
+                        after_forget = self._maintenance_observe(
+                            identity, binding.password_file, environment, monitor,
+                            cancel=cancel, timeout=timeout, no_lock=False, check=False)
+                        phase("verify_snapshots", evidence=after_forget)
+                        phase("prune", ("prune", "--max-repack-size", "0"),
+                              lambda result: {"result": "completed", "evidence_sha256":
+                                  hashlib.sha256(result.stdout_tail + b"\0" + result.stderr_tail).hexdigest()})
+                        after_prune = self._maintenance_observe(
+                            identity, binding.password_file, environment, monitor,
+                            cancel=cancel, timeout=timeout, no_lock=False, check=True)
+                        phase("check_after", evidence={"repository_health": "healthy", **after_prune})
+                        phase("protected_versions", evidence=session.verify_protected_versions())
+                        outcome = session.finish_reconciliation(plan, {
+                            "schema_version": 1, "repository_health": "healthy", **after_prune})
+                        lease.finish(OperationStatus.SUCCEEDED, 0)
+                        return outcome
+                    except BaseException:
+                        if not mutation_started:
+                            lease.finish(OperationStatus.FAILED, None)
+                        raise
 
     def _execute(
         self,
@@ -235,14 +674,30 @@ class BackupService:
         mutating=False,
         finalize: Callable[[OperationPlan, OperationRun], object] | None = None,
         on_stdout=None,
+        resource_monitor=None,
         after_run: Callable[[], None] | None = None,
         timeout_seconds: int = 3600,
     ):
         if cancel is not None and cancel.is_set():
             raise ServiceError("Operation cancelled before dispatch")
         # Restic configuration cannot be redirected by inherited RESTIC_* options.
-        env = {k: v for k, v in os.environ.items() if not k.startswith("RESTIC_")}
         repositories = sorted(set((name, *other)), key=self._identity)
+        remote_participants = [repository for repository in repositories
+                               if self.repository_roles[repository] == "remote-primary"]
+        env = self._operation_environment(remote_participants[0] if remote_participants else name)
+        if remote_participants and argv and argv[0] == "restic" and "--no-cache" not in argv:
+            argv = (argv[0], "--no-cache", *argv[1:])
+        elif argv and argv[0] == "restic":
+            has_explicit_cache = any(
+                argument == "--no-cache" or argument == "--cache-dir"
+                or argument.startswith("--cache-dir=")
+                for argument in argv[1:]
+            )
+            has_cache_environment = any(
+                env.get(variable) for variable in ("HOME", "XDG_CACHE_HOME", "RESTIC_CACHE_DIR")
+            )
+            if not has_explicit_cache and not has_cache_environment:
+                argv = (argv[0], "--no-cache", *argv[1:])
         plans = {}
         for repository in repositories:
             identity = self._identity(repository)
@@ -255,6 +710,9 @@ class BackupService:
                 timeout_seconds=timeout_seconds,
             )
         with ExitStack() as stack:
+            if remote_participants and resource_monitor is None:
+                resource_monitor = self._resource_monitor(remote_participants[0])
+                stack.callback(resource_monitor.close)
             leases = []
             try:
                 for plan in plans.values():
@@ -270,20 +728,31 @@ class BackupService:
             on_stdout = stdout_progress_handler(plan.operation_id, label, on_stdout)
             if on_stdout is not None:
                 run_options["on_stdout"] = on_stdout
+            if resource_monitor is not None:
+                run_options["on_tick"] = resource_monitor.check
             try:
                 try:
                     result = self.runner.run(plan, **run_options)
                 finally:
                     if after_run is not None:
                         after_run()
+                if resource_monitor is not None:
+                    resource_monitor.check()
                 if finalize is not None and result.status is OperationStatus.SUCCEEDED:
                     finalize(plan, result)
-            except BaseException:
+            except BaseException as exc:
                 # Source is a read-only copy participant. Only the destination
                 # can be uncertain after a failed or interrupted dispatch.
                 for repository, lease in zip(plans, leases):
                     if repository != name:
                         lease.finish(OperationStatus.FAILED, None)
+                if isinstance(exc, ResourceLimitError):
+                    raise ResourceBudgetExceeded({
+                        "resource_budget_exceeded": True, "reason": str(exc),
+                        "repository": name, "operation_id": plan.operation_id,
+                        "local_complete": False, "cloud_complete": False,
+                        "replayed": False, "resource_observation": resource_monitor.result(),
+                    }) from None
                 raise
             if mutating and result.status is not OperationStatus.SUCCEEDED:
                 # These outcomes can leave repository state partially changed.
@@ -322,31 +791,146 @@ class BackupService:
         except StopIteration:
             raise ServiceError("Unknown job") from None
 
-    def capture(self, job_name, *, cancel=None):
+    def capture(self, job_name, *, cancel=None,
+                quiet_administrative_window_confirmed=False):
         job = self._job(job_name)
+        remote_primary = self.repository_roles[job.repository] == "remote-primary"
+        if remote_primary:
+            self._operation_environment(job.repository)
         sources = tuple(source for source in self.sources if source.name in job.sources)
+        covered = job.coverage_policy is not None
+        coverage_exclusions = ()
+        sqlite_capture_exclusions = ()
+        coverage_sqlite = {}
+        coverage_postgresql = {}
+        validate_coverage = None
+        if covered:
+            from .linux_coverage import check_coverage
+            from .postgresql_coverage import PostgreSQLCoverageContext
+            if self.policy_bytes is None or self.binding_bytes is None:
+                raise ServiceError("Covered capture requires exact enrolled policy and binding snapshots")
+            declaration = self.bindings.coverage_declarations.get(job.name)
+            if declaration is None:
+                raise ServiceError("Covered capture declaration is missing")
+            pg_sources = {source.name: source for source in sources if source.kind == "postgresql"}
+            pg_context = (PostgreSQLCoverageContext(
+                pg_sources, self.bindings.database_bindings, self.runner, cancel=cancel,
+                quiet_administrative_window=quiet_administrative_window_confirmed)
+                if pg_sources else None)
+            coverage_arguments = {"state": self.state, "policy_bytes": self.policy_bytes,
+                                  "binding_bytes": self.binding_bytes,
+                                  "postgresql_context": pg_context}
+            coverage = check_coverage(declaration, job.coverage_policy, **coverage_arguments)
+            if not coverage.capture_ready:
+                raise ServiceError("Covered capture is not ready; inspect and review current coverage")
+            expected_items = [(source.name, Path(path), source.kind)
+                              for source in sources for path in source.paths]
+            expected = set(expected_items)
+            approved_items = [(source_id, path, adapter)
+                              for _, path, source_id, adapter in coverage.approved_roots]
+            approved = set(approved_items)
+            if (any(source.kind not in ("files", "sqlite", "postgresql") for source in sources)
+                    or len(expected_items) != len(expected)
+                    or len(approved_items) != len(approved)
+                    or expected != approved):
+                raise ServiceError("Covered capture sources differ from reviewed root mappings")
+            pg_by_source = {item["source_id"]: item for item in coverage.approved_postgresql}
+            if (len(pg_by_source) != len(coverage.approved_postgresql)
+                    or set(pg_by_source) != set(pg_sources)):
+                raise ServiceError("Covered PostgreSQL sources differ from reviewed logical roots")
+            for name, reviewed in pg_by_source.items():
+                source = pg_sources[name]
+                if (reviewed["connection"] != source.connection
+                        or reviewed["database"] != source.database
+                        or not reviewed.get("baseline_digest")
+                        or not reviewed.get("data_directory_identity")
+                        or not reviewed.get("recovery_artifacts")):
+                    raise ServiceError("Covered PostgreSQL selector or evidence differs")
+                coverage_postgresql[name] = dict(reviewed)
+            physical_roots = {root_id: (path, source_id, adapter)
+                              for root_id, path, source_id, adapter in coverage.approved_roots}
+            for reviewed in pg_by_source.values():
+                for artifact in reviewed["recovery_artifacts"]:
+                    route = physical_roots.get(artifact.get("root_id"))
+                    path = Path(artifact["path"])
+                    if (route is None or route[2] != "files"
+                            or path != route[0] and route[0] not in path.parents
+                            or not any(item.name == route[1] and item.kind == "files"
+                                       and str(route[0]) in item.paths for item in sources)):
+                        raise ServiceError("PostgreSQL recovery artifact is outside reviewed file inputs")
+            for covered_source in coverage_postgresql.values():
+                covered_source["recovery_file_roots"] = [
+                    {"root_id": root_id, "path": str(path)}
+                    for root_id, (path, _, adapter) in physical_roots.items()
+                    if adapter == "files" and any(
+                        artifact["root_id"] == root_id
+                        for artifact in covered_source["recovery_artifacts"])]
+            if pg_sources:
+                approved_pg = coverage.approved_postgresql
+                baseline = coverage.baseline_digest
+                candidate = coverage.candidate_digest
+
+                def validate_coverage():
+                    current = check_coverage(declaration, job.coverage_policy,
+                                             **coverage_arguments)
+                    if (not current.capture_ready or current.baseline_digest != baseline
+                            or current.candidate_digest != candidate
+                            or current.approved_postgresql != approved_pg):
+                        raise ServiceError("Reviewed PostgreSQL coverage changed during capture")
+                    return current
+            coverage_exclusions = coverage.approved_exclusions
+            sqlite_capture_exclusions = coverage.sqlite_capture_exclusions
+            sqlite_by_source = {item["source_id"]: item for item in coverage.approved_sqlite}
+            if (len(sqlite_by_source) != len(coverage.approved_sqlite)
+                    or set(sqlite_by_source) != {source.name for source in sources
+                                                 if source.kind == "sqlite"}):
+                raise ServiceError("Covered SQLite sources differ from reviewed root mappings")
+            for source_name, reviewed in sqlite_by_source.items():
+                source = next(item for item in sources if item.name == source_name)
+                if (source.kind != "sqlite" or source.paths != (reviewed["path"],)
+                        or not reviewed.get("identity") or not reviewed.get("recipe_digest")
+                        or not reviewed.get("baseline_digest")):
+                    raise ServiceError("Covered SQLite sources differ from reviewed root mappings")
+                coverage_sqlite[source_name] = reviewed
+        if remote_primary and any(source.kind == "docker" for source in sources):
+            raise ServiceError("Remote-primary Docker capture has no bounded export support")
+        monitor = None
         protected = [self.state]
+        if remote_primary:
+            protected.append(self.bindings.staging_dir.resolve())
         for binding in self.bindings.repositories.values():
             if binding.repository.startswith("/"):
                 protected.append(Path(binding.repository).resolve())
-        protected.extend(Path(path).resolve() for path in self.bindings.sensitive_paths)
+        if not covered:
+            protected.extend(Path(path).resolve() for path in self.bindings.sensitive_paths)
         for source in sources:
             for raw in source.paths:
                 if any(_overlap(Path(raw).resolve(), path) for path in protected):
                     raise ServiceError("Capture source overlaps repository, runtime state, or credentials")
-        local = self.bindings.repositories[job.repository].repository
-        if not local.startswith("/"):
-            raise ServiceError("Local-first jobs require an absolute local repository path")
-        ancestor = Path(local)
-        while not ancestor.exists():
-            ancestor = ancestor.parent
-        if shutil.disk_usage(ancestor).free < 64 * 1024 * 1024:
-            raise ServiceError("Insufficient local space; existing recovery points retained")
+        if not remote_primary:
+            local = self.bindings.repositories[job.repository].repository
+            if not local.startswith("/"):
+                raise ServiceError("Local-first jobs require an absolute local repository path")
+            ancestor = Path(local)
+            while not ancestor.exists():
+                ancestor = ancestor.parent
+            if shutil.disk_usage(ancestor).free < 64 * 1024 * 1024:
+                raise ServiceError("Insufficient local space; existing recovery points retained")
         engine = self._engine(job.repository)
         capture_id = uuid.uuid4().hex
         receipt = {}
+        required_replicas = {name: repository_key(self._identity(name)) for name in job.replicas}
+        artifacts = None
+        if remote_primary:
+            artifacts = DurableCaptureArtifacts(
+                self.bindings.staging_dir, self.state,
+                repository_key(self._identity(job.repository)), capture_id, job.name)
+            artifacts.record["required_replicas"] = required_replicas
+            self.ledger.mark_capture_artifacts(artifacts.record["repository_id"], capture_id)
 
         def finalize_capture(plan, result):
+            if validate_coverage is not None:
+                validate_coverage()
             tail = result.stdout_tail
             if isinstance(tail, bytes):
                 tail = tail.decode("utf-8", errors="replace")
@@ -365,26 +949,47 @@ class BackupService:
                        (repository, snapshot, job, operation, capture_token, required_replicas)
                        VALUES (?, ?, ?, ?, ?, ?)""",
                     (job.repository, snapshot, job.name, plan.operation_id, capture_id,
-                     json.dumps({"schema_version": 1, "bindings": {
-                         name: repository_key(self._identity(name)) for name in job.replicas
-                     }}, sort_keys=True, separators=(",", ":"))),
+                     json.dumps({"schema_version": 1, "bindings": required_replicas},
+                                sort_keys=True, separators=(",", ":"))),
                 )
             receipt["snapshot"] = snapshot
+            if artifacts is not None:
+                artifacts.cleanup_success()
 
-        with ExitStack() as capture_stack:
+        with ExitStack() as resource_stack, ExitStack() as capture_stack:
+            if remote_primary:
+                monitor = self._resource_monitor(job.repository)
+                resource_stack.callback(monitor.close)
             try:
                 paths = capture_stack.enter_context(capture_sources(
                     sources,
-                    self.state,
+                    self.bindings.staging_dir if remote_primary else self.state,
                     timeout=job.timeout_seconds,
                     cancel=cancel,
                     database_bindings=self.bindings.database_bindings,
                     docker_runtime=self.docker_runtime,
                     protected_paths=tuple(protected),
                     operation_id=capture_id,
+                    resource_monitor=monitor,
+                    coverage_sqlite=coverage_sqlite,
+                    coverage_postgresql=coverage_postgresql,
+                    validate_coverage=validate_coverage,
+                    durable_artifacts=artifacts,
                 ))
+            except ResourceLimitError as exc:
+                raise ResourceBudgetExceeded({
+                    "resource_budget_exceeded": True, "reason": str(exc),
+                    "repository": job.repository, "operation_id": capture_id,
+                    "capture_token": capture_id,
+                    "local_complete": False, "cloud_complete": False,
+                    "replayed": False, "resource_observation": monitor.result(),
+                }) from None
             except DockerRecoveryError as exc:
                 raise ServiceError(str(exc)) from None
+            except (CaptureError, OSError) as exc:
+                if remote_primary:
+                    raise ServiceError(f"Remote capture failed before dispatch; retained capture token {capture_id}") from exc
+                raise
             lifecycle = capture_stack.pop_all()
 
             def finish_lifecycle():
@@ -395,7 +1000,21 @@ class BackupService:
 
             try:
                 args = [*engine.base_args(), "backup", "--tag", f"bbackup-job={job.name}",
-                        "--tag", f"bbackup-capture={capture_id}", "--", *paths]
+                        "--tag", f"bbackup-capture={capture_id}"]
+                if coverage_sqlite:
+                    from .linux_coverage import CoverageError, verify_sqlite_identity
+                    try:
+                        for reviewed in coverage_sqlite.values():
+                            verify_sqlite_identity(Path(reviewed["path"]), reviewed["identity"])
+                    except CoverageError:
+                        raise ServiceError("Reviewed SQLite source identity changed before capture dispatch") from None
+                if validate_coverage is not None:
+                    validate_coverage()
+                if coverage_exclusions or sqlite_capture_exclusions:
+                    from .linux_coverage import restic_literal_exclusion
+                    for excluded in dict.fromkeys((*coverage_exclusions, *sqlite_capture_exclusions)):
+                        args.extend(("--exclude", restic_literal_exclusion(excluded)))
+                args.extend(("--", *paths))
                 plan, _ = self._execute(
                     job.repository,
                     args,
@@ -403,17 +1022,330 @@ class BackupService:
                     cancel=cancel,
                     operation_id=capture_id,
                     mutating=True,
+                    resource_monitor=monitor,
                     finalize=finalize_capture,
                     after_run=finish_lifecycle,
                     timeout_seconds=job.timeout_seconds,
                 )
+            except Exception as exc:
+                if remote_primary:
+                    if isinstance(exc, ResourceBudgetExceeded):
+                        exc.result["capture_token"] = capture_id
+                        raise
+                    raise ServiceError(f"Remote capture is incomplete; retained capture token {capture_id}") from exc
+                raise
             finally:
                 finish_lifecycle()
         snapshot = receipt["snapshot"]
-        return {"operation_id": plan.operation_id, "repository": job.repository, "snapshot_id": snapshot,
-                "local_complete": True, "required_replicas": list(job.replicas), "cloud_complete": not job.replicas}
+        response = {"operation_id": plan.operation_id, "repository": job.repository, "snapshot_id": snapshot,
+                    "primary_destination": {"repository": job.repository,
+                                            "kind": "remote" if remote_primary else "local"},
+                    "local_complete": not remote_primary, "required_replicas": list(job.replicas),
+                    "cloud_complete": remote_primary, "required_replicas_complete": not job.replicas}
+        if monitor is not None:
+            response["resource_observation"] = monitor.result()
+        return response
+
+    def reconcile_run(self, repository, operation_id, outcome, *,
+                      quiescent_window_confirmed=False, cancel=None):
+        """Inspect one remote capture under its staging lease before resolving it."""
+
+        repository_id = repository_key(self._identity(repository))
+        ledger_row = self.ledger.inspect(repository_id, operation_id)
+        if self.repository_roles[repository] != "remote-primary" or (
+                ledger_row is not None and ledger_row[0] != "capture"):
+            self.ledger.reconcile(repository_id, operation_id, outcome)
+            return {"operation_id": operation_id, "reviewed_outcome": outcome.value,
+                    "replayed": False}
+        if not re.fullmatch(r"[a-f0-9]{32}", operation_id):
+            raise ServiceError("Remote capture token is invalid")
+        try:
+            artifacts = DurableCaptureArtifacts.load(
+                self.bindings.staging_dir, self.state, repository_id, operation_id)
+        except FileNotFoundError:
+            if (ledger_row is not None and ledger_row[0] == "capture"
+                    and not self.ledger.has_capture_artifact_marker(repository_id, operation_id)):
+                self.ledger.reconcile(repository_id, operation_id, outcome)
+                return {"operation_id": operation_id, "reviewed_outcome": outcome.value,
+                        "replayed": False, "legacy_capture": True}
+            raise ServiceError("New remote capture artifact record is missing") from None
+        except (OSError, ValueError, CaptureError):
+            raise ServiceError("Remote capture artifact record is missing or invalid") from None
+        if quiescent_window_confirmed is not True:
+            raise ServiceError("Remote capture reconciliation requires a confirmed quiescent repository window")
+        if ledger_row is None and outcome is ReconciliationOutcome.SUCCEEDED:
+            raise ServiceError("Capture has no dispatch record; success cannot be reconciled")
+        with self._resource_monitor(repository, read_only_reconcile=True):
+            try:
+                artifacts.recover_empty_preparation()
+            except (OSError, CaptureError):
+                raise ServiceError("Remote capture preparation is not an empty owned stage") from None
+            staging = self.bindings.staging_dir
+            expected = {".bbackup-staging.lock"}
+            if artifacts.directory.exists() or (artifacts.record["phase"] not in (
+                    "cleanup_started", "cleaned") and artifacts.record["stage_inode"] is not None):
+                expected.add(artifacts.directory.name)
+            if {path.name for path in staging.iterdir()} != expected:
+                raise ServiceError("Remote staging contains foreign or missing entries")
+            try:
+                artifacts.validate()
+            except (OSError, KeyError, TypeError, CaptureError):
+                raise ServiceError("Remote capture artifacts failed validation") from None
+            engine = self._engine(repository)
+            tag = f"bbackup-capture={operation_id}"
+
+            def inspect(argv):
+                plan = OperationPlan(operation_id, repository_id, "inspect", tuple(argv),
+                                     env=self._operation_environment(repository), timeout_seconds=3600)
+                result = self.runner.run(plan, cancel_event=cancel)
+                if (result.status is not OperationStatus.SUCCEEDED or result.exit_code != 0
+                        or result.stdout_bytes != len(result.stdout_tail)):
+                    raise ServiceError("Remote capture inspection was incomplete")
+                return result.stdout_tail
+
+            def require_no_repository_locks():
+                # `list locks` does not create a Restic lock. A clear listing is
+                # only an observation; the caller must keep writers quiescent.
+                if inspect([*engine.base_args(), "--no-lock", "list", "locks"]):
+                    raise ServiceError("Remote repository has an active Restic lock")
+
+            def inspect_export(snapshot_id, item, *, return_bytes=False):
+                expected_size = item["size"]
+                expected_hash = item["sha256"]
+                observed_size = 0
+                digest = hashlib.sha256()
+                captured = bytearray() if return_bytes else None
+
+                def receive(chunk):
+                    nonlocal observed_size
+                    observed_size += len(chunk)
+                    if observed_size > expected_size:
+                        raise ServiceError("Remote capture export exceeds the recorded size")
+                    digest.update(chunk)
+                    if captured is not None:
+                        captured.extend(chunk)
+
+                plan = OperationPlan(
+                    operation_id, repository_id, "inspect",
+                    tuple([*engine.base_args(), "--no-lock", "dump", snapshot_id,
+                           str(artifacts.directory / item["name"])]),
+                    env=self._operation_environment(repository), timeout_seconds=3600,
+                )
+                result = self.runner.run(plan, cancel_event=cancel,
+                                         on_stdout_chunk=receive)
+                if (result.status is not OperationStatus.SUCCEEDED or result.exit_code != 0
+                        or result.stdout_bytes != observed_size or observed_size != expected_size
+                        or digest.hexdigest() != expected_hash or result.stdout_tail):
+                    raise ServiceError("Remote capture export differs from the retained record")
+                return bytes(captured) if captured is not None else None
+
+            def inspect_covered_material(snapshot_id, manifest_bytes):
+                try:
+                    manifest_data = strict_json(manifest_bytes)
+                    if (manifest_data["schema_version"] != 2
+                            or not isinstance(manifest_data["exports"], list)):
+                        raise ValueError()
+                    covered = [entry for entry in manifest_data["exports"]
+                               if isinstance(entry, dict) and entry.get("coverage") is not None]
+                    if not covered:
+                        return
+                    snapshot_data = strict_json(inspect(
+                        [*engine.base_args(), "--no-lock", "cat", "snapshot", snapshot_id]))
+                    paths = snapshot_data["paths"]
+                    if not isinstance(paths, list):
+                        raise ValueError()
+                    for entry in covered:
+                        if entry.get("kind") != "postgresql":
+                            raise ValueError()
+                        refs = _covered_postgresql_refs(
+                            entry, source=entry["source"], snapshot_paths=paths)
+                        for ref in refs:
+                            observed_size = 0
+                            digest = hashlib.sha256()
+
+                            def receive(chunk):
+                                nonlocal observed_size
+                                observed_size += len(chunk)
+                                if observed_size > 64 * 1024 * 1024:
+                                    raise ServiceError("Covered PostgreSQL recovery artifact exceeds bound")
+                                digest.update(chunk)
+
+                            plan = OperationPlan(
+                                operation_id, repository_id, "inspect",
+                                tuple([*engine.base_args(), "--no-lock", "dump", snapshot_id,
+                                       ref["path"]]),
+                                env=self._operation_environment(repository), timeout_seconds=3600,
+                            )
+                            result = self.runner.run(plan, cancel_event=cancel,
+                                                     on_stdout_chunk=receive)
+                            if (result.status is not OperationStatus.SUCCEEDED or result.exit_code != 0
+                                    or result.stdout_bytes != observed_size or result.stdout_tail
+                                    or digest.hexdigest() != ref["sha256"]):
+                                raise ServiceError("Covered PostgreSQL recovery artifact differs from reviewed manifest")
+                except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+                    raise ServiceError("Covered PostgreSQL recovery manifest is invalid") from None
+
+            try:
+                require_no_repository_locks()
+                inventory = strict_json(inspect([*engine.base_args(), "--no-lock", "snapshots", "--tag", tag]))
+            except (ValueError, UnicodeDecodeError, TypeError):
+                raise ServiceError("Remote capture inventory is invalid") from None
+            if not isinstance(inventory, list) or len(inventory) > 1:
+                raise ServiceError("Remote capture tag is ambiguous")
+            snapshot = None
+            if inventory:
+                item = inventory[0]
+                if (not isinstance(item, dict) or not isinstance(item.get("tags"), list)
+                        or tag not in item["tags"]
+                        or f"bbackup-job={artifacts.record['job']}" not in item["tags"]):
+                    raise ServiceError("Remote capture tag does not match the record")
+                snapshot = _snapshot_id(item.get("id"))
+            with self._receipts() as db:
+                recorded = db.execute(
+                    "SELECT snapshot FROM snapshots WHERE repository=? AND capture_token=?",
+                    (repository, operation_id)).fetchall()
+            if len(recorded) > 1 or (recorded and (snapshot is None or recorded[0][0] != snapshot)):
+                raise ServiceError("Remote capture receipt conflicts with repository inspection")
+            if outcome is ReconciliationOutcome.SUCCEEDED:
+                if snapshot is None or artifacts.record["phase"] not in (
+                        "ready", "cleanup_started", "cleaned"):
+                    raise ServiceError("Remote capture success is not proven")
+                manifest = artifacts.record["manifest"]
+                for export in artifacts.record["exports"]:
+                    inspect_export(snapshot, export)
+                if manifest is not None:
+                    inspect_covered_material(snapshot, inspect_export(snapshot, manifest, return_bytes=True))
+                require_no_repository_locks()
+                replicas = artifacts.record["required_replicas"]
+                if not isinstance(replicas, dict):
+                    raise ServiceError("Remote capture replica record is invalid")
+                required = json.dumps({"schema_version": 1, "bindings": replicas},
+                                      sort_keys=True, separators=(",", ":"))
+                with self._receipts() as db:
+                    existing = db.execute(
+                        "SELECT job,operation,capture_token,required_replicas FROM snapshots "
+                        "WHERE repository=? AND snapshot=?", (repository, snapshot)).fetchone()
+                    if existing is None:
+                        db.execute("INSERT INTO snapshots "
+                                   "(repository,snapshot,job,operation,capture_token,required_replicas) "
+                                   "VALUES (?,?,?,?,?,?)",
+                                   (repository, snapshot, artifacts.record["job"], operation_id,
+                                    operation_id, required))
+                    elif tuple(existing) != (artifacts.record["job"], operation_id,
+                                            operation_id, required):
+                        raise ServiceError("Remote capture receipt conflicts with the snapshot")
+                try:
+                    artifacts.cleanup_success()
+                except (OSError, KeyError, TypeError, CaptureError):
+                    raise ServiceError("Remote capture cleanup is incomplete; retry reconciliation") from None
+            elif snapshot is not None:
+                raise ServiceError("Remote capture snapshot exists; failure is not proven")
+            else:
+                require_no_repository_locks()
+                if artifacts.record["phase"] in ("cleanup_started", "cleaned"):
+                    raise ServiceError("Remote capture cleanup already began after success")
+                artifacts.reviewed_failure(outcome.value)
+            if ledger_row is not None:
+                self.ledger.reconcile(repository_id, operation_id, outcome)
+        return {"operation_id": operation_id, "reviewed_outcome": outcome.value,
+                "snapshot_id": snapshot, "retained_exports": outcome is not ReconciliationOutcome.SUCCEEDED,
+                "artifact_record_sha256": artifacts.record_sha256(),
+                "replayed": False}
+
+    def retained_exports(self, repository, *, limit=100, offset=0):
+        """List bounded, declared private artifact summaries without provider access."""
+
+        if type(limit) is not int or not 1 <= limit <= 1000 or type(offset) is not int or offset < 0:
+            raise ServiceError("Invalid pagination")
+        if self.repository_roles.get(repository) != "remote-primary":
+            raise ServiceError("Retained exports require a remote-primary repository")
+        repository_id = repository_key(self._identity(repository))
+        directory = self.state / "capture-artifacts"
+        if not directory.exists():
+            return []
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise ServiceError("Private capture record directory changed")
+        summaries = []
+        for path in sorted(directory.iterdir()):
+            match = re.fullmatch(r"([a-f0-9]{32})\.json", path.name)
+            if match is None:
+                continue
+            token = match.group(1)
+            try:
+                descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                try:
+                    info = os.fstat(descriptor)
+                    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                            or info.st_mode & 0o077 or info.st_size > 1024 * 1024):
+                        raise ServiceError("Private capture record changed")
+                    with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as stream:
+                        record = json.load(stream)
+                finally:
+                    os.close(descriptor)
+                if not isinstance(record, dict):
+                    raise ServiceError("Private capture record is invalid")
+                if record.get("repository_id") != repository_id:
+                    continue
+                artifact = DurableCaptureArtifacts.load(
+                    self.bindings.staging_dir, self.state, repository_id, token)
+                if artifact.record["phase"] in ("cleaned", "discarded"):
+                    continue
+                exports = artifact.record["exports"]
+                if (not isinstance(exports, list) or any(
+                        not isinstance(item, dict) or type(item.get("size")) is not int
+                        or item["size"] < 0 for item in exports)):
+                    raise ServiceError("Private capture record is invalid")
+                summaries.append({
+                    "repository": repository, "operation_id": token,
+                    "phase": artifact.record["phase"],
+                    "reviewed_outcome": artifact.record.get("reviewed_outcome"),
+                    "completed_export_count": len(exports),
+                    "completed_export_bytes": sum(item["size"] for item in exports),
+                    "artifact_record_sha256": artifact.record_sha256(),
+                    "file_hashes_verified": False,
+                })
+            except (OSError, ValueError, KeyError, TypeError, CaptureError):
+                raise ServiceError("Private capture record is invalid") from None
+        return summaries[offset:offset + limit]
+
+    def discard_exports(self, repository, operation_id, artifact_record_sha256):
+        """Explicitly release a reviewed failed capture's exact private stage."""
+
+        if self.repository_roles.get(repository) != "remote-primary":
+            raise ServiceError("Retained exports require a remote-primary repository")
+        repository_id = repository_key(self._identity(repository))
+        try:
+            artifact = DurableCaptureArtifacts.load(
+                self.bindings.staging_dir, self.state, repository_id, operation_id)
+        except (OSError, ValueError, CaptureError):
+            raise ServiceError("Private capture record is missing or invalid") from None
+        row = self.ledger.inspect(repository_id, operation_id)
+        reviewed = artifact.record.get("reviewed_outcome")
+        if (reviewed not in ("failed", "abandoned")
+                or row is not None and row != (
+                    "capture", OperationStatus.RECONCILED_FAILED if reviewed == "failed"
+                    else OperationStatus.RECONCILED_ABANDONED)):
+            raise ServiceError("Capture failure has not been explicitly reconciled")
+        with self._resource_monitor(repository, read_only_reconcile=True):
+            staging = self.bindings.staging_dir
+            expected = {".bbackup-staging.lock"}
+            if artifact.directory.exists() or artifact.record["phase"] not in (
+                    "discard_started", "discarded"):
+                expected.add(artifact.directory.name)
+            if {path.name for path in staging.iterdir()} != expected:
+                raise ServiceError("Remote staging contains foreign or missing entries")
+            try:
+                artifact.discard(artifact_record_sha256)
+            except (OSError, ValueError, KeyError, TypeError, CaptureError):
+                raise ServiceError("Capture exports changed; explicit disposal was refused") from None
+        return {"repository": repository, "operation_id": operation_id,
+                "discarded_export_count": len(artifact.record["exports"]),
+                "artifact_record_sha256": artifact.record_sha256(), "replayed": False}
 
     def copy(self, source, destination, snapshot, *, cancel=None, timeout_seconds=3600):
+        if any(self.repository_roles.get(name) == "remote-primary" for name in (source, destination)):
+            raise ServiceError("Remote-primary copies do not yet have bounded resource support")
         snapshot = _snapshot_id(snapshot)
         if source == destination or self._identity(source) == self._identity(destination):
             raise ServiceError("Copy requires independent repositories")
@@ -1111,6 +2043,9 @@ class BackupService:
                 raise ValueError()
         except (ValueError, TypeError, KeyError):
             raise ServiceError("Snapshot does not contain a valid selected native database export") from None
+        recovery_artifacts = (_covered_postgresql_refs(
+            entry, source=source, snapshot_paths=metadata["paths"])
+            if binding.kind == "postgresql" else [])
         # The bounded runner streams the archive directly to private temporary
         # storage. No original-host source configuration or ledger is required.
         with tempfile.TemporaryDirectory(prefix="database-restore-", dir=self.state) as staging:
@@ -1119,6 +2054,30 @@ class BackupService:
                 archive.chmod(0o600)
                 self._execute(repository, [*engine.base_args(), "dump", snapshot, str(archive_path)],
                               label="database-export", cancel=cancel, on_stdout=output.write)
+            if recovery_artifacts:
+                archive_hash = hashlib.sha256()
+                with archive.open("rb") as exported:
+                    for chunk in iter(lambda: exported.read(1024 * 1024), b""):
+                        archive_hash.update(chunk)
+                if archive_hash.hexdigest() != entry["export_sha256"]:
+                    raise ServiceError("Covered PostgreSQL export digest differs from reviewed manifest")
+                for artifact in recovery_artifacts:
+                    digest = hashlib.sha256()
+                    size = 0
+
+                    def hash_artifact(chunk):
+                        nonlocal size
+                        size += len(chunk)
+                        if size > 64 * 1024 * 1024:
+                            raise ServiceError("Covered PostgreSQL recovery artifact exceeds bound")
+                        digest.update(chunk)
+
+                    _, recovered = self._execute(repository,
+                        [*engine.base_args(), "dump", snapshot, artifact["path"]],
+                        label="database-material", cancel=cancel, on_stdout=hash_artifact)
+                    if (recovered.stdout_bytes != size
+                            or digest.hexdigest() != artifact["sha256"]):
+                        raise ServiceError("Covered PostgreSQL recovery artifact digest differs")
             client = "pg_restore" if binding.kind == "postgresql" else binding.kind
             plan = OperationPlan.create(identity, "database-restore", [client])
             with self.ledger.begin(plan) as lease:
@@ -1144,8 +2103,10 @@ class BackupService:
         return {"operation_id": plan.operation_id, "snapshot_id": snapshot,
                 "database_validated": True, "application_validated": False, "target_database": result}
 
-    def run_job(self, job_name, *, cancel=None):
-        result = self.capture(job_name, cancel=cancel)
+    def run_job(self, job_name, *, cancel=None,
+                quiet_administrative_window_confirmed=False):
+        result = self.capture(job_name, cancel=cancel,
+            quiet_administrative_window_confirmed=quiet_administrative_window_confirmed)
         result["replicas"] = []
         result["replica_failures"] = []
         for destination in self._job(job_name).replicas:
@@ -1158,12 +2119,17 @@ class BackupService:
                     result["repository"], destination, result["snapshot_id"], cancel=cancel,
                     timeout_seconds=self._job(job_name).timeout_seconds,
                 ))
+                if self.bindings.repositories.get(destination) is not None:
+                    if self.bindings.repositories[destination].repository.startswith("/"):
+                        result["local_complete"] = True
+                    else:
+                        result["cloud_complete"] = True
             except (ServiceError, RuntimeError, OSError, sqlite3.Error, ValueError):
                 result["replica_failures"].append({"destination_repository": destination,
                                                    "reason": "copy_failed_or_uncertain"})
                 if cancel is not None and cancel.is_set():
                     break
-        result["cloud_complete"] = not result["replica_failures"]
+        result["required_replicas_complete"] = not result["replica_failures"]
         if result["replica_failures"]:
             raise ReplicaJobError(result)
         return result

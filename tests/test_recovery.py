@@ -3,7 +3,8 @@ import subprocess
 
 import pytest
 
-from bbackup.recovery import RecoveryError, open_kit, seal_kit, verify_checkpoint
+from bbackup.recovery import (RecoveryError, accept_recovery_checkpoint, open_kit,
+                              seal_kit, verify_checkpoint, verify_recovery_acceptance)
 
 
 @pytest.fixture
@@ -19,6 +20,15 @@ def test_key(tmp_path):
     subprocess.run([*base, "--quick-add-key", fingerprint, "cv25519", "encr", "1d"], check=True, capture_output=True)
     yield home, fingerprint
     subprocess.run(["gpgconf", "--homedir", str(home), "--kill", "gpg-agent"], capture_output=True)
+
+
+def _second_key(home):
+    base = ["gpg", "--homedir", str(home), "--batch", "--pinentry-mode", "loopback", "--passphrase", ""]
+    subprocess.run([*base, "--quick-generate-key", "bbackup central verifier test", "ed25519", "sign", "1d"], check=True, capture_output=True)
+    keys = subprocess.run([*base, "--with-colons", "--list-secret-keys"], check=True, capture_output=True, text=True).stdout
+    fingerprint = [line.split(":")[9] for line in keys.splitlines() if line.startswith("fpr:")][-1]
+    subprocess.run([*base, "--quick-add-key", fingerprint, "cv25519", "encr", "1d"], check=True, capture_output=True)
+    return fingerprint
 
 
 def test_sealed_kit_authenticates_and_recovers_independent_password(tmp_path, test_key):
@@ -57,6 +67,64 @@ def test_nonregular_and_precancelled_inputs_fail_before_gpg(tmp_path):
         verify_checkpoint(tmp_path / "missing", tmp_path / "sig", "A" * 40, cancel=cancel)
 
 
+def test_checked_kit_records_indefinite_checkpoint_receipt(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    from bbackup.cloud import CheckpointRecord
+    from bbackup.models import Configuration, HostBindings, RepositoryBinding
+    from bbackup.operations import OperationStatus
+    from bbackup.recovery import create_checked_kit
+    from bbackup.service import BackupService
+
+    endpoint, bucket, prefix = "https://s3.example.test", "test-bucket", "repo"
+    password = tmp_path / "password"
+    password.write_text("disposable password")
+    password.chmod(0o600)
+    repository = f"s3:{endpoint}/{bucket}/{prefix}"
+    config = Configuration.parse({"schema_version": 2,
+                                  "repositories": [{"name": "source", "role": "replica"}],
+                                  "sources": [], "jobs": []})
+    service = BackupService(config, HostBindings(tmp_path / "state", {
+        "source": RepositoryBinding(repository, password)}))
+    snapshot, repository_id = "a" * 64, "b" * 64
+    service._engine = lambda _name: SimpleNamespace(
+        base_args=lambda: ["restic", "-r", repository],
+        check_args=lambda: ["restic", "-r", repository, "check"])
+    service.runner.run = lambda plan, **_kwargs: SimpleNamespace(
+        status=OperationStatus.SUCCEEDED,
+        stdout_tail=json.dumps({"id": repository_id} if "config" in plan.argv else
+                               {"id": snapshot}).encode())
+    operation = SimpleNamespace(operation_id="synthetic-checkpoint", env={})
+    def execute(_repository, _argv, *, finalize, **_kwargs):
+        finalize(operation, None)
+        return operation, None
+    service._execute = execute
+
+    class Adapter:
+        def __init__(self):
+            self.endpoint_url = endpoint
+            self.bucket = bucket
+            self.prefix = prefix
+        def create_checkpoint(self, path, **_kwargs):
+            Path(path).write_text("synthetic checkpoint")
+            return CheckpointRecord(Path(path), "c" * 64, 0, 0, 0,
+                "2026-10-20T00:00:00Z", None, "source", repository_id, snapshot,
+                endpoint, bucket, prefix, True)
+    def seal(_manifest, _password, destination, **_kwargs):
+        destination.write_bytes(b"synthetic sealed kit")
+        return {"manifest_sha256": "c" * 64}
+    monkeypatch.setattr("bbackup.recovery.seal_kit", seal)
+    result = create_checked_kit(service, Adapter(), "source", snapshot,
+        tmp_path / "kit.gpg", signer="D" * 40, recipient="E" * 40,
+        quiescent_window_confirmed=True)
+    assert result["expires_at"] is None
+    assert result["repository_id"] == repository_id
+    with service._receipts() as db:
+        assert db.execute("SELECT manifest_sha256, expires_at FROM checkpoints").fetchall() == [
+            ("c" * 64, None)]
+
+
 def test_validsig_does_not_override_revoked_or_expired_status():
     from types import SimpleNamespace
     from bbackup.recovery import _verify_status
@@ -66,9 +134,40 @@ def test_validsig_does_not_override_revoked_or_expired_status():
             _verify_status(SimpleNamespace(stdout_tail=output, stdout_bytes=len(output)), "A" * 40)
 
 
+def test_trusted_signer_must_be_primary_fingerprint():
+    from types import SimpleNamespace
+    from bbackup.recovery import _verify_status
+    subkey, primary = "B" * 40, "A" * 40
+    output = (f"[GNUPG:] VALIDSIG {subkey} 2026-10-20 1 0 4 0 22 8 00 {primary}\n").encode()
+    result = SimpleNamespace(stdout_tail=output, stdout_bytes=len(output))
+    _verify_status(result, primary)
+    with pytest.raises(RecoveryError, match="trusted signer"):
+        _verify_status(result, subkey)
+
+
+def test_acceptance_publication_never_replaces_a_racing_destination(tmp_path):
+    from bbackup.recovery import _publish_acceptance_noreplace
+
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    (staged / "acceptance.json").write_bytes(b"complete record")
+    (staged / "acceptance.sig").write_bytes(b"complete signature")
+    occupied = tmp_path / "accepted"
+    occupied.mkdir()
+    (occupied / "independent-record").write_bytes(b"preserve this")
+    with pytest.raises(RecoveryError, match="already exists"):
+        _publish_acceptance_noreplace(staged, occupied)
+    assert (occupied / "independent-record").read_bytes() == b"preserve this"
+    assert (staged / "acceptance.sig").read_bytes() == b"complete signature"
+    published = tmp_path / "published"
+    _publish_acceptance_noreplace(staged, published)
+    assert not staged.exists()
+    assert {path.name for path in published.iterdir()} == {"acceptance.json", "acceptance.sig"}
+
+
 @pytest.mark.integration
 @pytest.mark.skipif(shutil.which("restic") is None, reason="requires restic")
-def test_historical_repository_and_kit_restore_without_original_ledger(tmp_path, test_key):
+def test_historical_repository_and_kit_restore_without_original_ledger(tmp_path, test_key, monkeypatch):
     import json
     import io
     from bbackup.cloud import S3CloudAdapter
@@ -78,6 +177,7 @@ def test_historical_repository_and_kit_restore_without_original_ledger(tmp_path,
     from tests.test_cloud import FakeS3
 
     home, signer = test_key
+    verifier = _second_key(home)
     data = tmp_path / "data"
     data.mkdir()
     (data / "record.txt").write_text("historical recovery proof")
@@ -112,7 +212,7 @@ def test_historical_repository_and_kit_restore_without_original_ledger(tmp_path,
     checkpoint = adapter.create_checkpoint(manifest, source_repository="local", repository_id=repository_id,
         source_snapshot_id=captured["snapshot_id"], trusted_quiescent_window_confirmed=True)
     kit = tmp_path / "kit.gpg"
-    seal_kit(manifest, password, kit, signer=signer, recipient=signer, home=home)
+    seal_kit(manifest, password, kit, signer=signer, recipient=verifier, home=home)
     # Remove only this test's original data, credentials, repository, ledger and manifest.
     shutil.rmtree(repo)
     shutil.rmtree(tmp_path / "state")
@@ -135,3 +235,73 @@ def test_historical_repository_and_kit_restore_without_original_ledger(tmp_path,
     clean_service.restore("recovered", captured["snapshot_id"], target)
     assert (target / str(data / "record.txt").lstrip("/")).read_text() == "historical recovery proof"
     assert checkpoint.repository_id == repository_id
+    accepted_dir = tmp_path / "central-acceptance"
+    accepted = accept_recovery_checkpoint(adapter, kit, accepted_dir,
+        source_signer=signer, trusted_verifier=verifier, source_repository="local",
+        repository_id=repository_id, snapshot=captured["snapshot_id"], home=home)
+    assert accepted["manifest_sha256"] == authenticated["manifest_sha256"]
+    assert accepted["source_signer"] == signer
+    assert accepted["verifier"] == verifier
+    assert accepted["recovery_verified"] is True
+    assert accepted["protection_qualified"] is False
+    assert accepted["captured_at"] == checkpoint.captured_at
+    assert accepted["verified_at"] >= accepted["captured_at"]
+    assert verify_checkpoint(accepted_dir / "checkpoint.jsonl", accepted_dir / "checkpoint.sig",
+        signer, home=home) == accepted["manifest_sha256"]
+    assert verify_recovery_acceptance(accepted_dir, trusted_verifier=verifier,
+        repository_id=repository_id, snapshot=captured["snapshot_id"], home=home) == accepted
+    # Even a correctly signed record must satisfy the strict central schema.
+    from bbackup.recovery import _gpg
+    for label, raw in (
+        ("unknown-field", json.dumps({**accepted, "source_report_trusted": True}).encode()),
+        ("duplicate-field", json.dumps(accepted).encode()[:-1] + b',"verified_at":"2099-01-01T00:00:00Z"}'),
+        ("invalid-time", json.dumps({**accepted, "verified_at": "1999-01-01T00:00:00Z"}).encode()),
+    ):
+        invalid = tmp_path / label
+        invalid.mkdir(mode=0o700)
+        (invalid / "acceptance.json").write_bytes(raw)
+        _gpg(["--local-user", verifier, "--output", str(invalid / "acceptance.sig"),
+              "--detach-sign", str(invalid / "acceptance.json")], home=home)
+        with pytest.raises(RecoveryError):
+            verify_recovery_acceptance(invalid, trusted_verifier=verifier,
+                repository_id=repository_id, snapshot=captured["snapshot_id"], home=home)
+    with pytest.raises(RecoveryError):
+        verify_recovery_acceptance(accepted_dir, trusted_verifier=signer,
+            repository_id=repository_id, snapshot=captured["snapshot_id"], home=home)
+    with pytest.raises(RecoveryError, match="new local directory"):
+        accept_recovery_checkpoint(adapter, kit, accepted_dir,
+            source_signer=signer, trusted_verifier=verifier, source_repository="local",
+            repository_id=repository_id, snapshot=captured["snapshot_id"], home=home)
+    with monkeypatch.context() as patch:
+        def unavailable_proof(*args, **kwargs):
+            raise RecoveryError("Reconstructed repository verification failed")
+        patch.setattr("bbackup.recovery.verify_reconstructed_repository", unavailable_proof)
+        unproven_dir = tmp_path / "unproven-acceptance"
+        with pytest.raises(RecoveryError, match="verification failed"):
+            accept_recovery_checkpoint(adapter, kit, unproven_dir,
+                source_signer=signer, trusted_verifier=verifier, source_repository="local",
+                repository_id=repository_id, snapshot=captured["snapshot_id"], home=home)
+        assert not unproven_dir.exists()
+    for label, captured_at, expires_at in (
+        ("future", "2099-01-01T00:00:00Z", "2100-01-01T00:00:00Z"),
+        ("expired", "2000-01-01T00:00:00Z", "2001-01-01T00:00:00Z"),
+    ):
+        forged_manifest = tmp_path / f"{label}.jsonl"
+        original = (opened / "checkpoint.jsonl").read_bytes().splitlines(keepends=True)
+        header = json.loads(original[0])
+        header["captured_at"], header["expires_at"] = captured_at, expires_at
+        original[0] = json.dumps(header, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+        forged_manifest.write_bytes(b"".join(original))
+        forged_kit = tmp_path / f"{label}.gpg"
+        seal_kit(forged_manifest, opened / "repository.password", forged_kit,
+            signer=signer, recipient=verifier, home=home)
+        refused_dir = tmp_path / f"{label}-acceptance"
+        with pytest.raises(RecoveryError, match="future-dated or expired"):
+            accept_recovery_checkpoint(adapter, forged_kit, refused_dir,
+                source_signer=signer, trusted_verifier=verifier, source_repository="local",
+                repository_id=repository_id, snapshot=captured["snapshot_id"], home=home)
+        assert not refused_dir.exists()
+    (accepted_dir / "acceptance.json").write_text("tampered")
+    with pytest.raises(RecoveryError):
+        verify_recovery_acceptance(accepted_dir, trusted_verifier=verifier,
+            repository_id=repository_id, snapshot=captured["snapshot_id"], home=home)

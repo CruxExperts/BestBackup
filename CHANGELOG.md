@@ -10,8 +10,136 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+## [2.0.4] - 2026-10-21
+
+### Added
+
+- Experimental restricted B2 source-key metadata assessment and independently
+  checked, separately signed central recovery acceptance. Live B2 protection
+  and complete-machine recovery remain unqualified.
+- Experimental HTTPS S3 remote-primary capture with a dedicated bounded staging
+  filesystem, disabled cache, shared staging lease, pressure checks and
+  structured resource failures. A small live B2 workstation source trial is
+  recorded below; final remote-server qualification is deferred.
+- Experimental central noncurrent-version retention with signed checkpoint
+  dependencies, explicit catalog and grants, shared repository leases, lock and
+  expiry checks, and journaled exact-version deletion without automatic replay.
+  Schema-2 B2 policies can select a native lock-metadata reader; schema-1
+  generic S3 policies remain unchanged. Current-pack compaction and complete
+  provider protection qualification remain outstanding.
+- Experimental central snapshot maintenance with explicit accepted-record
+  enrollment, policy-selected full snapshot IDs, separate Restic credentials,
+  bounded staging and `prune --max-repack-size 0`. Protected checkpoints and
+  unknown snapshots remain preserved; historical-version deletion stays
+  separate. Repacking and aged live reclamation remain unqualified.
+- Opt-in reviewed Linux file and transactional SQLite coverage with private
+  inventory, exact scope and exclusions, drift checks, reviewed database
+  identity/metadata and reconstruction evidence, and root system unit rendering.
+  SQLite exports carry provenance in the encrypted capture manifest; live
+  database/journal files are omitted from file-tree capture. Complete-machine
+  recovery remains unqualified.
+- Experimental manual PostgreSQL covered capture adds schema-2 private cluster
+  and database decisions, per-database `pg_dump` archives, digest-bound recovery
+  artifacts, and an explicit administrator-coordinated quiet-window assertion.
+  Database-level ownership, ACLs, and connection limits require a verified
+  reconstruction procedure after native restore.
+  A local covered capture and replacement rehearsal passed; stable v2.0.4
+  scope remains the v2.0.3 tested core scope, and ordinary PostgreSQL adapters
+  are unchanged.
+- Refreshed matching 1280×640 GitHub social preview artwork, embedded ownership metadata, checked provenance, and explicit repository-settings upload instructions.
+
+### Qualification evidence
+
+- On 2026-10-21, a local S3 emulator captured a small, compressible
+  2,245,463-byte logical fixture with 1,769,472 bytes of combined writable
+  filesystem capacity. A controlled pressure failure stopped the next capture;
+  a separate read-only check and full restore verified the earlier snapshot.
+  The original harness stopped at a symlink-listing assertion; its failed
+  result is preserved separately from the successful recovery continuation.
+- On 2026-10-21, live B2 central maintenance completed a zero-forget plan and
+  native no-repack prune. Both accepted snapshots restored afterward, all 32
+  previously observed versions survived, and the catalog remained unchanged.
+  A separate changed-plan test rejected stale apply before maintenance-ledger
+  entry, forget, or prune; inspection created and released two temporary locks.
+  This small workstation result leaves aged reclamation, the protection window,
+  and off-host recovery unqualified.
+- A separate live B2 maintenance interruption drill used one zero-forget plan
+  and one small fixture. After confirming the owned native prune process, its
+  durable intent, and a fresh lock witness, one SIGINT reached the owned CLI.
+  The native process stopped and the CLI exited 3. One read-only reconciliation
+  after process quiescence recorded an abandoned plan while prune stayed uncertain; apply was
+  not replayed. A no-lock read and two restores matched the fixture, all 69
+  previously observed versions and markers survived, and the catalog was
+  unchanged. This does not claim prune completion or qualify provider protection.
+- A separate new, empty File Lock-enabled B2 bucket tested overlapping native
+  lifecycle rules at creation. Read-only S3 inspection returned the expected
+  hide, orphan-marker, and noncurrent-delete actions, and central retention
+  refused the enabled expiration rules. No objects were uploaded or deleted;
+  this did not test elapsed expiry or physical reclamation. A read-only first-
+  entry inventory observation found no versions. The v2.0.4 stable scope
+  remains the v2.0.3 tested core scope, and requests #23–#26 remain open.
+- On 2026-10-21, isolated PostgreSQL 17.11 containers passed covered capture
+  and restore into a fresh replacement database. The encrypted snapshot omitted
+  raw PostgreSQL files; recovered materials and their tested procedure rebuilt
+  database ownership, ACLs, connection limits, and three UTF-8 rows. The fixture
+  contained 10,006 logical bytes. This is local manual-path evidence, with no
+  off-host, unattended, or whole-machine qualification.
+- On 2026-10-21, a root-covered files/SQLite rehearsal passed in two fresh
+  Ubuntu 24.04 AMD64 guests. The replacement restored encrypted data, rebuilt
+  fixture accounts and metadata, and verified application startup. The logical
+  fixture was 56,293 bytes; the two-guest run took 90.1 seconds. This is local
+  emulation, with no off-host custody or complete-machine qualification.
+- On 2026-10-20, a small live B2 S3 remote-primary source trial passed two
+  captures, a repository check, restores of both snapshots, and seven denied
+  forbidden-operation checks using a bucket- and machine-prefix-restricted
+  source key. A separate verifier also reconstructed and checked historical
+  versions after simulated source compromise and restored the older snapshot.
+  The fixture, limits, and open qualification gaps are
+  documented in
+  [version 2 development](docs/development/version-2.md#live-backblaze-b2-source-trial).
+  This workstation result does not qualify B2 protection or production recovery;
+  AWS has no live result and the v2.0.4 stable support scope remains the
+  v2.0.3 tested core scope.
+- A live central-retention rehearsal planned with a fresh thirty-day grace
+  period, ran a guarded zero-apply, and reconciled an empty plan. It identified
+  10 protected versions in a 31-version inventory, which remained unchanged;
+  no S3 delete was sent. Empty reconciliation made no provider reads. The
+  native B2 metadata reader separately verified exact historical versions and
+  fresh governance-locked and legally held canaries. The routine retention key
+  was refused permanent deletion of both protected canaries, with survival
+  confirmed independently; both canaries were subsequently cleaned up. The
+  production CLI also passed schema-3 enrollment and schema-2 plan, zero-apply
+  and empty reconciliation against the existing catalog with its first-seen
+  times preserved. Aged deletion and uncertain live mutations remain unqualified.
+- A fresh tiny B2 fixture measured initial/incremental capture interface TX of
+  221,039/22,065 bytes and stored-version growth of 199,080/2,457 bytes. Both
+  captures, the full check and both restores passed within 1 MiB staging and
+  zero cache. These measurements include protocol/version overhead and do not
+  establish provider billing, large-scale performance or production savings.
+
 ### Fixed
 
+- Updated the pinned CI and release-build `uv` tool to 0.13.4 for
+  [GHSA-hq85-5cpj-mr62](https://github.com/advisories/GHSA-hq85-5cpj-mr62);
+  the amd64 and arm64 wheel digests are recorded in release dependency evidence.
+- Updated `certifi` to 2026.10.19 to address
+  [GHSA-6q48-6c7w-9gw2](https://github.com/advisories/GHSA-6q48-6c7w-9gw2).
+- Service operations disable Restic's cache when the child environment has no
+  cache location, so verified restore also works from minimal system services.
+- Remote capture reconciliation uses Restic reads without cloud lock writes,
+  requires an acknowledged quiet window and refuses observed repository locks
+  before and after inspection. It never retries an uncertain upload.
+- Remote database captures retain completed exports after failed or uncertain
+  uploads and receipt failures. Read-only reconciliation verifies the matching
+  snapshot before cleanup; bounded discovery and digest-bound explicit disposal
+  replace manual edits to retained staging. Reboot survival requires persistent
+  staging rather than `tmpfs`.
+- Checkpoint receipts accept an absent expiry date instead of failing after the
+  encrypted kit is written. Known legacy receipt schemas migrate with a private
+  backup and preserved rows; additional schema constraints fail closed.
+- Covered user/root timers preserve the reviewed temporary-directory source
+  view instead of substituting systemd private mounts; ordinary jobs retain
+  their private temporary directories.
 - Release publication locates the exact draft by release ID and refuses an existing draft or published tag before creation, including drafts hidden from lookup by tag.
 
 ---
@@ -525,7 +653,8 @@ are still under development. See [implementation status](docs/development/versio
 
 The `Unreleased` comparison is a live `HEAD` link for navigation, not an immutable historical citation.
 
-[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.3...HEAD
+[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.4...HEAD
+[2.0.4]: https://github.com/CruxExperts/BestBackup/compare/v2.0.3...v2.0.4
 [2.0.3]: https://github.com/CruxExperts/BestBackup/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/CruxExperts/BestBackup/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/CruxExperts/BestBackup/compare/v2.0.0...v2.0.1

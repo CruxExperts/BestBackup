@@ -1,6 +1,6 @@
 # Agent integration
 
-The version 2 command line is designed for agents and other noninteractive clients. It accepts strict JSON input, publishes a schema for each operation, and emits sanitized versioned results. Stable v2.0.2 qualification is limited to the tested local/file, selected live database, headless dashboard, and AMD64 Ubuntu paths listed below. B2/AWS and native Docker are not production-qualified; follow the same read-before-write and no-replay rules you would use for an operator.
+The version 2 command line is designed for agents and other noninteractive clients. It accepts strict JSON input, publishes a schema for each operation, and emits sanitized versioned results. Stable v2.0.4 qualification retains the tested local/file, selected live database, headless dashboard, and AMD64 Ubuntu scope listed below. New cloud and Linux workflows ship as experimental and remain unqualified; B2/AWS and native Docker are not production-qualified. Follow the same read-before-write and no-replay rules you would use for an operator.
 
 ## Discover commands and schemas
 
@@ -48,6 +48,18 @@ bbackup production \
 
 Restore requires a new target directory and verifies file data. It does not validate application startup or database behavior. Database restores accept trusted PostgreSQL, MySQL, and MariaDB archives with database-specific destination safeguards: PostgreSQL creates a new database using snapshot-time locale metadata; MySQL/MariaDB require the original database name on a separate empty recovery server with only built-in schemas. Set the explicit `trusted_archive` acknowledgement. Never restore untrusted archives: database restores execute archived SQL. See [the v2 database restore limits](development/version-2.md#native-database-capture-and-restore).
 
+Reviewed Linux coverage also has an experimental manual PostgreSQL path in
+v2.0.4; it does not change ordinary PostgreSQL adapters or stable
+qualification. `jobs run`, `coverage discover`, `coverage review`,
+`coverage check`, and `coverage recovery-evidence` accept the boolean
+`--quiet-administrative-window-confirmed`, which defaults to false. Set it only
+while an externally coordinated window prevents administrator, schema, role,
+database, and configuration changes; it does not stop those changes itself.
+Ordinary row writes may continue. Scheduled covered PostgreSQL jobs remain
+blocked because timer dispatch cannot confirm the window. See the [manual
+coverage procedure](development/version-2.md#experimental-postgresql-covered-capture)
+for declaration, capture, and restore limits.
+
 ## Read bounded operation records
 
 Use pagination for operation events and snapshot receipts:
@@ -66,7 +78,21 @@ bbackup production --config "$HOME/.config/bbackup/config.json" \
 
 ## Reconcile uncertain mutations
 
-If a mutating command returns `requires_reconciliation` or the connection is lost after dispatch, do not repeat the command. Read the repository or destination state, inspect the operation ID, and decide what actually completed. Reconciliation records an administrator-reviewed outcome; it does not rerun the command or repair missing receipts.
+If a mutating command returns `requires_reconciliation` or the connection is lost after dispatch, do not repeat the command. Read the repository or destination state, inspect the operation ID, and decide what actually completed. Reconciliation records an administrator-reviewed outcome without rerunning the command.
+
+For retained remote database exports, successful reconciliation verifies the
+snapshot and each export's actual bytes before repairing the capture receipt
+and releasing its owned staging files. A failed outcome retains the exports.
+Remote capture reconciliation also requires `quiescent_window_confirmed: true`
+after stopping repository writers for the entire inspection. It uses Restic's
+`--no-lock` for reads and refuses observed repository locks; those observations
+cannot prevent a new writer from starting elsewhere.
+`runs retained-exports` discovers bounded capture IDs, declared counts and record
+digests, including captures stopped before dispatch with no ledger row.
+`runs discard-exports` explicitly discards reviewed failed exports using the exact
+current record digest. See the [remote-primary recovery workflow](cloud-storage.md#remote-primary-with-bounded-staging-experimental)
+for persistent-staging requirements and disposal steps. `runs list` remains a
+ledger event stream.
 
 ```bash
 bbackup production \

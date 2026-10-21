@@ -1,2 +1,2 @@
 # Verified bootstrap wheel used consistently by CI.
-uv==0.11.21 --hash=sha256:b9ecdefa81db7e966d1655988cad6f840316228381dd69131ebc4ae9362bbccd --hash=sha256:00193e4e077c27ee3d66da356744dbf0b3aa59356dfbd9a9efb1dc8469af8ad7
+uv==0.13.4 --hash=sha256:05e4332791b4d55b6dde8695b7fa6079b26991519f44760887c5dfbd5ca4fe53 --hash=sha256:7b3cdf868e5415631fe797b648c0d6945d38d388f23367bdd0b6332e80a1fcb0

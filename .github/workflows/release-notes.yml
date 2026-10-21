@@ -44,8 +44,8 @@ jobs:
       - name: Install pinned uv
         run: |
           set -euo pipefail
-          printf 'uv==0.11.21 --hash=sha256:%s\n' \
-            'b9ecdefa81db7e966d1655988cad6f840316228381dd69131ebc4ae9362bbccd' \
+          printf 'uv==0.13.4 --hash=sha256:%s\n' \
+            '05e4332791b4d55b6dde8695b7fa6079b26991519f44760887c5dfbd5ca4fe53' \
             > "$RUNNER_TEMP/uv-requirements.txt"
           python -m pip install --disable-pip-version-check --require-hashes \
             --requirement "$RUNNER_TEMP/uv-requirements.txt"
@@ -129,25 +129,25 @@ jobs:
             runner: ubuntu-24.04
             container: ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
             restic_archive_sha256: f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
-            uv_sha256: b9ecdefa81db7e966d1655988cad6f840316228381dd69131ebc4ae9362bbccd
+            uv_sha256: 05e4332791b4d55b6dde8695b7fa6079b26991519f44760887c5dfbd5ca4fe53
           - release: "24.04"
             architecture: arm64
             runner: ubuntu-24.04-arm
             container: ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
             restic_archive_sha256: a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465
-            uv_sha256: 00193e4e077c27ee3d66da356744dbf0b3aa59356dfbd9a9efb1dc8469af8ad7
+            uv_sha256: 7b3cdf868e5415631fe797b648c0d6945d38d388f23367bdd0b6332e80a1fcb0
           - release: "26.04"
             architecture: amd64
             runner: ubuntu-24.04
             container: ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
             restic_archive_sha256: f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
-            uv_sha256: b9ecdefa81db7e966d1655988cad6f840316228381dd69131ebc4ae9362bbccd
+            uv_sha256: 05e4332791b4d55b6dde8695b7fa6079b26991519f44760887c5dfbd5ca4fe53
           - release: "26.04"
             architecture: arm64
             runner: ubuntu-24.04-arm
             container: ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
             restic_archive_sha256: a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465
-            uv_sha256: 00193e4e077c27ee3d66da356744dbf0b3aa59356dfbd9a9efb1dc8469af8ad7
+            uv_sha256: 7b3cdf868e5415631fe797b648c0d6945d38d388f23367bdd0b6332e80a1fcb0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -175,7 +175,7 @@ jobs:
           esac
           mkdir -p /opt/bbackup-build-tools
           /usr/bin/python3 -m venv /opt/bbackup-build-tools/uv
-          printf 'uv==0.11.21 --hash=sha256:%s\n' '${{ matrix.uv_sha256 }}' \
+          printf 'uv==0.13.4 --hash=sha256:%s\n' '${{ matrix.uv_sha256 }}' \
             > "$RUNNER_TEMP/uv-requirements.txt"
           /opt/bbackup-build-tools/uv/bin/python -m pip install \
             --disable-pip-version-check --require-hashes \

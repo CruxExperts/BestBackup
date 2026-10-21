@@ -1,20 +1,31 @@
 import json
 import gzip
+import hashlib
+import os
 import shutil
 import sqlite3
+import subprocess
+import sys
 from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from bbackup.models import Configuration, HostBindings, RepositoryBinding
+from bbackup.models import Configuration, HostBindings, RepositoryBinding, Source, SourceBinding
+from bbackup.enrollment import policy_lease, write_bytes
+from bbackup.linux_coverage import (CoverageCheck, InventoryPaths, check_coverage,
+                                    discover_coverage, review_coverage,
+                                    sqlite_file_identity)
 from bbackup.operations import (
     OperationPlan,
     OperationRun,
     OperationStatus,
+    ReconciliationOutcome,
     RepositoryConflictError,
     repository_key,
 )
-from bbackup.service import BackupService, ReplicaJobError, ServiceError
+from bbackup.service import BackupService, ReplicaJobError, ResourceBudgetExceeded, ServiceError
 
 
 @pytest.fixture
@@ -51,6 +62,985 @@ def _run(plan, *, status=OperationStatus.SUCCEEDED, exit_code=0, stdout=b""):
         stdout_bytes=len(stdout),
         stderr_bytes=0,
     )
+
+
+def test_covered_capture_requires_enrollment_and_exact_root_mapping(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    data.mkdir()
+    password = data / ".credential"
+    password.write_text("private fixture credential")
+    password.chmod(0o600)
+    scope = {"schema_version": 1, "approved_roots": ["data"],
+             "require_privileged": False, "filesystem_boundaries": "explicit",
+             "metadata_expectations": {name: True for name in
+                                       ("numeric_owner", "mode", "acl", "xattr", "links")}}
+    config = Configuration.parse({"schema_version": 3,
+        "repositories": [{"name": "primary"}],
+        "sources": [{"name": "files", "kind": "files"}],
+        "jobs": [{"name": "daily", "repository": "primary", "sources": ["files"],
+                  "coverage_policy": scope}]})
+    bindings = HostBindings(tmp_path / "state", {
+        "primary": RepositoryBinding(str(tmp_path / "repository"), password),
+    }, source_bindings={"files": SourceBinding(paths=(str(data),))}, schema_version=3,
+        coverage_declarations={"daily": tmp_path / "declaration.json"})
+    service = BackupService(config, bindings)
+    with pytest.raises(ServiceError, match="exact enrolled"):
+        service.capture("daily")
+    service = BackupService(config, bindings, policy_bytes=b'{"policy":1}',
+                            binding_bytes=b'{"binding":1}')
+    calls = []
+    def check(_path, _policy, **kwargs):
+        calls.append(kwargs)
+        return CoverageCheck("complete", (), "a" * 64, "b" * 64, {},
+                             (("data", data, "files", "files"),))
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage", check)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, stdout=(json.dumps({"message_type": "summary", "snapshot_id": "a" * 64}) + "\n").encode()))
+    assert service.capture("daily")["snapshot_id"] == "a" * 64
+    assert calls[0]["policy_bytes"] == b'{"policy":1}'
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage", lambda *_args, **_kwargs:
+        CoverageCheck("complete", (), "a" * 64, "b" * 64, {},
+                      (("data", tmp_path / "other", "files", "files"),)))
+    with pytest.raises(ServiceError, match="root mappings"):
+        service.capture("daily")
+
+
+def test_covered_postgresql_requires_manual_quiet_window_and_exact_sources(tmp_path, monkeypatch):
+    from bbackup.models import DatabaseBinding
+
+    recovery = tmp_path / "recovery"
+    recovery.mkdir()
+    material = recovery / "roles.sql"
+    material.write_text("reviewed roles")
+    material.chmod(0o600)
+    password = tmp_path / "restic-password"
+    password.write_text("fixture-password")
+    password.chmod(0o600)
+    service_file = tmp_path / "pg_service.conf"
+    service_file.write_text("[local]\nhost=/var/run/postgresql\nuser=postgres\n")
+    service_file.chmod(0o600)
+    scope = {"schema_version": 1, "approved_roots": ["recovery_root", "app_root"],
+        "require_privileged": False, "filesystem_boundaries": "explicit",
+        "metadata_expectations": {name: True for name in
+            ("numeric_owner", "mode", "acl", "xattr", "links")}}
+    config = Configuration.parse({"schema_version": 3,
+        "repositories": [{"name": "primary"}],
+        "sources": [{"name": "files", "kind": "files"},
+                    {"name": "database", "kind": "postgresql"}],
+        "jobs": [{"name": "daily", "repository": "primary",
+                  "sources": ["files", "database"], "coverage_policy": scope}]})
+    bindings = HostBindings(tmp_path / "state", {
+        "primary": RepositoryBinding(str(tmp_path / "repository"), password)},
+        database_bindings={"pg_local": DatabaseBinding(
+            "postgresql", service_file=service_file, service_name="local")},
+        source_bindings={"files": SourceBinding(paths=(str(recovery),)),
+                         "database": SourceBinding(database="app", connection="pg_local")},
+        schema_version=3, coverage_declarations={"daily": tmp_path / "declaration.json"})
+    captured = BackupService(config, bindings, policy_bytes=b"policy", binding_bytes=b"binding")
+    reviewed = {"source_id": "database", "connection": "pg_local", "database": "app",
+        "root_id": "app_root", "cluster_id": "primary", "baseline_digest": "a" * 64,
+        "data_directory_identity": {"device": 1},
+        "recovery_artifacts": [{"path": str(material), "root_id": "recovery_root",
+                                "sha256": hashlib.sha256(material.read_bytes()).hexdigest()}]}
+    observed = []
+
+    def check(_declaration, _policy, **kwargs):
+        context = kwargs["postgresql_context"]
+        observed.append(context.quiet_administrative_window)
+        if not context.quiet_administrative_window:
+            return CoverageCheck("incomplete", ("postgresql_quiet_administrative_window_required",),
+                                 None, None, {})
+        return CoverageCheck("complete", (), "a" * 64, "b" * 64, {},
+                             (("recovery_root", recovery, "files", "files"),),
+                             approved_postgresql=(reviewed,))
+
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage", check)
+    with pytest.raises(ServiceError, match="not ready"):
+        captured.capture("daily")
+
+    def stop_before_export(*_args, **kwargs):
+        assert kwargs["coverage_postgresql"]["database"]["database"] == "app"
+        assert callable(kwargs["validate_coverage"])
+        raise RuntimeError("manual PostgreSQL capture reached export")
+
+    monkeypatch.setattr("bbackup.service.capture_sources", stop_before_export)
+    with pytest.raises(RuntimeError, match="reached export"):
+        captured.capture("daily", quiet_administrative_window_confirmed=True)
+    assert observed == [False, True]
+
+    checks = 0
+
+    def drifts_after_export(*args, **kwargs):
+        nonlocal checks
+        checks += 1
+        if checks == 1:
+            return check(*args, **kwargs)
+        return CoverageCheck("drift", ("postgresql_reconstruction_evidence_stale",),
+                             "a" * 64, "changed", {})
+
+    def stage_then_recheck(*_args, **kwargs):
+        kwargs["validate_coverage"]()
+        pytest.fail("drift reached Restic dispatch")
+
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage", drifts_after_export)
+    monkeypatch.setattr("bbackup.service.capture_sources", stage_then_recheck)
+    with pytest.raises(ServiceError, match="changed during capture"):
+        captured.capture("daily", quiet_administrative_window_confirmed=True)
+    assert checks == 2
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("restic") is None, reason="requires restic")
+def test_covered_exact_exclusion_is_absent_from_real_restored_snapshot(tmp_path, monkeypatch):
+    data = tmp_path / "data[fixture]"
+    data.mkdir()
+    (data / "keep.txt").write_text("keep")
+    excluded = data / "omit*.txt"
+    excluded.write_text("excluded secret")
+    password = tmp_path / "password"
+    password.write_text("fixture-password")
+    password.chmod(0o600)
+    scope = {"schema_version": 1, "approved_roots": ["data"],
+             "require_privileged": False, "filesystem_boundaries": "explicit",
+             "metadata_expectations": {name: True for name in
+                                       ("numeric_owner", "mode", "acl", "xattr", "links")}}
+    config = Configuration.parse({"schema_version": 3,
+        "repositories": [{"name": "primary"}],
+        "sources": [{"name": "files", "kind": "files"}],
+        "jobs": [{"name": "daily", "repository": "primary", "sources": ["files"],
+                  "coverage_policy": scope}]})
+    bindings = HostBindings(tmp_path / "state", {
+        "primary": RepositoryBinding(str(tmp_path / "repository"), password),
+    }, source_bindings={"files": SourceBinding(paths=(str(data),))}, schema_version=3,
+        coverage_declarations={"daily": tmp_path / "declaration.json"})
+    service = BackupService(config, bindings, policy_bytes=b'{"policy":1}',
+                            binding_bytes=b'{"binding":1}')
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage", lambda *_args, **_kwargs:
+        CoverageCheck("complete", (), "a" * 64, "b" * 64, {},
+                      (("data", data, "files", "files"),), (excluded,)))
+    service.initialize("primary")
+    snapshot = service.capture("daily")["snapshot_id"]
+    restored = tmp_path / "restored"
+    service.restore("primary", snapshot, restored)
+    tree = restored / str(data).lstrip("/")
+    assert (tree / "keep.txt").read_text() == "keep"
+    assert not (tree / "omit*.txt").exists()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("restic") is None, reason="requires restic")
+def test_covered_sqlite_export_restores_with_reviewed_metadata_recipe(tmp_path, monkeypatch):
+    data = tmp_path / "data[fixture]"
+    data.mkdir()
+    (data / "keep.txt").write_text("sibling survives\n")
+    database_path = data / "database [review]*?.sqlite"
+    writer = sqlite3.connect(database_path)
+    writer.execute("PRAGMA journal_mode=WAL")
+    writer.execute("CREATE TABLE committed (value TEXT)")
+    writer.execute("INSERT INTO committed VALUES ('committed row')")
+    writer.commit()
+    writer.execute("INSERT INTO committed VALUES ('uncommitted row')")
+    wal_path = Path(str(database_path) + "-wal")
+    assert wal_path.is_file()
+    try:
+        os.setxattr(database_path, "user.coverage", b"restore-me")
+    except (AttributeError, OSError):
+        writer.close()
+        pytest.skip("Fixture filesystem cannot store SQLite xattrs")
+    source_identity = sqlite_file_identity(database_path)
+    source_metadata_json = json.dumps(source_identity, sort_keys=True)
+
+    def write_private(path, value):
+        path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+        path.chmod(0o600)
+        return path
+
+    def recipe(name, procedure_text):
+        procedure = tmp_path / f"{name}.py"
+        procedure.write_text(procedure_text, encoding="utf-8")
+        procedure.chmod(0o600)
+        digest = hashlib.sha256(procedure.read_bytes()).hexdigest()
+        evidence = write_private(tmp_path / f"{name}.evidence.json", {
+            "schema_version": 1, "recipe_id": name, "recipe_sha256": digest,
+            "environment": "isolated-local-fixture",
+            "checks": {"procedure_executed": True, "result_verified": True},
+        })
+        return ({"reason": "rebuild covered state", "consequence": "run on recovery",
+                 "recipe_id": name, "recipe_sha256": digest},
+                {"recipe_id": name, "recipe_sha256": digest,
+                 "procedure_path": str(procedure), "evidence_path": str(evidence),
+                 "evidence_sha256": hashlib.sha256(evidence.read_bytes()).hexdigest()},
+                procedure)
+
+    metadata_recipe_body = (
+        "import base64, json, os, sys\n"
+        f"metadata = json.loads({source_metadata_json!r})\n"
+        "path = sys.argv[1]\n"
+        "os.chown(path, metadata['uid'], metadata['gid'])\n"
+        "os.chmod(path, metadata['mode'])\n"
+        "for item in metadata['xattrs']:\n"
+        "    os.setxattr(path, item['name'], base64.b64decode(item['value_base64']))\n"
+    )
+    app_recipe, app_evidence, recipe_path = recipe("sqlite_rebuild", metadata_recipe_body)
+    package_recipe, package_evidence, _ = recipe(
+        "package_rebuild", "from pathlib import Path\nPath(__file__).read_text()\n")
+    inventory_root = tmp_path / "inventory"
+    inventory_root.mkdir()
+    passwd = inventory_root / "passwd"
+    passwd.write_text(f"fixture:x:1000:1000::{data}:/bin/sh\n")
+    group = inventory_root / "group"
+    group.write_text("fixture:x:1000:\n")
+    mountinfo = inventory_root / "mountinfo"
+    mountinfo.write_text("1 1 0:1 / / rw - ext4 /dev/fixture rw\n")
+    packages = inventory_root / "packages"
+    packages.write_text("Package: fixture\n")
+    units = inventory_root / "units"
+    units.mkdir()
+    (units / "fixture.service").write_text("[Service]\n")
+    inventory = InventoryPaths(passwd, group, mountinfo, packages, units)
+    scope = {"schema_version": 1, "approved_roots": ["data", "database"],
+             "require_privileged": False, "filesystem_boundaries": "explicit",
+             "metadata_expectations": {name: True for name in
+                                       ("numeric_owner", "mode", "acl", "xattr", "links")}}
+    declaration = write_private(tmp_path / "declaration.json", {
+        "schema_version": 1,
+        "roots": [{"id": "data", "path": str(data), "source_id": "files", "adapter": "files"},
+                  {"id": "database", "path": str(database_path), "source_id": "db", "adapter": "sqlite"}],
+        "exclusions": [], "mount_decisions": [], "identity_decisions": [],
+        "applications": [{"id": "fixture", "unit": "fixture", "source_id": "db",
+                           "state_roots": [str(database_path)], "startup_recipe": app_recipe}],
+        "package_reconstruction": package_recipe,
+        "reconstruction_evidence": [app_evidence, package_evidence],
+    })
+    policy_bytes, binding_bytes = b'{"policy":1}', b'{"binding":1}'
+    state = tmp_path / "state"
+    write_bytes(state, policy_bytes, binding_bytes)
+    with policy_lease(state, create=True):
+        pass
+    discovered = discover_coverage(declaration, scope, state=state,
+        policy_bytes=policy_bytes, binding_bytes=binding_bytes, inventory=inventory)
+    assert discovered["coverage_status"] == "complete"
+    reviewed = review_coverage(declaration, scope, discovered["candidate_digest"],
+        state=state, policy_bytes=policy_bytes, binding_bytes=binding_bytes, inventory=inventory)
+    assert reviewed["coverage_status"] == "complete"
+
+    password = tmp_path / "password"
+    password.write_text("fixture-password")
+    password.chmod(0o600)
+    config = Configuration.parse({"schema_version": 3,
+        "repositories": [{"name": "primary"}],
+        "sources": [{"name": "files", "kind": "files"}, {"name": "db", "kind": "sqlite"}],
+        "jobs": [{"name": "daily", "repository": "primary", "sources": ["files", "db"],
+                  "coverage_policy": scope}]})
+    bindings = HostBindings(state, {
+        "primary": RepositoryBinding(str(tmp_path / "repository"), password),
+    }, source_bindings={"files": SourceBinding(paths=(str(data),)),
+                        "db": SourceBinding(paths=(str(database_path),))},
+        schema_version=3, coverage_declarations={"daily": declaration})
+    service = BackupService(config, bindings, policy_bytes=policy_bytes,
+                            binding_bytes=binding_bytes)
+    real_check = check_coverage
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage",
+        lambda declaration_path, policy, **kwargs: real_check(
+            declaration_path, policy, inventory=inventory, **kwargs))
+    service.initialize("primary")
+    snapshot = service.capture("daily")["snapshot_id"]
+    writer.rollback()
+    writer.close()
+
+    restored = tmp_path / "restored"
+    service.restore("primary", snapshot, restored)
+    restored_manifest, = restored.rglob("bbackup-capture.json")
+    manifest = json.loads(restored_manifest.read_text())
+    assert manifest["schema_version"] == 2
+    entries = [item for item in manifest["exports"] if item["source"] == "db"]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["coverage_root_id"] == "database"
+    assert entry["original_path"] == str(database_path)
+    assert entry["baseline_digest"] == reviewed["baseline_digest"]
+    assert entry["recipe_digest"] == app_recipe["recipe_sha256"]
+    assert entry["reviewed_identity"] == source_identity
+    export = restored / entry["path"].lstrip("/")
+    assert hashlib.sha256(export.read_bytes()).hexdigest() == entry["export_sha256"]
+    with sqlite3.connect(export) as database:
+        assert database.execute("PRAGMA quick_check").fetchone() == ("ok",)
+        assert database.execute("SELECT value FROM committed").fetchall() == [
+            ("committed row",)]
+    restored_data = restored / str(data).lstrip("/")
+    assert (restored_data / "keep.txt").read_text() == "sibling survives\n"
+    restored_raw = restored_data / database_path.name
+    assert not restored_raw.exists()
+    for suffix in ("-wal", "-shm", "-journal"):
+        assert not Path(str(restored_raw) + suffix).exists()
+    assert not (restored / str(wal_path).lstrip("/")).exists()
+
+    fresh = tmp_path / "fresh-database.sqlite"
+    shutil.copyfile(export, fresh)
+    subprocess.run([sys.executable, str(recipe_path), str(fresh)], check=True)
+    with sqlite3.connect(fresh) as database:
+        assert database.execute("PRAGMA quick_check").fetchone() == ("ok",)
+        assert database.execute("SELECT value FROM committed").fetchall() == [
+            ("committed row",)]
+    reconstructed = sqlite_file_identity(fresh)
+    for key in ("uid", "gid", "mode", "links", "xattrs"):
+        assert reconstructed[key] == source_identity[key]
+
+    direct_scope = {**scope, "approved_roots": ["data", "wal", "database"]}
+    direct_declaration_raw = json.loads(declaration.read_text())
+    direct_declaration_raw["roots"].insert(1, {"id": "wal", "path": str(wal_path),
+        "source_id": "files", "adapter": "files"})
+    direct_declaration = write_private(tmp_path / "direct-wal-declaration.json",
+                                       direct_declaration_raw)
+    direct_candidate = discover_coverage(direct_declaration, direct_scope, state=state,
+        policy_bytes=policy_bytes, binding_bytes=binding_bytes, inventory=inventory)
+    assert direct_candidate["coverage_status"] == "incomplete"
+    assert "sqlite_artifact_explicitly_mapped" in direct_candidate["reasons"]
+    direct_config = Configuration.parse({"schema_version": 3,
+        "repositories": [{"name": "primary"}],
+        "sources": [{"name": "files", "kind": "files"}, {"name": "db", "kind": "sqlite"}],
+        "jobs": [{"name": "daily", "repository": "primary", "sources": ["files", "db"],
+                  "coverage_policy": direct_scope}]})
+    direct_bindings = HostBindings(state, {
+        "primary": RepositoryBinding(str(tmp_path / "repository"), password),
+    }, source_bindings={"files": SourceBinding(paths=(str(data), str(wal_path))),
+                        "db": SourceBinding(paths=(str(database_path),))},
+        schema_version=3, coverage_declarations={"daily": direct_declaration})
+    direct_service = BackupService(direct_config, direct_bindings,
+                                   policy_bytes=policy_bytes, binding_bytes=binding_bytes)
+    monkeypatch.setattr(direct_service.runner, "run",
+                        lambda *_args, **_kwargs: pytest.fail("unsafe WAL source reached Restic"))
+    with pytest.raises(ServiceError, match="Covered capture is not ready"):
+        direct_service.capture("daily")
+
+    def mismatched_review(*args, **kwargs):
+        accepted = real_check(*args, inventory=inventory, **kwargs)
+        return replace(accepted, approved_sqlite=())
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage", mismatched_review)
+    with pytest.raises(ServiceError, match="SQLite sources differ"):
+        service.capture("daily")
+
+
+def _remote_service(tmp_path, *, with_replica=False):
+    data = tmp_path / "large-source"
+    with data.open("wb") as stream:
+        stream.truncate(2 * 1024**2)
+    password = tmp_path / "password"
+    password.write_text("fixture-secret")
+    password.chmod(0o600)
+    staging = tmp_path / "staging"
+    staging.mkdir(mode=0o700)
+    config = Configuration.parse({
+        "schema_version": 2,
+        "repositories": [{"name": "primary", "role": "remote-primary"},
+                         *([{"name": "copy", "role": "replica"}] if with_replica else [])],
+        "sources": [{"name": "files", "kind": "files", "paths": [str(data)]}],
+        "jobs": [{"name": "daily", "repository": "primary", "sources": ["files"],
+                  "resource_budget": {"schema_version": 1, "staging_max_bytes": 1024**3,
+                                      "minimum_free_bytes": 64 * 1024**2,
+                                      "cache_max_bytes": 0}}],
+    })
+    bindings = HostBindings(tmp_path / "state", {
+        "primary": RepositoryBinding("s3:https://s3.example.test/bucket/repo", password),
+        **({"copy": RepositoryBinding(str(tmp_path / "copy"), password)} if with_replica else {}),
+    }, staging_dir=staging)
+    return BackupService(config, bindings), data, staging
+
+
+def _remote_sqlite_service(tmp_path, monkeypatch):
+    database_path = tmp_path / "live.sqlite"
+    with sqlite3.connect(database_path) as database:
+        database.execute("CREATE TABLE data(value TEXT)")
+        database.execute("INSERT INTO data VALUES ('captured')")
+    password = tmp_path / "password"
+    password.write_text("fixture-secret")
+    password.chmod(0o600)
+    staging = tmp_path / "staging"
+    staging.mkdir(mode=0o700)
+    config = Configuration.parse({
+        "schema_version": 2,
+        "repositories": [{"name": "primary", "role": "remote-primary"}],
+        "sources": [{"name": "db", "kind": "sqlite", "paths": [str(database_path)]}],
+        "jobs": [{"name": "daily", "repository": "primary", "sources": ["db"],
+                  "resource_budget": {"schema_version": 1, "staging_max_bytes": 1024**3,
+                                      "minimum_free_bytes": 1, "cache_max_bytes": 0}}],
+    })
+    bindings = HostBindings(tmp_path / "state", {
+        "primary": RepositoryBinding("s3:https://s3.example.test/bucket/repo", password),
+    }, staging_dir=staging)
+    monkeypatch.setattr("bbackup.resource_limits.os.path.ismount", lambda path: path == staging)
+    monkeypatch.setattr("bbackup.resource_limits._volume", lambda _path: (1024**3, 1024**3 - 10000))
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fixture-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fixture-secret")
+    return BackupService(config, bindings), database_path, staging
+
+
+def _retained_capture(service, staging):
+    stages = [path for path in staging.iterdir() if path.name.startswith("capture-")]
+    assert len(stages) == 1
+    token = stages[0].name.removeprefix("capture-")
+    record = json.loads((service.state / "capture-artifacts" / f"{token}.json").read_text())
+    return token, stages[0], record
+
+
+def test_remote_failed_upload_keeps_exact_export_after_database_changes(tmp_path, monkeypatch):
+    service, database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError, match="retained capture token"):
+        service.capture("daily")
+    token, stage, record = _retained_capture(service, staging)
+    exported = stage / "db.sqlite"
+    digest = hashlib.sha256(exported.read_bytes()).hexdigest()
+    assert record["exports"][0]["sha256"] == digest
+    assert record["exports"][0]["size"] == exported.stat().st_size
+    with sqlite3.connect(database_path) as database:
+        database.execute("UPDATE data SET value='changed after failure'")
+    assert hashlib.sha256(exported.read_bytes()).hexdigest() == digest
+    with sqlite3.connect(exported) as database:
+        assert database.execute("SELECT value FROM data").fetchone() == ("captured",)
+    inspected = []
+
+    def inspect(plan, **_kwargs):
+        inspected.append(plan.argv)
+        assert "--no-lock" in plan.argv
+        if "locks" in plan.argv:
+            return _run(plan)
+        assert "snapshots" in plan.argv
+        return _run(plan, stdout=b"[]")
+
+    monkeypatch.setattr(service.runner, "run", inspect)
+    result = service.reconcile_run("primary", token, ReconciliationOutcome.FAILED, quiescent_window_confirmed=True)
+    assert result["retained_exports"] is True
+    assert exported.exists() and inspected
+    monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "retained stage triggered another upload"))
+    with pytest.raises(ResourceBudgetExceeded):
+        service.capture("daily")
+
+
+def test_remote_pre_dispatch_failure_retains_completed_export_without_ledger_row(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    service.sources = (*service.sources, Source("missing", "sqlite", (str(tmp_path / "missing"),)))
+    original_job = service._job("daily")
+    monkeypatch.setattr(service, "_job", lambda _name: replace(original_job, sources=("db", "missing")))
+    monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "pre-dispatch failure reached upload"))
+    with pytest.raises(ServiceError, match="retained capture token"):
+        service.capture("daily")
+    token, stage, record = _retained_capture(service, staging)
+    assert service.ledger.inspect(repository_key(service._identity("primary")), token) is None
+    assert record["exports"][0]["name"] == "db.sqlite"
+    assert (stage / "db.sqlite").exists()
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, stdout=b"" if "locks" in plan.argv else b"[]"))
+    result = service.reconcile_run("primary", token, ReconciliationOutcome.ABANDONED, quiescent_window_confirmed=True)
+    assert result["retained_exports"] is True and (stage / "db.sqlite").exists()
+    listing = service.retained_exports("primary")
+    assert listing == [{"repository": "primary", "operation_id": token,
+                        "phase": "prepared", "reviewed_outcome": "abandoned",
+                        "completed_export_count": 1,
+                        "completed_export_bytes": (stage / "db.sqlite").stat().st_size,
+                        "artifact_record_sha256": result["artifact_record_sha256"],
+                        "file_hashes_verified": False}]
+    assert str(stage) not in str(listing)
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID")
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY")
+    disposed = service.discard_exports("primary", token, listing[0]["artifact_record_sha256"])
+    assert disposed["discarded_export_count"] == 1
+    assert not stage.exists() and service.retained_exports("primary") == []
+    assert {path.name for path in staging.iterdir()} == {".bbackup-staging.lock"}
+
+
+def test_remote_discard_refuses_unknown_outcome_stale_digest_and_foreign_file(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, _record = _retained_capture(service, staging)
+    before = service.retained_exports("primary")[0]["artifact_record_sha256"]
+    with pytest.raises(ServiceError, match="reconciled"):
+        service.discard_exports("primary", token, before)
+    assert (stage / "db.sqlite").exists()
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, stdout=b"" if "locks" in plan.argv else b"[]"))
+    service.reconcile_run("primary", token, ReconciliationOutcome.FAILED, quiescent_window_confirmed=True)
+    current = service.retained_exports("primary")[0]["artifact_record_sha256"]
+    assert current != before
+    with pytest.raises(ServiceError, match="refused"):
+        service.discard_exports("primary", token, before)
+    foreign = stage / "foreign"
+    foreign.write_text("keep")
+    with pytest.raises(ServiceError, match="refused"):
+        service.discard_exports("primary", token, current)
+    assert foreign.read_text() == "keep" and (stage / "db.sqlite").exists()
+    foreign.unlink()
+    service.discard_exports("primary", token, current)
+    assert not stage.exists()
+
+
+def test_remote_restart_orphan_does_not_dispatch_or_discard(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda _plan, **_kwargs: (_ for _ in ()).throw(
+        RuntimeError("fixture process lost")))
+    with pytest.raises(ServiceError, match="retained capture token"):
+        service.capture("daily")
+    token, stage, _record = _retained_capture(service, staging)
+    restarted = BackupService(service.config, service.bindings)
+    monkeypatch.setattr(restarted.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "restart replayed uncertain upload"))
+    with pytest.raises(ResourceBudgetExceeded):
+        restarted.capture("daily")
+    assert restarted.ledger.inspect(repository_key(restarted._identity("primary")), token)[1] is OperationStatus.UNCERTAIN
+    assert (stage / "db.sqlite").exists()
+
+
+def test_remote_receipt_failure_retains_completed_export(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    snapshot = "a" * 64
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, stdout=(json.dumps({"message_type": "summary", "snapshot_id": snapshot}) + "\n").encode()))
+    monkeypatch.setattr(service, "_receipts", lambda: (_ for _ in ()).throw(sqlite3.OperationalError(
+        "fixture receipt failure")))
+    with pytest.raises(ServiceError, match="retained capture token"):
+        service.capture("daily")
+    _, stage, record = _retained_capture(service, staging)
+    assert record["phase"] == "ready"
+    assert (stage / "db.sqlite").exists()
+
+
+def test_remote_success_reconciliation_repairs_receipt_and_cleans_exact_stage(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, record = _retained_capture(service, staging)
+    snapshot = "b" * 64
+    manifest = (stage / record["manifest"]["name"]).read_bytes()
+    exported = (stage / "db.sqlite").read_bytes()
+    inspected = []
+
+    def inspect(plan, **kwargs):
+        inspected.append(plan.argv)
+        assert "--no-lock" in plan.argv
+        if "locks" in plan.argv:
+            return _run(plan)
+        if "snapshots" in plan.argv:
+            return _run(plan, stdout=json.dumps([{"id": snapshot,
+                "tags": [f"bbackup-capture={token}", "bbackup-job=daily"]}]).encode())
+        assert "dump" in plan.argv
+        payload = exported if plan.argv[-1].endswith("db.sqlite") else manifest
+        kwargs["on_stdout_chunk"](payload)
+        return replace(_run(plan, stdout=payload), stdout_tail=b"")
+
+    monkeypatch.setattr(service.runner, "run", inspect)
+    result = service.reconcile_run("primary", token, ReconciliationOutcome.SUCCEEDED, quiescent_window_confirmed=True)
+    assert result["snapshot_id"] == snapshot
+    assert {"locks", "snapshots", "dump"}.issubset({word for argv in inspected for word in argv})
+    assert [argv[-2:] for argv in inspected if "locks" in argv] == [("list", "locks")] * 2
+    assert not stage.exists()
+    assert {path.name for path in staging.iterdir()} == {".bbackup-staging.lock"}
+    assert service.snapshots()[0]["snapshot_id"] == snapshot
+    assert service.ledger.inspect(repository_key(service._identity("primary")), token)[1] is OperationStatus.RECONCILED_SUCCEEDED
+
+
+@pytest.mark.parametrize("remote_export", ["missing", "changed", "oversize"])
+def test_remote_success_reconciliation_requires_each_export_bytes(tmp_path, monkeypatch, remote_export):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, record = _retained_capture(service, staging)
+    snapshot = "d" * 64
+    manifest = (stage / record["manifest"]["name"]).read_bytes()
+    exported = (stage / "db.sqlite").read_bytes()
+
+    def inspect(plan, **kwargs):
+        assert "--no-lock" in plan.argv
+        if "locks" in plan.argv:
+            return _run(plan)
+        if "snapshots" in plan.argv:
+            return _run(plan, stdout=json.dumps([{"id": snapshot,
+                "tags": [f"bbackup-capture={token}", "bbackup-job=daily"]}]).encode())
+        if plan.argv[-1].endswith("db.sqlite"):
+            if remote_export == "missing":
+                return _run(plan, status=OperationStatus.FAILED, exit_code=1)
+            payload = (exported + b"extra" if remote_export == "oversize"
+                       else bytes([exported[0] ^ 1]) + exported[1:])
+        else:
+            payload = manifest
+        kwargs["on_stdout_chunk"](payload)
+        return replace(_run(plan, stdout=payload), stdout_tail=b"")
+
+    monkeypatch.setattr(service.runner, "run", inspect)
+    with pytest.raises(ServiceError, match="Remote capture export"):
+        service.reconcile_run("primary", token, ReconciliationOutcome.SUCCEEDED, quiescent_window_confirmed=True)
+    assert (stage / "db.sqlite").exists()
+    assert service.snapshots() == []
+    assert service.ledger.inspect(repository_key(service._identity("primary")), token)[1] is OperationStatus.UNCERTAIN
+
+
+@pytest.mark.parametrize("tamper_material", [False, True])
+def test_remote_covered_reconciliation_hashes_stored_material_before_receipt(tmp_path, monkeypatch,
+                                                                             tamper_material):
+    from bbackup.capture import DurableCaptureArtifacts
+
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, record = _retained_capture(service, staging)
+    archive = (stage / record["exports"][0]["name"]).read_bytes()
+    manifest_path = stage / record["manifest"]["name"]
+    manifest = json.loads(manifest_path.read_text())
+    procedure, evidence, material = "/private/procedure", "/private/evidence", "/private/material"
+    stored = {procedure: b"procedure", evidence: b"evidence", material: b"reviewed material"}
+    coverage = {"root_id": "dbroot", "source_id": "db", "connection": "source_pg",
+                "database": "app_db", "cluster_id": "primary", "major_version": "17",
+                "data_directory": "/private/pgdata",
+                "data_directory_identity": {"device": 1, "inode": 2, "uid": 3, "gid": 4, "mode": 0o700},
+                "recovery_file_roots": [{"root_id": name, "path": path}
+                    for name, path in (("procedure", procedure), ("evidence", evidence),
+                                       ("material", material))],
+                "recovery_artifacts": [{"root_id": name, "path": path,
+                    "sha256": hashlib.sha256(stored[path]).hexdigest()}
+                    for name, path in (("procedure", procedure), ("evidence", evidence),
+                                       ("material", material))]}
+    for key in ("baseline_digest", "system_identifier_sha256", "cluster_inventory_sha256",
+                "global_inventory_sha256", "role_inventory_sha256", "configuration_sha256",
+                "connection_material_sha256", "database_inventory_sha256", "recipe_sha256"):
+        coverage[key] = "a" * 64
+    entry = manifest["exports"][0]
+    entry.update(kind="postgresql", format="postgresql-custom", source_database="app_db",
+                 coverage=coverage, export_sha256=hashlib.sha256(archive).hexdigest())
+    manifest_path.write_text(json.dumps(manifest))
+    snapshot = "e" * 64
+    record_owner = DurableCaptureArtifacts.load(
+        staging, service.state, repository_key(service._identity("primary")), token)
+    record_owner.record["manifest"] = {"name": manifest_path.name,
+                                       **record_owner._fingerprint(manifest_path)}
+    record_owner._save()
+    payloads = {str(stage / record["exports"][0]["name"]): archive,
+                str(manifest_path): manifest_path.read_bytes(), **stored}
+    if tamper_material:
+        payloads[material] += b"tampered"
+    snapshot_paths = [str(stage / record["exports"][0]["name"]), str(manifest_path),
+                      procedure, evidence, material]
+
+    def inspect(plan, **kwargs):
+        assert "--no-lock" in plan.argv
+        if "locks" in plan.argv:
+            return _run(plan)
+        if "snapshots" in plan.argv:
+            return _run(plan, stdout=json.dumps([{"id": snapshot,
+                "tags": [f"bbackup-capture={token}", "bbackup-job=daily"]}]).encode())
+        if "cat" in plan.argv:
+            return _run(plan, stdout=json.dumps({"paths": snapshot_paths}).encode())
+        payload = payloads[plan.argv[-1]]
+        kwargs["on_stdout_chunk"](payload)
+        return replace(_run(plan, stdout=payload), stdout_tail=b"")
+
+    monkeypatch.setattr(service.runner, "run", inspect)
+    if tamper_material:
+        with pytest.raises(ServiceError, match="recovery artifact differs"):
+            service.reconcile_run("primary", token, ReconciliationOutcome.SUCCEEDED,
+                                  quiescent_window_confirmed=True)
+        assert stage.exists() and service.snapshots() == []
+    else:
+        service.reconcile_run("primary", token, ReconciliationOutcome.SUCCEEDED,
+                              quiescent_window_confirmed=True)
+        assert not stage.exists() and service.snapshots()[0]["snapshot_id"] == snapshot
+
+
+@pytest.mark.parametrize("locked_at", ["before", "after"])
+def test_remote_reconciliation_refuses_active_restic_lock(tmp_path, monkeypatch, locked_at):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, _record = _retained_capture(service, staging)
+    inspected = []
+
+    def inspect(plan, **_kwargs):
+        inspected.append(plan.argv)
+        assert "--no-lock" in plan.argv
+        if "locks" in plan.argv:
+            count = sum("locks" in argv for argv in inspected)
+            return _run(plan, stdout=(b"a" * 64 + b"\n") if (
+                locked_at == "before" or count == 2) else b"")
+        assert "snapshots" in plan.argv
+        return _run(plan, stdout=b"[]")
+
+    monkeypatch.setattr(service.runner, "run", inspect)
+    with pytest.raises(ServiceError, match="active Restic lock"):
+        service.reconcile_run("primary", token, ReconciliationOutcome.FAILED,
+                              quiescent_window_confirmed=True)
+    assert sum("snapshots" in argv for argv in inspected) == (locked_at == "after")
+    assert (stage / "db.sqlite").exists()
+    assert service.ledger.inspect(repository_key(service._identity("primary")), token)[1] is OperationStatus.UNCERTAIN
+
+
+def test_remote_reconciliation_requires_quiescent_window_acknowledgment(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, _record = _retained_capture(service, staging)
+    monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "unacknowledged reconciliation dispatched a repository command"))
+    with pytest.raises(ServiceError, match="quiescent repository window"):
+        service.reconcile_run("primary", token, ReconciliationOutcome.FAILED)
+    assert (stage / "db.sqlite").exists()
+    assert service.ledger.inspect(repository_key(service._identity("primary")), token)[1] is OperationStatus.UNCERTAIN
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_remote_reconcile_recovers_only_empty_owned_inode_gap(tmp_path, monkeypatch, foreign):
+    from bbackup.capture import DurableCaptureArtifacts
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    token = "e" * 32
+    artifact = DurableCaptureArtifacts(staging, service.state,
+        repository_key(service._identity("primary")), token, "daily")
+    artifact._save()
+    artifact.directory.mkdir(mode=0o700)
+    if foreign:
+        (artifact.directory / "unexpected").write_text("keep")
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, stdout=b"" if "locks" in plan.argv else b"[]"))
+    if foreign:
+        with pytest.raises(ServiceError, match="empty owned stage"):
+            service.reconcile_run("primary", token, ReconciliationOutcome.ABANDONED, quiescent_window_confirmed=True)
+        assert (artifact.directory / "unexpected").read_text() == "keep"
+        assert json.loads(artifact.record_path.read_text())["stage_inode"] is None
+    else:
+        result = service.reconcile_run("primary", token, ReconciliationOutcome.ABANDONED, quiescent_window_confirmed=True)
+        assert result["retained_exports"] is True
+        assert json.loads(artifact.record_path.read_text())["stage_inode"] == artifact.directory.stat().st_ino
+        service.discard_exports("primary", token, result["artifact_record_sha256"])
+        assert not artifact.directory.exists()
+
+
+def test_legacy_remote_capture_reconciles_without_record_but_marked_new_refuses(tmp_path, monkeypatch):
+    service, _database_path, _staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    legacy = OperationPlan.create(service._identity("primary"), "capture", ["never-run"])
+    with service.ledger.begin(legacy):
+        pass
+    monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "record-less legacy reconcile dispatched a command"))
+    result = service.reconcile_run("primary", legacy.operation_id, ReconciliationOutcome.ABANDONED)
+    assert result["legacy_capture"] is True
+    marked = OperationPlan.create(service._identity("primary"), "capture", ["never-run"])
+    service.ledger.mark_capture_artifacts(marked.repository_id, marked.operation_id)
+    with service.ledger.begin(marked):
+        pass
+    with pytest.raises(ServiceError, match="New remote capture artifact record is missing"):
+        service.reconcile_run("primary", marked.operation_id, ReconciliationOutcome.ABANDONED, quiescent_window_confirmed=True)
+    assert service.ledger.inspect(marked.repository_id, marked.operation_id)[1] is OperationStatus.UNCERTAIN
+
+
+def test_remote_success_cleans_only_recorded_stage(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    snapshot = "c" * 64
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, stdout=(json.dumps({"message_type": "summary", "snapshot_id": snapshot}) + "\n").encode()))
+    response = service.capture("daily")
+    record = json.loads((service.state / "capture-artifacts" /
+                         f"{response['operation_id']}.json").read_text())
+    assert record["phase"] == "cleaned" and record["exports"][0]["sha256"]
+    assert {path.name for path in staging.iterdir()} == {".bbackup-staging.lock"}
+    assert service.snapshots()[0]["snapshot_id"] == snapshot
+    from bbackup.capture import DurableCaptureArtifacts
+    token = response["operation_id"]
+    artifact = DurableCaptureArtifacts.load(staging, service.state,
+        repository_key(service._identity("primary")), token)
+    with pytest.raises(ServiceError, match="reconciled"):
+        service.discard_exports("primary", token, artifact.record_sha256())
+
+
+@pytest.mark.parametrize("foreign", ["file", "symlink"])
+def test_remote_reconciliation_rejects_foreign_stage_entry(tmp_path, monkeypatch, foreign):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, _record = _retained_capture(service, staging)
+    extra = stage / "unexpected"
+    if foreign == "file":
+        extra.write_text("foreign")
+    else:
+        extra.symlink_to(tmp_path / "outside")
+    monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "unsafe stage reached remote inspection"))
+    with pytest.raises(ServiceError, match="artifact"):
+        service.reconcile_run("primary", token, ReconciliationOutcome.FAILED, quiescent_window_confirmed=True)
+    assert extra.is_symlink() if foreign == "symlink" else extra.exists()
+    assert (stage / "db.sqlite").exists()
+
+
+def test_remote_primary_capture_direct_source_no_cache_and_explicit_provider_env(tmp_path, monkeypatch):
+    service, data, staging = _remote_service(tmp_path)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fixture-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fixture-secret")
+    monkeypatch.setenv("RESTIC_REPOSITORY", "poisoned")
+    monkeypatch.setenv("AWS_PROFILE", "poisoned")
+    monkeypatch.setattr("bbackup.service.shutil.disk_usage", lambda _path: SimpleNamespace(free=1))
+
+    class Monitor:
+        def __init__(self, *_args):
+            self.checks = 0
+
+        def check(self, _upcoming=0):
+            self.checks += 1
+
+        def result(self):
+            return {"staging_capacity_bounded": True, "free_space_reserve_hard_guaranteed": False}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("bbackup.service.ResourceMonitor", Monitor)
+    observed = {}
+
+    def run(plan, **kwargs):
+        observed["argv"] = plan.argv
+        observed["env"] = plan.env
+        observed["tick"] = kwargs.get("on_tick")
+        kwargs["on_tick"]()
+        return _run(plan, stdout=(json.dumps({"message_type": "summary", "snapshot_id": "a" * 64}) + "\n").encode())
+
+    monkeypatch.setattr(service.runner, "run", run)
+    captured = service.capture("daily")
+    assert captured["primary_destination"] == {"repository": "primary", "kind": "remote"}
+    assert captured["cloud_complete"] and not captured["local_complete"]
+    assert captured["resource_observation"]["staging_capacity_bounded"]
+    assert "--no-cache" in observed["argv"]
+    assert observed["argv"].count("--no-cache") == 1
+    assert str(data) in observed["argv"]
+    assert observed["env"]["TMPDIR"] == str(staging)
+    assert "RESTIC_REPOSITORY" not in observed["env"]
+    assert "AWS_PROFILE" not in observed["env"]
+    assert observed["env"]["AWS_ACCESS_KEY_ID"] == "fixture-key"
+    assert list(staging.iterdir()) == []
+
+
+@pytest.mark.parametrize("cache_environment", [None, "HOME", "XDG_CACHE_HOME"])
+def test_local_restic_cache_behavior_follows_child_environment(service, monkeypatch, cache_environment):
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.delenv("RESTIC_CACHE_DIR", raising=False)
+    if cache_environment is not None:
+        monkeypatch.setenv(cache_environment, "/fixture/cache-root")
+    observed = {}
+
+    def run(plan, **_kwargs):
+        observed["argv"] = plan.argv
+        observed["env"] = dict(plan.env)
+        return _run(plan)
+
+    monkeypatch.setattr(service.runner, "run", run)
+    service.check("local")
+
+    if cache_environment is None:
+        assert observed["argv"][1] == "--no-cache"
+        assert not observed["env"].get("HOME")
+        assert not observed["env"].get("XDG_CACHE_HOME")
+    else:
+        assert "--no-cache" not in observed["argv"]
+        assert observed["env"][cache_environment] == "/fixture/cache-root"
+
+
+def test_local_restic_explicit_cache_dir_is_preserved_without_home(service, tmp_path, monkeypatch):
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.delenv("RESTIC_CACHE_DIR", raising=False)
+    cache_dir = str(tmp_path / "cache")
+    observed = {}
+
+    def run(plan, **_kwargs):
+        observed["argv"] = plan.argv
+        return _run(plan)
+
+    monkeypatch.setattr(service.runner, "run", run)
+    service._execute("local", ("restic", "--cache-dir", cache_dir, "check"), label="check")
+
+    assert observed["argv"] == ("restic", "--cache-dir", cache_dir, "check")
+
+
+def test_manual_remote_primary_copy_is_refused_before_any_dispatch(tmp_path, monkeypatch):
+    service, _data, _staging = _remote_service(tmp_path, with_replica=True)
+    monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "unbudgeted copy child was dispatched"))
+    with pytest.raises(ServiceError, match="bounded resource support"):
+        service.copy("primary", "copy", "a" * 64)
+
+
+def test_remote_capture_retains_real_staging_lease_until_receipt_finalization(tmp_path, monkeypatch):
+    from bbackup.resource_limits import ResourceMonitor
+
+    service, _data, staging = _remote_service(tmp_path)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fixture-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fixture-secret")
+    monkeypatch.setattr("bbackup.resource_limits.os.path.ismount", lambda path: path == staging)
+    budget = service.config.jobs[0].resource_budget
+    monkeypatch.setattr("bbackup.resource_limits._volume", lambda path: (
+        budget.staging_max_bytes, budget.staging_max_bytes))
+
+    def run(plan, **kwargs):
+        kwargs["on_tick"]()
+        return _run(plan, stdout=(json.dumps({"message_type": "summary", "snapshot_id": "b" * 64}) + "\n").encode())
+
+    monkeypatch.setattr(service.runner, "run", run)
+    captured = service.capture("daily")
+    assert captured["snapshot_id"] == "b" * 64
+    assert any(row["status"] == "succeeded" for row in service.ledger.summary())
+    # Capture completed and released the shared lease; its stable lock remains.
+    with ResourceMonitor(staging, service.state, budget) as next_run:
+        next_run.check()
+
+
+def test_remote_primary_budget_failure_is_structured_and_uncertain_after_dispatch(tmp_path, monkeypatch):
+    from bbackup.resource_limits import ResourceLimitError
+    service, _data, _staging = _remote_service(tmp_path)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fixture-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fixture-secret")
+
+    class Monitor:
+        calls = 0
+
+        def __init__(self, *_args):
+            pass
+
+        def check(self, _upcoming=0):
+            self.calls += 1
+            if self.calls > 1:
+                raise ResourceLimitError("Observed free-space reserve fell below the configured threshold")
+
+        def result(self):
+            return {"staging_capacity_bounded": True}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("bbackup.service.ResourceMonitor", Monitor)
+
+    def run(_plan, **kwargs):
+        kwargs["on_tick"]()
+
+    monkeypatch.setattr(service.runner, "run", run)
+    with pytest.raises(ResourceBudgetExceeded) as failure:
+        service.capture("daily")
+    assert failure.value.result["resource_budget_exceeded"] is True
+    assert failure.value.result["local_complete"] is False
+    assert failure.value.result["cloud_complete"] is False
+    assert "large-source" not in str(failure.value.result)
+    assert any(row["status"] == "uncertain" for row in service.ledger.summary())
 
 
 def test_replica_failure_isolated_and_later_destination_runs(service, monkeypatch):
@@ -176,6 +1166,84 @@ def test_database_restore_uses_snapshot_manifest_without_original_sources(servic
     assert not list(fresh.state.glob("database-restore-*"))
 
 
+@pytest.mark.parametrize("tamper", ["export", "material", None])
+@pytest.mark.parametrize("material_root", ["directory", "file"])
+def test_covered_postgresql_restore_rejects_tampered_bytes_before_mutation(service, tmp_path,
+                                                                           monkeypatch, tamper, material_root):
+    from bbackup.models import DatabaseBinding
+
+    service_file = tmp_path / "pg_service.conf"
+    service_file.write_text("[local]\nhost=/var/run/postgresql\nuser=postgres\n")
+    service_file.chmod(0o600)
+    binding = DatabaseBinding("postgresql", service_file=service_file, service_name="local")
+    config = Configuration.parse({"schema_version": 2,
+        "repositories": [{"name": "local"}, {"name": "copy", "role": "replica"}],
+        "sources": [], "jobs": []})
+    fresh = BackupService(config, HostBindings(tmp_path / "restore-state",
+        service.bindings.repositories, {"destination": binding}))
+    snapshot = "a" * 64
+    manifest_path = "/private/capture/bbackup-capture.json"
+    archive_path = "/private/capture/database.dump"
+    files_root = "/private/recovery"
+    artifact_path = files_root + "/roles.sql"
+    procedure_path = files_root + "/procedure.txt"
+    evidence_path = files_root + "/evidence.json"
+    archive_bytes = b"PGDMP-reviewed-export"
+    material_bytes = b"reviewed recovery material"
+    coverage = {"root_id": "database_root", "source_id": "database",
+        "connection": "source_pg", "database": "app_db", "cluster_id": "primary",
+        "major_version": "17", "data_directory": "/private/pgdata",
+        "data_directory_identity": {"device": 1, "inode": 2, "uid": 3, "gid": 4, "mode": 0o700},
+        "recovery_file_roots": ([{"root_id": "recovery_root", "path": files_root}]
+            + ([{"root_id": "material_file", "path": artifact_path}]
+               if material_root == "file" else [])),
+        "recovery_artifacts": [{"root_id": ("material_file" if material_root == "file"
+            and path == artifact_path else "recovery_root"), "path": path,
+            "sha256": hashlib.sha256(content).hexdigest()}
+            for path, content in ((procedure_path, b"procedure"),
+                                  (evidence_path, b"evidence"),
+                                  (artifact_path, material_bytes))]}
+    for key in ("baseline_digest", "system_identifier_sha256", "cluster_inventory_sha256",
+                "global_inventory_sha256", "role_inventory_sha256", "configuration_sha256",
+                "connection_material_sha256", "database_inventory_sha256", "recipe_sha256"):
+        coverage[key] = "b" * 64
+    entry = {"source": "database", "kind": "postgresql", "format": "postgresql-custom",
+             "path": archive_path, "source_database": "app_db", "coverage": coverage,
+             "export_sha256": hashlib.sha256(archive_bytes).hexdigest(),
+             "database_options": {"encoding": "UTF8", "collate": "C", "ctype": "C", "provider": "c"}}
+    payloads = {manifest_path: json.dumps({"schema_version": 2, "exports": [entry]}).encode(),
+                archive_path: archive_bytes if tamper != "export" else archive_bytes + b"changed",
+                procedure_path: b"procedure", evidence_path: b"evidence",
+                artifact_path: material_bytes if tamper != "material" else material_bytes + b"changed"}
+    metadata = json.dumps({"paths": [manifest_path, archive_path, files_root, artifact_path]}).encode()
+    monkeypatch.setattr(fresh, "_engine", lambda _repository: SimpleNamespace(base_args=lambda: ["restic"]))
+    calls = []
+
+    def execute(_repository, argv, *, on_stdout=None, **_kwargs):
+        calls.append(argv)
+        content = metadata if argv[-3:-1] == ["cat", "snapshot"] else payloads[argv[-1]]
+        if on_stdout is not None:
+            on_stdout(content)
+            return None, SimpleNamespace(stdout_bytes=len(content), stdout_tail=b"")
+        return None, SimpleNamespace(stdout_bytes=len(content), stdout_tail=content)
+
+    monkeypatch.setattr(fresh, "_execute", execute)
+    mutated = []
+    monkeypatch.setattr("bbackup.database_restore.restore_postgresql",
+                        lambda *_args, **_kwargs: mutated.append(True) or "recovered")
+    if tamper is None:
+        result = fresh.restore_database("local", snapshot, "database", "destination", "recovered",
+                                        trusted_archive=True)
+        assert result["target_database"] == "recovered"
+        assert mutated == [True]
+    else:
+        with pytest.raises(ServiceError, match="digest differs"):
+            fresh.restore_database("local", snapshot, "database", "destination", "recovered",
+                                   trusted_archive=True)
+        assert not mutated
+    assert not list(fresh.state.glob("database-restore-*"))
+
+
 def test_restore_refuses_existing_and_overlapping(service, tmp_path):
     for target in (tmp_path / "data", tmp_path / "data" / "restored", tmp_path / "state" / "restored"):
         with pytest.raises(ServiceError):
@@ -256,6 +1324,75 @@ def test_receipt_upgrade_refuses_nonprivate_backup_without_migrating(service, tm
         assert db.execute("SELECT * FROM snapshots").fetchall() == [
             ("local", "saved-id", "daily", "saved-operation"),
         ]
+
+
+def test_indefinite_checkpoint_receipt_and_legacy_expiry_migration(service, tmp_path):
+    columns = ("repository", "repository_identity", "snapshot", "operation",
+               "manifest_sha256", "captured_at", "expires_at")
+    prior = ("local", "identity", "a" * 64, "old-checkpoint", "b" * 64,
+             "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z")
+    with service._receipts() as db:
+        db.execute("DROP TABLE checkpoints")
+        db.execute(
+            """CREATE TABLE checkpoints (
+                repository TEXT NOT NULL, repository_identity TEXT NOT NULL,
+                snapshot TEXT NOT NULL, operation TEXT PRIMARY KEY,
+                manifest_sha256 TEXT NOT NULL, captured_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )"""
+        )
+        db.execute("INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?, ?, ?)", prior)
+    migrated = BackupService(service.config, service.bindings)
+    with migrated._receipts() as db:
+        assert db.execute("SELECT * FROM checkpoints").fetchall() == [prior]
+        assert db.execute("PRAGMA table_info(checkpoints)").fetchall()[-1][3] == 0
+        indefinite = ("local", "identity", "c" * 64, "indefinite-checkpoint",
+                      "d" * 64, "2026-10-02T00:00:00Z", None)
+        db.execute("INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?, ?, ?)", indefinite)
+    archive, = (service.state / "state-backups").glob("receipts-*.sqlite3.gz")
+    recovered = tmp_path / "checkpoint-pre-migration.sqlite3"
+    with gzip.GzipFile(filename=archive, mode="rb") as incoming, recovered.open("xb") as output:
+        shutil.copyfileobj(incoming, output)
+    with sqlite3.connect(recovered) as db:
+        assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert tuple(row[1] for row in db.execute("PRAGMA table_info(checkpoints)")) == columns
+        assert db.execute("PRAGMA table_info(checkpoints)").fetchall()[-1][3] == 1
+        assert db.execute("SELECT * FROM checkpoints").fetchall() == [prior]
+    again = BackupService(service.config, service.bindings)
+    with again._receipts() as db:
+        assert db.execute("SELECT * FROM checkpoints ORDER BY operation").fetchall() == [indefinite, prior]
+    assert len(list((service.state / "state-backups").glob("receipts-*.sqlite3.gz"))) == 1
+
+
+@pytest.mark.parametrize("extra", [
+    "repository TEXT NOT NULL COLLATE NOCASE",
+    "repository TEXT NOT NULL CHECK(length(repository) > 0)",
+    "repository TEXT NOT NULL DEFAULT 'local'",
+    "repository TEXT NOT NULL UNIQUE",
+])
+def test_checkpoint_expiry_migration_refuses_extra_constraints(service, extra):
+    ddl = f"""CREATE TABLE checkpoints (
+        {extra}, repository_identity TEXT NOT NULL,
+        snapshot TEXT NOT NULL, operation TEXT PRIMARY KEY,
+        manifest_sha256 TEXT NOT NULL, captured_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+    )"""
+    prior = ("local", "identity", "a" * 64, "original-operation",
+             "b" * 64, "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z")
+    with service._receipts() as db:
+        db.execute("DROP TABLE checkpoints")
+        db.execute(ddl)
+        db.execute("INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?, ?, ?)", prior)
+        original_sql = db.execute(
+            "SELECT sql FROM sqlite_master WHERE name='checkpoints'"
+        ).fetchone()[0]
+    with pytest.raises(ServiceError, match="unsupported constraints"):
+        BackupService(service.config, service.bindings)
+    with service._receipts() as db:
+        assert db.execute("SELECT sql FROM sqlite_master WHERE name='checkpoints'").fetchone()[0] == original_sql
+        assert db.execute("SELECT * FROM checkpoints").fetchall() == [prior]
+        assert db.execute("PRAGMA table_info(checkpoints)").fetchall()[-1][3] == 1
+    assert not (service.state / "state-backups").exists()
 
 
 def test_capture_receipt_is_committed_before_ledger_success(service, monkeypatch):
@@ -503,6 +1640,22 @@ def test_real_capture_copy_check_restore(service, tmp_path):
     assert path.stat().st_mode & 0o777 == 0o640
     assert (path.parent / "link").is_symlink()
     assert len(service.snapshots()) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("restic") is None, reason="requires restic")
+def test_real_restore_verify_without_home_or_xdg_cache(service, tmp_path, monkeypatch):
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+
+    service.initialize("local")
+    captured = service.capture("daily")
+    restored = tmp_path / "restored-without-cache-home"
+    result = service.restore("local", captured["snapshot_id"], restored)
+
+    assert result["files_verified"]
+    restored_file = restored / str(tmp_path / "data" / "hello.txt").lstrip("/")
+    assert restored_file.read_bytes() == b"restore me\n"
 
 
 def _retention_snapshot(snapshot_id, tags=None):

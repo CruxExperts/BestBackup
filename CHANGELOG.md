@@ -56,6 +56,11 @@ current uv-based install, development, and release instructions.
   production CLI also passed schema-3 enrollment and schema-2 plan, zero-apply
   and empty reconciliation against the existing catalog with its first-seen
   times preserved. Aged deletion and uncertain live mutations remain unqualified.
+- A fresh tiny B2 fixture measured initial/incremental capture interface TX of
+  221,039/22,065 bytes and stored-version growth of 199,080/2,457 bytes. Both
+  captures, the full check and both restores passed within 1 MiB staging and
+  zero cache. These measurements include protocol/version overhead and do not
+  establish provider billing, large-scale performance or production savings.
 
 ### Fixed
 

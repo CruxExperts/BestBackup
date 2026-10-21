@@ -225,6 +225,31 @@ bytes for the initial snapshot, 197,943 bytes for the incremental snapshot, and
 totals combined, demonstrating shared repository data across these snapshots.
 These raw-data figures do not measure network transfer bytes, bandwidth, or cost
 savings.
+
+A fresh isolated fixture at commit
+`f34945826bdb177dfa0858dd1dbe9470464980ed` subsequently passed initialization,
+both captures, a full repository check and both restores. Its final fixture size
+was 196,682 bytes. The source container used an archived copy of that exact
+commit, the restricted source credential, a 1 MiB staging mount and no cache.
+The controller verified the mount allowlist and unchanged source files; central
+and provisioning credentials were absent from its mounts and configured
+environment. Initialization observed an empty exact-prefix version inventory.
+
+- Initial capture: interface TX/RX was 221,039/28,033 bytes; provider-reported
+  stored-version bytes grew by 199,080, including retained noncurrent versions.
+  Observed additional staging use peaked at 208,896 bytes.
+- Incremental capture: interface TX/RX was 22,065/29,811 bytes; stored-version
+  bytes grew by 2,457. Observed additional staging use peaked at 12,288 bytes.
+
+Interface counters bracketed each capture, excluding the surrounding inventory
+requests, and include protocol and any concurrent interface traffic. Stored-byte
+totals sum provider-reported object payload sizes, including noncurrent lock
+versions; delete markers are counted separately. Neither measure establishes
+provider billing or costs. Local filesystem observations remain unattributed.
+The smaller incremental growth is fixture evidence, not a large-dataset or
+long-term savings estimate. This run did not inject database-export failures or
+qualify reboot recovery, remote-server deployment or aged retention.
+
 Initial SDK-wrapped retention errors and rejected canary setup attempts remain
 preserved separately; they were not counted as passes or replayed. The successful
 fresh canary required observed retention `NONE` and legal hold `OFF` before its
@@ -319,12 +344,27 @@ failure, enforced Linux exclusions and mount-namespace drift. Generated CLI
 catalogs/schemas, version synchronization, publishing readiness, Markdown and
 asset provenance checks passed. Changed Python paths passed Ruff and compilation.
 
+The subsequent reviewed SQLite coverage and remote-export lifecycle fixes at
+`f34945826bdb177dfa0858dd1dbe9470464980ed` passed **1,122 tests with one skip** in
+99.31 seconds using eight workers. The skipped legacy Docker restore round trip
+suppressed a failed fixture backup; its underlying cause was not identified, so
+it is not restore evidence. Focused regressions cover raw sidecar refusal,
+transactional restore and metadata reconstruction, retained exports after
+interruption or receipt failure, streamed remote-byte verification, crash-window
+recovery, explicit digest-bound disposal and legacy reconciliation compatibility.
+Generated catalogs/schemas, version, publishing, compilation, Markdown, Ruff and
+diff checks passed.
+
 An offline wheel/source build passed portable source-archive checks and an
 isolated installed-wheel smoke test. These are checks of the unreleased
 development checkout, still carrying package version 2.0.3; they are not new
 published release artifacts or a claim that the open live qualification work is
 complete. All tracked README entry points were reviewed, with current-state
 links and support boundaries aligned while preserving historical release records.
+The wheel and portable source archive built from the same `f349458` commit also
+passed source-content checks and an isolated installed-wheel smoke test. The
+private wheel SHA-256 is
+`ecef6617633a6547b460109dca7d9264aaa5d0a1607901331842856c9dc83a59`.
 
 A fresh Ubuntu 24.04.5 KVM guest passed all ten existing user-timer checks across
 three boots in 333.9 seconds. The tested unreleased wheel SHA-256 was

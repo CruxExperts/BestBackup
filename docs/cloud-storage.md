@@ -418,6 +418,9 @@ and disabled cache with separate scoped read-only and read/list/write keys.
 Central checkpoint preparation used a separate workspace. This does not
 qualify aged physical reclamation or the promised recovery window; see the
 [maintenance trial and limits](development/version-2.md#live-b2-central-maintenance-trial).
+In a separate live changed-plan test, an eight-byte probe invalidated a fresh
+plan. Apply was rejected before maintenance-ledger entry, forget, or prune;
+ordinary inspection still created and released two temporary repository locks.
 
 ## Bind the cloud repository
 

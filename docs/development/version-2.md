@@ -416,6 +416,22 @@ staging mount, a configured 65,536-byte free-space threshold, and disabled cache
 Checkpoint preparation and independent acceptance used a separate central
 workspace; that preparation is not covered by the maintenance disk budget.
 
+A separate changed-plan scenario created a fresh zero-forget plan, then wrote
+one eight-byte probe under the same restricted repository prefix. Its single
+stale apply was rejected before maintenance-ledger entry, forget, or prune.
+All 65 previously observed versions, including the probe, remained exactly
+unchanged. Normal pre-validation Restic inspection created and released two
+temporary locks, adding two object versions and two hide markers. This is not
+a zero-object-mutation guarantee.
+
+The original fault helper stopped because it required an unchanged version
+inventory even for inspection locks. Its blocked result remains preserved.
+A read-only continuation bound the exact plan, rejection receipt, before/after
+inventories and four new lock versions, without repeating apply. A no-lock
+full read-data check passed, both protected snapshot identities remained
+visible, all 69 post-inspection inventory rows stayed unchanged, and the
+catalog digest was unchanged. The eight-byte probe was deliberately retained.
+
 This qualifies only the small, zero-forget maintenance exercise. It does not
 demonstrate aged reclamation, an elapsed protection window, independently held
 off-host escrow, or final remote-server recovery. `protection_qualified` remains

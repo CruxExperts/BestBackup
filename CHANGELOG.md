@@ -56,6 +56,8 @@ current uv-based install, development, and release instructions.
 - On 2026-10-21, live B2 central maintenance completed a zero-forget plan and
   native no-repack prune. Both accepted snapshots restored afterward, all 32
   previously observed versions survived, and the catalog remained unchanged.
+  A separate changed-plan test rejected stale apply before maintenance-ledger
+  entry, forget, or prune; inspection created and released two temporary locks.
   This small workstation result leaves aged reclamation, the protection window,
   and off-host recovery unqualified.
 - On 2026-10-21, isolated PostgreSQL 17.11 containers passed covered capture

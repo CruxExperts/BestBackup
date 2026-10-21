@@ -393,6 +393,12 @@ failed or uncertain upload, cancellation, or receipt failure. New captures stay
 blocked while exports remain. Successful reconciliation checks the exact remote
 capture tag and manifest before repairing a receipt and releasing the matching
 stage; it never repeats the upload. A reviewed failed outcome retains the data.
+Before reconciling a remote capture, stop repository writers for the entire
+inspection and explicitly pass `--quiescent-window-confirmed` alongside
+`--repository-reviewed`. Inspection uses Restic's `--no-lock` to avoid writing
+cloud lock objects and refuses observed repository locks before and after its
+reads. These observations cannot prevent another machine from starting a writer;
+the operator must maintain the quiet window until reconciliation returns.
 
 Discover retained capture IDs and current artifact-record digests, including
 captures stopped before dispatch:

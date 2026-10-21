@@ -2054,7 +2054,7 @@ PRODUCTION_COMMANDS["skills"] = {
 
 PRODUCTION_COMMANDS["runs reconcile"] = {
     "summary": "Record an administrator-reviewed outcome for an uncertain operation without replaying it.",
-    "fields": {"repository": "string", "operation_id": "string", "outcome": "string", "repository_reviewed": "boolean"},
+    "fields": {"repository": "string", "operation_id": "string", "outcome": "string", "repository_reviewed": "boolean", "quiescent_window_confirmed": "boolean"},
 }
 
 PRODUCTION_COMMANDS["runs retained-exports"] = {

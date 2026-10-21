@@ -670,7 +670,8 @@ class BackupService:
             response["resource_observation"] = monitor.result()
         return response
 
-    def reconcile_run(self, repository, operation_id, outcome, *, cancel=None):
+    def reconcile_run(self, repository, operation_id, outcome, *,
+                      quiescent_window_confirmed=False, cancel=None):
         """Inspect one remote capture under its staging lease before resolving it."""
 
         repository_id = repository_key(self._identity(repository))
@@ -694,6 +695,8 @@ class BackupService:
             raise ServiceError("New remote capture artifact record is missing") from None
         except (OSError, ValueError, CaptureError):
             raise ServiceError("Remote capture artifact record is missing or invalid") from None
+        if quiescent_window_confirmed is not True:
+            raise ServiceError("Remote capture reconciliation requires a confirmed quiescent repository window")
         if ledger_row is None and outcome is ReconciliationOutcome.SUCCEEDED:
             raise ServiceError("Capture has no dispatch record; success cannot be reconciled")
         with self._resource_monitor(repository, read_only_reconcile=True):
@@ -724,6 +727,12 @@ class BackupService:
                     raise ServiceError("Remote capture inspection was incomplete")
                 return result.stdout_tail
 
+            def require_no_repository_locks():
+                # `list locks` does not create a Restic lock. A clear listing is
+                # only an observation; the caller must keep writers quiescent.
+                if inspect([*engine.base_args(), "--no-lock", "list", "locks"]):
+                    raise ServiceError("Remote repository has an active Restic lock")
+
             def inspect_export(snapshot_id, item):
                 expected_size = item["size"]
                 expected_hash = item["sha256"]
@@ -739,7 +748,7 @@ class BackupService:
 
                 plan = OperationPlan(
                     operation_id, repository_id, "inspect",
-                    tuple([*engine.base_args(), "dump", snapshot_id,
+                    tuple([*engine.base_args(), "--no-lock", "dump", snapshot_id,
                            str(artifacts.directory / item["name"])]),
                     env=self._operation_environment(repository), timeout_seconds=3600,
                 )
@@ -751,7 +760,8 @@ class BackupService:
                     raise ServiceError("Remote capture export differs from the retained record")
 
             try:
-                inventory = strict_json(inspect([*engine.base_args(), "snapshots", "--tag", tag]))
+                require_no_repository_locks()
+                inventory = strict_json(inspect([*engine.base_args(), "--no-lock", "snapshots", "--tag", tag]))
             except (ValueError, UnicodeDecodeError, TypeError):
                 raise ServiceError("Remote capture inventory is invalid") from None
             if not isinstance(inventory, list) or len(inventory) > 1:
@@ -779,6 +789,7 @@ class BackupService:
                     inspect_export(snapshot, export)
                 if manifest is not None:
                     inspect_export(snapshot, manifest)
+                require_no_repository_locks()
                 replicas = artifacts.record["required_replicas"]
                 if not isinstance(replicas, dict):
                     raise ServiceError("Remote capture replica record is invalid")
@@ -804,6 +815,7 @@ class BackupService:
             elif snapshot is not None:
                 raise ServiceError("Remote capture snapshot exists; failure is not proven")
             else:
+                require_no_repository_locks()
                 if artifacts.record["phase"] in ("cleanup_started", "cleaned"):
                     raise ServiceError("Remote capture cleanup already began after success")
                 artifacts.reviewed_failure(outcome.value)

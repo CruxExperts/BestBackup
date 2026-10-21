@@ -419,11 +419,14 @@ def test_remote_failed_upload_keeps_exact_export_after_database_changes(tmp_path
 
     def inspect(plan, **_kwargs):
         inspected.append(plan.argv)
+        assert "--no-lock" in plan.argv
+        if "locks" in plan.argv:
+            return _run(plan)
         assert "snapshots" in plan.argv
         return _run(plan, stdout=b"[]")
 
     monkeypatch.setattr(service.runner, "run", inspect)
-    result = service.reconcile_run("primary", token, ReconciliationOutcome.FAILED)
+    result = service.reconcile_run("primary", token, ReconciliationOutcome.FAILED, quiescent_window_confirmed=True)
     assert result["retained_exports"] is True
     assert exported.exists() and inspected
     monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
@@ -445,8 +448,9 @@ def test_remote_pre_dispatch_failure_retains_completed_export_without_ledger_row
     assert service.ledger.inspect(repository_key(service._identity("primary")), token) is None
     assert record["exports"][0]["name"] == "db.sqlite"
     assert (stage / "db.sqlite").exists()
-    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(plan, stdout=b"[]"))
-    result = service.reconcile_run("primary", token, ReconciliationOutcome.ABANDONED)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, stdout=b"" if "locks" in plan.argv else b"[]"))
+    result = service.reconcile_run("primary", token, ReconciliationOutcome.ABANDONED, quiescent_window_confirmed=True)
     assert result["retained_exports"] is True and (stage / "db.sqlite").exists()
     listing = service.retained_exports("primary")
     assert listing == [{"repository": "primary", "operation_id": token,
@@ -475,8 +479,9 @@ def test_remote_discard_refuses_unknown_outcome_stale_digest_and_foreign_file(tm
     with pytest.raises(ServiceError, match="reconciled"):
         service.discard_exports("primary", token, before)
     assert (stage / "db.sqlite").exists()
-    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(plan, stdout=b"[]"))
-    service.reconcile_run("primary", token, ReconciliationOutcome.FAILED)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, stdout=b"" if "locks" in plan.argv else b"[]"))
+    service.reconcile_run("primary", token, ReconciliationOutcome.FAILED, quiescent_window_confirmed=True)
     current = service.retained_exports("primary")[0]["artifact_record_sha256"]
     assert current != before
     with pytest.raises(ServiceError, match="refused"):
@@ -535,6 +540,9 @@ def test_remote_success_reconciliation_repairs_receipt_and_cleans_exact_stage(tm
 
     def inspect(plan, **kwargs):
         inspected.append(plan.argv)
+        assert "--no-lock" in plan.argv
+        if "locks" in plan.argv:
+            return _run(plan)
         if "snapshots" in plan.argv:
             return _run(plan, stdout=json.dumps([{"id": snapshot,
                 "tags": [f"bbackup-capture={token}", "bbackup-job=daily"]}]).encode())
@@ -544,9 +552,10 @@ def test_remote_success_reconciliation_repairs_receipt_and_cleans_exact_stage(tm
         return replace(_run(plan, stdout=payload), stdout_tail=b"")
 
     monkeypatch.setattr(service.runner, "run", inspect)
-    result = service.reconcile_run("primary", token, ReconciliationOutcome.SUCCEEDED)
+    result = service.reconcile_run("primary", token, ReconciliationOutcome.SUCCEEDED, quiescent_window_confirmed=True)
     assert result["snapshot_id"] == snapshot
-    assert {"snapshots", "dump"}.issubset({word for argv in inspected for word in argv})
+    assert {"locks", "snapshots", "dump"}.issubset({word for argv in inspected for word in argv})
+    assert [argv[-2:] for argv in inspected if "locks" in argv] == [("list", "locks")] * 2
     assert not stage.exists()
     assert {path.name for path in staging.iterdir()} == {".bbackup-staging.lock"}
     assert service.snapshots()[0]["snapshot_id"] == snapshot
@@ -566,6 +575,9 @@ def test_remote_success_reconciliation_requires_each_export_bytes(tmp_path, monk
     exported = (stage / "db.sqlite").read_bytes()
 
     def inspect(plan, **kwargs):
+        assert "--no-lock" in plan.argv
+        if "locks" in plan.argv:
+            return _run(plan)
         if "snapshots" in plan.argv:
             return _run(plan, stdout=json.dumps([{"id": snapshot,
                 "tags": [f"bbackup-capture={token}", "bbackup-job=daily"]}]).encode())
@@ -581,9 +593,53 @@ def test_remote_success_reconciliation_requires_each_export_bytes(tmp_path, monk
 
     monkeypatch.setattr(service.runner, "run", inspect)
     with pytest.raises(ServiceError, match="Remote capture export"):
-        service.reconcile_run("primary", token, ReconciliationOutcome.SUCCEEDED)
+        service.reconcile_run("primary", token, ReconciliationOutcome.SUCCEEDED, quiescent_window_confirmed=True)
     assert (stage / "db.sqlite").exists()
     assert service.snapshots() == []
+    assert service.ledger.inspect(repository_key(service._identity("primary")), token)[1] is OperationStatus.UNCERTAIN
+
+
+@pytest.mark.parametrize("locked_at", ["before", "after"])
+def test_remote_reconciliation_refuses_active_restic_lock(tmp_path, monkeypatch, locked_at):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, _record = _retained_capture(service, staging)
+    inspected = []
+
+    def inspect(plan, **_kwargs):
+        inspected.append(plan.argv)
+        assert "--no-lock" in plan.argv
+        if "locks" in plan.argv:
+            count = sum("locks" in argv for argv in inspected)
+            return _run(plan, stdout=(b"a" * 64 + b"\n") if (
+                locked_at == "before" or count == 2) else b"")
+        assert "snapshots" in plan.argv
+        return _run(plan, stdout=b"[]")
+
+    monkeypatch.setattr(service.runner, "run", inspect)
+    with pytest.raises(ServiceError, match="active Restic lock"):
+        service.reconcile_run("primary", token, ReconciliationOutcome.FAILED,
+                              quiescent_window_confirmed=True)
+    assert sum("snapshots" in argv for argv in inspected) == (locked_at == "after")
+    assert (stage / "db.sqlite").exists()
+    assert service.ledger.inspect(repository_key(service._identity("primary")), token)[1] is OperationStatus.UNCERTAIN
+
+
+def test_remote_reconciliation_requires_quiescent_window_acknowledgment(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, _record = _retained_capture(service, staging)
+    monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "unacknowledged reconciliation dispatched a repository command"))
+    with pytest.raises(ServiceError, match="quiescent repository window"):
+        service.reconcile_run("primary", token, ReconciliationOutcome.FAILED)
+    assert (stage / "db.sqlite").exists()
     assert service.ledger.inspect(repository_key(service._identity("primary")), token)[1] is OperationStatus.UNCERTAIN
 
 
@@ -598,14 +654,15 @@ def test_remote_reconcile_recovers_only_empty_owned_inode_gap(tmp_path, monkeypa
     artifact.directory.mkdir(mode=0o700)
     if foreign:
         (artifact.directory / "unexpected").write_text("keep")
-    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(plan, stdout=b"[]"))
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, stdout=b"" if "locks" in plan.argv else b"[]"))
     if foreign:
         with pytest.raises(ServiceError, match="empty owned stage"):
-            service.reconcile_run("primary", token, ReconciliationOutcome.ABANDONED)
+            service.reconcile_run("primary", token, ReconciliationOutcome.ABANDONED, quiescent_window_confirmed=True)
         assert (artifact.directory / "unexpected").read_text() == "keep"
         assert json.loads(artifact.record_path.read_text())["stage_inode"] is None
     else:
-        result = service.reconcile_run("primary", token, ReconciliationOutcome.ABANDONED)
+        result = service.reconcile_run("primary", token, ReconciliationOutcome.ABANDONED, quiescent_window_confirmed=True)
         assert result["retained_exports"] is True
         assert json.loads(artifact.record_path.read_text())["stage_inode"] == artifact.directory.stat().st_ino
         service.discard_exports("primary", token, result["artifact_record_sha256"])
@@ -626,7 +683,7 @@ def test_legacy_remote_capture_reconciles_without_record_but_marked_new_refuses(
     with service.ledger.begin(marked):
         pass
     with pytest.raises(ServiceError, match="New remote capture artifact record is missing"):
-        service.reconcile_run("primary", marked.operation_id, ReconciliationOutcome.ABANDONED)
+        service.reconcile_run("primary", marked.operation_id, ReconciliationOutcome.ABANDONED, quiescent_window_confirmed=True)
     assert service.ledger.inspect(marked.repository_id, marked.operation_id)[1] is OperationStatus.UNCERTAIN
 
 
@@ -665,7 +722,7 @@ def test_remote_reconciliation_rejects_foreign_stage_entry(tmp_path, monkeypatch
     monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
         "unsafe stage reached remote inspection"))
     with pytest.raises(ServiceError, match="artifact"):
-        service.reconcile_run("primary", token, ReconciliationOutcome.FAILED)
+        service.reconcile_run("primary", token, ReconciliationOutcome.FAILED, quiescent_window_confirmed=True)
     assert extra.is_symlink() if foreign == "symlink" else extra.exists()
     assert (stage / "db.sqlite").exists()
 

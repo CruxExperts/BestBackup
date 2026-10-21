@@ -838,6 +838,10 @@
         "minLength": 1,
         "type": "string"
       },
+      "quiescent_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      },
       "repository": {
         "minLength": 1,
         "type": "string"

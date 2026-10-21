@@ -68,6 +68,25 @@ def test_schema_and_sanitized_listing(service):
     assert help_data["ui"]["activate"]["help"].startswith("Enable and start")
 
 
+@pytest.mark.parametrize("quiet_window", [False, True])
+def test_reconcile_cli_forwards_quiet_window(service, monkeypatch, quiet_window):
+    calls = []
+
+    def reconcile(self, repository, operation_id, outcome, *,
+                  quiescent_window_confirmed=False, cancel=None):
+        calls.append((repository, operation_id, outcome.value, quiescent_window_confirmed))
+        return {"replayed": False}
+
+    monkeypatch.setattr(type(service), "reconcile_run", reconcile)
+    arguments = ["runs", "reconcile", "--repository", "local", "--operation-id", "a" * 32,
+                 "--outcome", "failed", "--repository-reviewed"]
+    if quiet_window:
+        arguments.append("--quiescent-window-confirmed")
+    result = invoke(service, arguments)
+    assert result.exit_code == 0, result.output
+    assert calls == [("local", "a" * 32, "failed", quiet_window)]
+
+
 def test_central_acceptance_dispatch_uses_independent_recovery_owner(monkeypatch):
     from pathlib import Path
     from bbackup import production_operations as module

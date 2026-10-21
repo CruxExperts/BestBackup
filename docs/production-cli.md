@@ -290,6 +290,7 @@ Record an administrator-reviewed outcome for an uncertain operation without repl
 - `--operation-id`: string.
 - `--outcome`: string.
 - `--repository-reviewed`: boolean.
+- `--quiescent-window-confirmed`: boolean.
 
 ## `runs retained-exports`
 

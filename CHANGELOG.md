@@ -64,6 +64,9 @@ current uv-based install, development, and release instructions.
 
 ### Fixed
 
+- Remote capture reconciliation uses Restic reads without cloud lock writes,
+  requires an acknowledged quiet window and refuses observed repository locks
+  before and after inspection. It never retries an uncertain upload.
 - Remote database captures retain completed exports after failed or uncertain
   uploads and receipt failures. Read-only reconciliation verifies the matching
   snapshot before cleanup; bounded discovery and digest-bound explicit disposal

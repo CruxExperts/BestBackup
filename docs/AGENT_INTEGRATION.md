@@ -71,6 +71,10 @@ If a mutating command returns `requires_reconciliation` or the connection is los
 For retained remote database exports, successful reconciliation verifies the
 snapshot and each export's actual bytes before repairing the capture receipt
 and releasing its owned staging files. A failed outcome retains the exports.
+Remote capture reconciliation also requires `quiescent_window_confirmed: true`
+after stopping repository writers for the entire inspection. It uses Restic's
+`--no-lock` for reads and refuses observed repository locks; those observations
+cannot prevent a new writer from starting elsewhere.
 `runs retained-exports` discovers bounded capture IDs, declared counts and record
 digests, including captures stopped before dispatch with no ledger row.
 `runs discard-exports` explicitly discards reviewed failed exports using the exact

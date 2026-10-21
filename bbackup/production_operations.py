@@ -218,6 +218,7 @@ def _service_operation(service, command, values, config_path, bindings_path, can
         except ValueError:
             raise ConfigurationError("Invalid reconciliation outcome") from None
         return service.reconcile_run(values["repository"], values["operation_id"], outcome,
+                                     quiescent_window_confirmed=values["quiescent_window_confirmed"],
                                      cancel=cancel)
     if command == "runs retained-exports":
         return service.retained_exports(values["repository"], limit=values["limit"],

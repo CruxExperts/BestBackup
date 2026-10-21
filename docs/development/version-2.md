@@ -180,6 +180,10 @@ digest and a persisted reviewed failed outcome, verifies owned files under the
 staging lease, and keeps a disposal audit. It does not upload or replay a capture.
 Persistent dedicated staging is required for reboot survival; `tmpfs` retains
 exports only across process exit. Missing or changed retained data fails closed.
+Remote capture reconciliation requires an explicitly acknowledged quiet window
+and uses Restic `--no-lock` reads to avoid creating cloud lock objects. Lock
+observations before and after inspection reject active locks but cannot enforce
+quiescence across machines; repository writers must remain stopped throughout.
 
 The unreleased central retention slice adds explicit catalog enrollment and
 private recurring grants, signed central acceptance selection, exact manifest

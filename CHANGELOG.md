@@ -40,6 +40,11 @@ current uv-based install, development, and release instructions.
 
 ### Qualification evidence
 
+- On 2026-10-21, a root-covered files/SQLite rehearsal passed in two fresh
+  Ubuntu 24.04 AMD64 guests. The replacement restored encrypted data, rebuilt
+  fixture accounts and metadata, and verified application startup. The logical
+  fixture was 56,293 bytes; the two-guest run took 90.1 seconds. This is local
+  emulation, with no off-host custody or complete-machine qualification.
 - On 2026-10-20, a small live B2 S3 remote-primary source trial passed two
   captures, a repository check, restores of both snapshots, and seven denied
   forbidden-operation checks using a bucket- and machine-prefix-restricted

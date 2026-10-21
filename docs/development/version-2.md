@@ -164,8 +164,35 @@ drift, private evidence integrity and unprivileged readability. A local WAL-mode
 SQLite/files drill restores committed rows, omits uncommitted rows and raw
 database/journal files, validates export provenance, and reconstructs original
 metadata with the reviewed recipe. Privileged
-full-scope capture, metadata/secrets/users/application reconstruction on a clean
-replacement, and final remote-server qualification remain outstanding for #24.
+complete-machine recovery and final remote-server qualification remain
+outstanding for #24.
+
+On 2026-10-21, the opt-in `covered-root` scenario in
+[`qualify_systemd.py`](../../scripts/qualify_systemd.py) passed a separate
+workstation rehearsal in two fresh Ubuntu 24.04 AMD64 guests. Both installed
+the exact wheel built from signed commit `3755ee0`; its SHA-256 was
+`7106094a242975cc51365d45c72f5518fb76eb2a0feadaee3a4211edd85748da`.
+The source used actual Linux inventory, root-owned enrollment and rendered
+system units, then captured through the root timer and performed a verified
+production restore. The replacement used a distinct machine identity and OS
+overlay; it received the dedicated recovery disk and candidate inputs, without
+access to the source OS overlay or a plaintext application-data fallback.
+
+All twelve evidence checks passed: committed-only SQLite export and manifest
+hashes, raw database/sidecar exclusion, restored synthetic secret and application
+output, reconstructed fixture account, and numeric ownership, mode, hard/symbolic
+links, extended attributes and an actual named-user ACL. Reconstruction executed
+the reviewed procedures and started the restored application through systemd;
+the fixture and backup units were verified afterward. The logical fixture contained
+56,293 bytes on a 256 MiB recovery disk. The two-guest run took 90.1 seconds;
+replacement completion appeared 18.5 seconds after its kernel boot, including
+5.8 seconds in its qualification stage. These small-fixture measurements do not
+estimate production recovery time. The harness's 39 focused tests passed.
+
+The result is `local-emulation-only`. Shared local recovery media does not
+establish independently controlled off-host escrow, provider protection, or
+complete-machine recovery. It does not extend the published v2.0.3 support
+scope or complete the final remote-server acceptance.
 
 ### Remote-primary and central retention (unreleased)
 

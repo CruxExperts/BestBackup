@@ -90,6 +90,16 @@ passwords, guest disks, and machine identifiers remain under ignored
 See [recorded qualification scope](../docs/development/version-2.md) before
 making support claims.
 
+Add `--scenario covered-root` to the same command for a separate root-coverage
+and replacement rehearsal. It installs units inside disposable guests, reviews
+their real Linux inventory, and captures a tiny files/SQLite application fixture.
+A fresh replacement overlay receives the small recovery disk and candidate
+inputs, then restores data, reconstructs fixture identities and metadata, and
+checks application startup. The source operating-system overlay is not attached
+to the replacement. Evidence is classified as local emulation; it does not
+qualify off-host custody, provider protection or complete-machine recovery.
+The default `timer-reboot` scenario remains the ordinary user-timer drill.
+
 ### Build a native Ubuntu package
 
 

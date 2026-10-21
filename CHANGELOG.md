@@ -47,6 +47,12 @@ current uv-based install, development, and release instructions.
 
 ### Qualification evidence
 
+- On 2026-10-21, a local S3 emulator captured a small, compressible
+  2,245,463-byte logical fixture with 1,769,472 bytes of combined writable
+  filesystem capacity. A controlled pressure failure stopped the next capture;
+  a separate read-only check and full restore verified the earlier snapshot.
+  The original harness stopped at a symlink-listing assertion; its failed
+  result is preserved separately from the successful recovery continuation.
 - On 2026-10-21, live B2 central maintenance completed a zero-forget plan and
   native no-repack prune. Both accepted snapshots restored afterward, all 32
   previously observed versions survived, and the catalog remained unchanged.

@@ -569,6 +569,41 @@ check passed, preserving the earlier recovery points after the budget failure.
 The export source was about 2 MiB; no large backup set or internet transfer was
 used.
 
+#### Aggregate-capacity and active-pressure trial
+
+On 2026-10-21, unreleased code at `d33354a` captured a small, compressible
+2,245,463-byte logical baseline to a local Garage S3 emulator. The isolated
+source had a read-only root filesystem and read-only fixture inputs. Its total
+writable filesystem capacity was 1,769,472 bytes: 1,048,576 for staging,
+524,288 for private state, 131,072 for temporary files, and 65,536 for shared
+memory. The baseline exceeded that combined capacity, not just staging.
+Restic cache was disabled. Capture used a loopback HTTPS proxy; internet backup
+traffic was zero.
+
+A second capture included a new 32-byte trigger. While its native Restic child
+was sending a data PUT, a task-owned filler crossed the configured
+131,072-byte free-space threshold; the observed minimum was 126,976 bytes.
+The runner stopped the child and reported `resource_budget_exceeded`, with
+both completion flags false and no replay. A subsequent capture was blocked.
+After checked filler removal, read-only reconciliation recorded the failed
+capture without repeating upload; its recovery artifacts remained preserved.
+The operation ledger also records a successful full read-data check.
+
+The original harness then stopped at a symlink metadata assertion because
+Restic's JSON listing omitted the link target. That blocked result remains
+unchanged. Preserved state and staging archives bound a separate read-only
+continuation in a new verification container. Its no-lock full read-data check
+and verified restore passed. All three files matched source sizes and SHA-256
+digests, including the hidden synthetic credential file and 2,184,000-byte
+data file. The restored symlink targeted `data.txt`; the pressure-only trigger
+was absent. The continuation did not replay capture or reconciliation.
+
+This qualifies only the small local scenario. It does not measure normal peak
+storage, incompressible-data scale, host memory, persistent staging across
+reboot, off-host recovery, or production recovery timing. Reserve checks remain
+observed thresholds rather than a hard guarantee. Final remote-server
+qualification for #26 remains deferred.
+
 ### Workstation implementation checks - 2026-10-20
 
 The initial implementation suite passed **1,057 tests with one skip**, using

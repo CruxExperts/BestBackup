@@ -522,6 +522,13 @@ thresholds, not a guarantee against unrelated writers between checks; results
 report `free_space_reserve_hard_guaranteed: false`. Observed changes in filesystem
 use are not attributed exclusively to the backup process.
 
+A small local emulator trial captured 2,245,463 logical bytes with only
+1,769,472 bytes of combined writable filesystem capacity. A subsequent
+controlled pressure failure stopped capture, and a separate check and full
+restore verified the earlier recovery point. This used compressible synthetic
+data and establishes no production capacity estimate; see the
+[aggregate-capacity and pressure trial](development/version-2.md#aggregate-capacity-and-active-pressure-trial).
+
 Completed remote database exports are unique recovery artifacts, not disposable
 cache. Their operation-owned staging files and private hash records survive a
 failed or uncertain upload, cancellation, or receipt failure. New captures stay

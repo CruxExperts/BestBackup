@@ -304,6 +304,13 @@ environments separate. A management key's failure to satisfy the restricted
 source profile does not make it unusable for its intended management operation.
 Supplying a broad key never expands the reviewed target or retention grant.
 
+For Backblaze's S3 route, use a standard application key with the capabilities
+needed for that role. A master key can remain in the native-API provisioning
+environment; do not transfer it into S3 credential variables. Provisioning an
+application key requires `writeKeys`. See Backblaze's
+[application-key roles](https://www.backblaze.com/docs/cloud-storage-application-keys)
+and [key-creation API](https://www.backblaze.com/apidocs/b2-create-key).
+
 For local development, distinct names such as `BBACKUP_B2_PROVISIONER_KEY_ID`
 and `BBACKUP_B2_PROVISIONER_KEY` avoid collisions with source credentials. Transfer
 only the intended role's values into the provider's standard environment names

@@ -189,6 +189,16 @@ published release artifacts or a claim that the open live qualification work is
 complete. All tracked README entry points were reviewed, with current-state
 links and support boundaries aligned while preserving historical release records.
 
+A fresh Ubuntu 24.04.5 KVM guest passed all ten existing user-timer checks across
+three boots in 333.9 seconds. The tested unreleased wheel SHA-256 was
+`e9ad97c9d9575bc1ca1ca0a0bb1efaf43f6512fc75aa8377d69f00e19df94bbc`.
+It exercised enrollment, capture/copy/byte-matched restore, missed-timer
+catch-up, disabled timers, overlap refusal, interrupted-operation uncertainty
+and no replay. Both repositories remained in that guest. This does not qualify
+root covered jobs, live B2 or off-host recovery. The subsequent covered-timer
+temporary-source-view correction passed all 29 focused scheduling/coverage
+checks; ordinary timer rendering remained unchanged.
+
 ### Existing version-2 behavior
 
 - Strict version-2 JSON configuration rejects duplicate keys, unknown fields,
@@ -208,7 +218,7 @@ links and support boundaries aligned while preserving historical release records
 ### Native Docker capture and recovery
 
 This implemented path is not production-qualified and is outside the selected
-stable v2.0.2 release scope. Docker capture is opt-in and requires a local Docker Unix socket in the private
+stable v2.0.3 release scope. Docker capture is opt-in and requires a local Docker Unix socket in the private
 host bindings. The portable source policy names one container and requires an
 explicit stop-and-restart window:
 

@@ -15,6 +15,7 @@ The [release dependency evidence](development/release-dependencies.json) records
 | Maintain an older Docker/YAML workflow | [Legacy management](management.md) and [encryption compatibility](encryption.md) |
 | Schedule jobs or integrate with scripts and agents | [Quick start: apply a schedule](../QUICKSTART.md#apply-a-schedule-deliberately), [agent integration](AGENT_INTEGRATION.md), and the [production command reference](production-cli.md) |
 | Check what v2.0.3 qualifies | [Version 2 qualification record](development/version-2.md) |
+| Evaluate unreleased cloud recovery, retention or Linux coverage | [Development program and limits](development/version-2.md#unreleased-cloud-and-machine-recovery-program) and [cloud storage](cloud-storage.md) |
 
 ## Operator references
 

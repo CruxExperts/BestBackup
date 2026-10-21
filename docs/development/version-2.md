@@ -391,6 +391,36 @@ because the test temporary path exceeded the platform limit, then passed in a
 separate short-path run. The legacy Docker roundtrip still skipped after its
 backup returned false and supplies no Docker recovery qualification.
 
+#### Live B2 central-maintenance trial
+
+On 2026-10-21, unreleased maintenance code at `d33354a` passed a live B2
+workstation trial using the previously measured two-snapshot fixture. Both
+snapshots received genuine, separately signed central acceptance records.
+The reviewed immutable plan protected both snapshots and their ten dependency
+versions, covering 201,834 current payload bytes, and selected no snapshots to
+forget. Production CLI execution completed all six phases, including an actual
+`prune --max-repack-size 0`. A zero-forget plan still performs native mutations.
+
+A subsequent full read-data check and restores of both snapshots passed.
+Payload, hidden-file, symlink, and initial/incremental contents matched the
+fixture. All 32 versions observed before maintenance remained present, and the
+central catalog digest was unchanged. The final inventory added 16 lock-object
+versions and 16 hide markers, with no new index versions; permanent version
+deletion was not observed. These changes include maintenance and its subsequent
+verification, rather than measuring prune alone.
+
+The isolated central process used distinct read-only verifier and inspection
+keys and a bucket/prefix-restricted Restic read/list/write key. Provisioning and
+permanent-deletion credentials were absent. The maintenance phase used a 1 MiB
+staging mount, a configured 65,536-byte free-space threshold, and disabled cache.
+Checkpoint preparation and independent acceptance used a separate central
+workspace; that preparation is not covered by the maintenance disk budget.
+
+This qualifies only the small, zero-forget maintenance exercise. It does not
+demonstrate aged reclamation, an elapsed protection window, independently held
+off-host escrow, or final remote-server recovery. `protection_qualified` remains
+false, the feature remains unreleased, and #25 remains open.
+
 #### Live Backblaze B2 source trial
 
 On 2026-10-20, the unreleased workstation checkout at commit

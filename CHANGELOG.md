@@ -47,6 +47,11 @@ current uv-based install, development, and release instructions.
 
 ### Qualification evidence
 
+- On 2026-10-21, live B2 central maintenance completed a zero-forget plan and
+  native no-repack prune. Both accepted snapshots restored afterward, all 32
+  previously observed versions survived, and the catalog remained unchanged.
+  This small workstation result leaves aged reclamation, the protection window,
+  and off-host recovery unqualified.
 - On 2026-10-21, isolated PostgreSQL 17.11 containers passed covered capture
   and restore into a fresh replacement database. The encrypted snapshot omitted
   raw PostgreSQL files; recovered materials and their tested procedure rebuilt

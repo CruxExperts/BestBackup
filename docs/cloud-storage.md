@@ -409,6 +409,16 @@ Healthy repository checks alone do not prove that prune completed. Reconciliatio
 also verifies protected historical versions and records only what its evidence
 establishes. No automatic replay or implicit repository initialization occurs.
 
+A small live B2 workstation trial on 2026-10-21 completed the production CLI
+maintenance phases, including native no-repack prune, with zero snapshots
+selected for forgetting. Both independently accepted snapshots restored
+correctly afterward, all 32 previously observed cloud versions survived, and
+the catalog stayed unchanged. The maintenance phase used a 1 MiB staging mount
+and disabled cache with separate scoped read-only and read/list/write keys.
+Central checkpoint preparation used a separate workspace. This does not
+qualify aged physical reclamation or the promised recovery window; see the
+[maintenance trial and limits](development/version-2.md#live-b2-central-maintenance-trial).
+
 ## Bind the cloud repository
 
 Follow [the quick start](../QUICKSTART.md) to create your local repository, source,

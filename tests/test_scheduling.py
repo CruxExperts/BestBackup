@@ -80,6 +80,25 @@ def test_root_renderer_uses_shared_production_command_and_requires_trusted_input
     assert checked[-1] == (paths["bindings"], {"private": True})
 
 
+@pytest.mark.parametrize("covered", [False, True])
+@pytest.mark.parametrize("system", [False, True])
+def test_covered_timers_preserve_reviewed_temporary_source_view(monkeypatch, covered, system):
+    scope = {"schema_version": 1, "approved_roots": ["system"], "require_privileged": system,
+             "filesystem_boundaries": "explicit", "metadata_expectations": {
+                 key: True for key in ("numeric_owner", "mode", "acl", "xattr", "links")}}
+    job = Job(name="whole-system", repository="primary", sources=("files",),
+              coverage_policy=scope if covered else None)
+    monkeypatch.setattr("bbackup.scheduling.os.geteuid", lambda: 0)
+    monkeypatch.setattr("bbackup.scheduling._root_owned_path", lambda *args, **kwargs: None)
+    render = system_job_units if system else job_units
+    unit = render(job, executable=Path("/usr/bin/bbackup"),
+                  config=Path("/etc/bbackup/config.json"),
+                  bindings=Path("/etc/bbackup/bindings.json"))["bbackup-whole-system.service"]
+    assert ("PrivateTmp=no\n" if covered else "PrivateTmp=yes\n") in unit
+    assert "NoNewPrivileges=yes\n" in unit
+    assert "UMask=0077\n" in unit
+
+
 def test_root_preflight_rejects_user_controlled_ancestors_and_bindings(tmp_path, monkeypatch):
     from bbackup.scheduling import _root_owned_path
     monkeypatch.setattr("bbackup.scheduling.os.geteuid", lambda: 0)

@@ -17,12 +17,13 @@ def _argument(path: Path) -> str:
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
 
 
-def _service_unit(command: str) -> str:
+def _service_unit(command: str, *, private_tmp: bool = True) -> str:
     return (
         "[Unit]\nDescription=bbackup scheduled capture\nWants=network-online.target\n"
         "After=network-online.target\n\n[Service]\nType=exec\n"
         f"ExecStart={command}\nUMask=0077\nKillMode=control-group\n"
-        "TimeoutStopSec=30\nNoNewPrivileges=yes\nPrivateTmp=yes\n"
+        "TimeoutStopSec=30\nNoNewPrivileges=yes\n"
+        f"PrivateTmp={'yes' if private_tmp else 'no'}\n"
     )
 
 
@@ -40,7 +41,9 @@ def job_units(job: Job, *, executable: Path, config: Path, bindings: Path) -> di
                         "--bindings", _argument(bindings), "jobs", "run", "--name", job.name))
     service_unit = f"bbackup-{job.name}.service"
     return {
-        service_unit: _service_unit(command),
+        # Covered capture must see the same explicitly reviewed filesystem
+        # namespace as discovery, including any approved temporary paths.
+        service_unit: _service_unit(command, private_tmp=job.coverage_policy is None),
         f"bbackup-{job.name}.timer": _timer_unit(
             job.schedule, service_unit, "bbackup capture schedule"
         ),

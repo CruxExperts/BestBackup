@@ -1,12 +1,12 @@
 # Version 2 development
 
-> Stable v2.0.2 production qualification is limited to the tested scope
+> Stable v2.0.3 production qualification is limited to the tested scope
 > recorded below. Other implemented paths remain unqualified or deferred.
 > See the 2026-10-17 qualification record for exact evidence and limits.
 
 ## Direction and delivery order
 
-The selected stable v2.0.2 release scope is local/file capture and restore,
+The selected stable v2.0.3 release scope is local/file capture and restore,
 live capture-restore drills for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB
 11.8.9, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages.
 The CLI and Textual dashboard share one operations service. Existing 1.x commands
@@ -121,6 +121,11 @@ persistent and the service dispatches through the same production command.
 Review and install those units deliberately using the system administrator's
 normal procedure. User-level `service install` remains unchanged.
 
+Units for opt-in covered jobs use `PrivateTmp=no` so scheduled discovery and
+capture see the same reviewed `/tmp` and `/var/tmp` sources. Ordinary jobs retain
+`PrivateTmp=yes`; their existing hardening is unchanged. Coverage still refuses
+runtime-state/repository recursion and detects real scoped mount changes.
+
 `coverage recovery-evidence` assesses a private record against the exact current
 baseline and snapshot. Local fixture records can produce `recovery_status:
 emulated`; absent, incomplete or unverified independent records stay `untested`.
@@ -130,7 +135,7 @@ drift, private evidence integrity and unprivileged readability. Privileged
 full-scope capture, metadata/secrets/users/application reconstruction on a clean
 replacement, and final remote-server qualification remain outstanding for #24.
 
-### Existing version-2 behavior
+### Remote-primary and central retention (unreleased)
 
 The unreleased remote-primary implementation adds HTTPS S3 primary repositories,
 versioned resource budgets, a dedicated capacity-bounded staging mount, disabled
@@ -160,6 +165,31 @@ PUT payloads were 4,979/4,113 bytes; internet backup traffic was zero. The sourc
 was intentionally repetitive and small, so these numbers are fixture evidence,
 not performance or cost estimates. This does not qualify provider permissions,
 independent disaster recovery or an entire Linux machine.
+
+A second small local drill also refused a SQLite export larger than the 1 MiB
+staging capacity before uploading any export data. A subsequent full repository
+check passed, preserving the earlier recovery points after the budget failure.
+The export source was about 2 MiB; no large backup set or internet transfer was
+used.
+
+### Workstation implementation checks - 2026-10-20
+
+The full repository suite passed **1,057 tests with one skip**, using eight
+workers under the shared CPU budget. Focused regressions and independent source
+review covered restricted-key assessment, separately signed central acceptance,
+retention dependency loss and uncertain deletion, remote-primary resource
+failure, enforced Linux exclusions and mount-namespace drift. Generated CLI
+catalogs/schemas, version synchronization, publishing readiness, Markdown and
+asset provenance checks passed. Changed Python paths passed Ruff and compilation.
+
+An offline wheel/source build passed portable source-archive checks and an
+isolated installed-wheel smoke test. These are checks of the unreleased
+development checkout, still carrying package version 2.0.3; they are not new
+published release artifacts or a claim that the open live qualification work is
+complete. All tracked README entry points were reviewed, with current-state
+links and support boundaries aligned while preserving historical release records.
+
+### Existing version-2 behavior
 
 - Strict version-2 JSON configuration rejects duplicate keys, unknown fields,
   unsupported source types, and inconsistent repository references. Private host
@@ -426,12 +456,17 @@ another host using a different ledger. Restic provides its own repository locks,
 but independent recovery checkpoints additionally need a coordinated quiescent
 window across all writers.
 
-The v2 retention workflow has no automatic deletion or pruning schedule. Local retention can
+The local snapshot-retention workflow has no automatic deletion or pruning schedule. It can
 forget explicitly reviewed snapshots using restic's daily selection policy,
 grouped by host and filtered by the job tag. Seven local daily recovery points
 is the default; this is not a count of the last seven captures. Cloud defaults
 of thirty daily, eight weekly, and twelve monthly points remain policy, not a
 qualified provider lifecycle or pruning implementation.
+
+Experimental central cloud retention is a separate catalog/grant and reviewed
+plan/apply workflow for noncurrent object versions. It never runs Restic
+`forget`/`prune` or compacts current packs. See the
+[central retention guide](../cloud-storage.md#central-noncurrent-version-retention-unreleased).
 
 ```bash
 bbackup production --config config.json --bindings bindings.json retention plan --job daily

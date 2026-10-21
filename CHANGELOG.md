@@ -29,6 +29,9 @@ current uv-based install, development, and release instructions.
 
 ### Fixed
 
+- Covered user/root timers preserve the reviewed temporary-directory source
+  view instead of substituting systemd private mounts; ordinary jobs retain
+  their private temporary directories.
 - Release publication locates the exact draft by release ID and refuses an existing draft or published tag before creation, including drafts hidden from lookup by tag.
 
 ---

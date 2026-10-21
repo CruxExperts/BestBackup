@@ -10,7 +10,10 @@ protection or production recovery. No live AWS capture/check/restore result is
 recorded. The local Garage S3 test also passed capture, copy, full-data checking,
 and restore, but does not qualify B2 or Amazon S3. Treat the provider setup below
 as experimental; keep B2/AWS outside production recovery until the remaining
-provider and independent-recovery evidence is complete.
+provider and independent-recovery evidence is complete. A separate live B2
+lifecycle-overlap guard confirmed only the configuration check and central
+retention refusal; it did not test elapsed expiry or physical deletion. See the
+[guard evidence](#b2-lifecycle-overlap-guard-unreleased).
 
 ## Choose a connection
 
@@ -293,6 +296,37 @@ lifecycle changes, cancellation, contention, expiry, and lost responses before
 and after deletion. They do not establish B2/AWS semantics or production savings.
 `protection_qualified` remains false.
 
+### B2 lifecycle-overlap guard (unreleased)
+
+On 2026-10-21, a new `allPrivate` B2 bucket was created with File Lock enabled,
+default retention `NONE`, and overlapping native lifecycle rules: a broader
+prefix hides files after 3,650 days, while a nested prefix deletes noncurrent
+versions after 3,651 days. Native B2 allows overlapping prefixes and combines
+the smallest non-null value for each action
+([native lifecycle rules](https://www.backblaze.com/docs/en/cloud-storage-lifecycle-rules)).
+The S3-compatible `Get Lifecycle Configuration` read returned the three
+corresponding actions: timed hide, orphan-marker removal, and noncurrent-version
+deletion. Backblaze documents this mapping in its
+[S3 Get Lifecycle Configuration reference](https://www.backblaze.com/apidocs/s3-get-lifecycle-configuration).
+Because S3 `Put Lifecycle Configuration` rejects overlapping prefix filters,
+the rules were installed through Native B2 only, at bucket creation
+([S3 Put Lifecycle Configuration](https://www.backblaze.com/apidocs/s3-put-lifecycle-configuration)).
+
+The one-hour bucket-scoped verifier key had only `listBuckets`, `readBuckets`,
+`readBucketLifecycleRules`, and `readBucketRetentions`; it had no object or
+administration capabilities. The nonroot verification container had a
+read-only root and fixture mounts, a separate writable work mount, and no
+Envman or provisioner credentials. Native readback confirmed bucket type,
+File Lock, default retention, and both rules; S3 readback confirmed enabled
+versioning and the mapped actions. The actual central-retention inspection
+raised `CloudError: Enabled bucket lifecycle expiration blocks central retention`.
+A read-only first-entry inventory observation found no versions; its receipt is
+bounded to that first page. No objects were uploaded, no bucket setting was
+updated, and no deletion was attempted. This tests the configuration guard only,
+not elapsed expiry, physical reclamation, or an object-level protection window.
+The [full qualification record](development/version-2.md#live-b2-lifecycle-overlap-guard-trial)
+also records the separate maintenance-interruption result.
+
 ### Central snapshot maintenance (unreleased)
 
 The separate experimental `cloud-maintenance` commands retire obsolete visible
@@ -421,6 +455,16 @@ qualify aged physical reclamation or the promised recovery window; see the
 In a separate live changed-plan test, an eight-byte probe invalidated a fresh
 plan. Apply was rejected before maintenance-ledger entry, forget, or prune;
 ordinary inspection still created and released two temporary repository locks.
+
+A separate live interruption trial used one zero-forget plan and one small
+fixture. After confirming the owned native prune process, durable intent, and a
+fresh lock witness, one SIGINT reached the owned CLI. The native process
+stopped and the CLI exited 3. After Restic processes were quiescent, one
+read-only reconciliation recorded an abandoned plan while the prune outcome remained uncertain; apply
+was not replayed. A no-lock full read and two restores matched the fixture, all
+69 previously observed provider objects and markers survived, and the catalog
+was unchanged. No permanent version deletion was observed. The drill does not
+claim prune completed; see the [interruption trial limits](development/version-2.md#live-b2-central-maintenance-interruption-trial).
 
 ## Bind the cloud repository
 

@@ -28,6 +28,14 @@ The qualified scope covers local file capture and restore; live capture and rest
 
 B2/AWS, native Docker, ARM64 backup/restore, cross-application-version upgrades and rollback, root-owned systemd package templates, and cloud or off-host protection remain unqualified. ARM64 packages may be built, but build or package-install smoke checks alone do not qualify backup/restore. Keep an independently retrievable copy of repository passwords; a second repository on the same host does not protect against host loss. See [installation](INSTALL.md) for prerequisites and release install instructions.
 
+Recent unreleased live B2 evidence covers a small interrupted maintenance run
+whose prune outcome remained uncertain, and a separate lifecycle-overlap guard
+that made central retention refuse the configured bucket. Neither test proves
+prune completion, elapsed lifecycle expiry, physical reclamation, or provider
+protection. See the [maintenance interruption record](docs/development/version-2.md#live-b2-central-maintenance-interruption-trial)
+and [lifecycle guard evidence](docs/cloud-storage.md#b2-lifecycle-overlap-guard-unreleased).
+Requests #23–#26 remain open; the v2.0.3 tested scope is unchanged.
+
 ## Start with the guided workflow
 
 Development work on restricted cloud credentials, central recovery and

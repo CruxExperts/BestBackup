@@ -35,7 +35,8 @@ privileged Linux recovery ([#24](https://github.com/CruxExperts/BestBackup/issue
 Linux coverage discovery can proceed independently. Each request needs its own
 implementation, focused regressions, documentation, review, signed commit, and
 acceptance evidence before closeout. A release follows completion and final
-source/artifact validation; a mocked provider result cannot qualify B2.
+source/artifact validation; a mocked provider result cannot qualify B2. All four
+requests remain open; the live trials below do not close them.
 
 The first unreleased slice adds a restricted source-key metadata assessment to
 native B2 inspection and an independent `recovery accept` command. Acceptance
@@ -45,9 +46,11 @@ It does not establish independently controlled key custody by itself.
 
 A small live B2 source-path trial and seven denied-operation checks passed on
 2026-10-20; details and limits are recorded below. Historical-version recovery
-after simulated source compromise also passed on this workstation. The elapsed
-thirty-day grace period, lifecycle enforcement, measured transfer costs, and independently
-controlled off-host escrow remain outstanding. No live AWS result is recorded.
+after simulated source compromise also passed on this workstation. A separate
+live lifecycle-overlap guard trial verifies only the configured guard and its
+central-retention refusal; elapsed lifecycle expiry, physical reclamation, the
+thirty-day grace period, measured transfer costs, and independently controlled
+off-host escrow remain outstanding. No live AWS result is recorded.
 Complete privileged Linux capture and replacement-machine recovery also remain
 unqualified. Do not close these issues or expand the supported release scope
 from fixture tests.
@@ -437,6 +440,29 @@ demonstrate aged reclamation, an elapsed protection window, independently held
 off-host escrow, or final remote-server recovery. `protection_qualified` remains
 false, the feature remains unreleased, and #25 remains open.
 
+#### Live B2 central-maintenance interruption trial
+
+A separate 2026-10-21 live workstation trial exercised interruption recovery
+with one zero-forget plan and one small, approximately 200 KiB fixture; it made
+no additional backup sets. A temporary wrapper limited downloads to 1 KiB/s
+only for native `prune`, making that phase easier to observe with the small
+fixture. One SIGINT was
+sent to the owned CLI only after the actual native prune process and its pinned
+launch identity, durable prune intent, and a fresh current-lock witness were
+verified. The native process stopped and the CLI exited with status 3. The
+operation ledger and production prune phase both recorded `uncertain`; the
+drill does not claim prune completed.
+
+After Restic processes were confirmed quiescent, one production read-only
+reconciliation recorded `partial_abandoned` and `reconciled_abandoned`, while
+the prune outcome remained uncertain. The apply was not replayed. A no-lock full
+read and fresh restores of both protected snapshots matched payload,
+hidden-file, symlink, and incremental-file expectations. All 69 previously observed provider objects
+and markers survived, the catalog stayed unchanged, and no permanent version
+deletion was observed. This is evidence for one small interrupted maintenance
+operation and recovery check; it does not qualify prune completion, aged
+reclamation, the protection window, off-host recovery, or production recovery.
+
 #### Live Backblaze B2 source trial
 
 On 2026-10-20, the unreleased workstation checkout at commit
@@ -569,6 +595,41 @@ times and the original policy/grant files, and left the version inventory
 unchanged. This verifies the production integration with fresh grace; it does
 not exercise an aged deletion or an uncertain mutation. No cost/savings,
 off-host, or remote-server qualification is established.
+
+#### Live B2 lifecycle-overlap guard trial
+
+On 2026-10-21, a new `allPrivate` B2 bucket was created with File Lock enabled,
+default retention `NONE`, and two overlapping native lifecycle rules. The
+broader prefix hides files after 3,650 days; the nested prefix deletes
+noncurrent versions after 3,651 days. Backblaze documents that native rules may
+overlap and combine the smallest non-null value for each action
+([native lifecycle rules](https://www.backblaze.com/docs/en/cloud-storage-lifecycle-rules)).
+Its S3-compatible `Get Lifecycle Configuration` returned the corresponding
+three actions: hide after 3,650 days, remove orphan markers, and delete
+noncurrent versions after 3,651 days
+([S3 Get Lifecycle Configuration](https://www.backblaze.com/apidocs/s3-get-lifecycle-configuration)).
+S3 `Put Lifecycle Configuration` rejects overlapping prefixes, so this test
+configured the rules natively at bucket creation
+([S3 Put Lifecycle Configuration](https://www.backblaze.com/apidocs/s3-put-lifecycle-configuration)).
+
+A one-hour bucket-scoped reader had exactly `listBuckets`, `readBuckets`,
+`readBucketLifecycleRules`, and `readBucketRetentions`; it had no object
+read/list/write/delete or administration capabilities. Verification ran as a
+nonroot process with a read-only root and fixture mounts, a separate writable
+work mount, and no Envman or provisioner credentials. Native readback confirmed
+the bucket type, File Lock setting, default retention, and both rules; S3
+readback confirmed enabled versioning and the three mapped actions. The actual
+central-retention bucket inspection raised
+`CloudError: Enabled bucket lifecycle expiration blocks central retention`.
+The read-only inventory observation found no versions in its first entry; that
+receipt is bounded to the first page. No object was uploaded, no bucket setting
+was updated, and no deletion was attempted.
+
+This establishes only the configured overlap guard and central-retention
+refusal. It does not test elapsed lifecycle expiry, physical reclamation, or
+any file-level lock/retention window; no actual file objects were created.
+Central acceptance remains `protection_qualified: false`, requests #23–#26
+remain open, and the selected stable v2.0.3 scope is unchanged.
 
 On 2026-10-20 a workstation-only Garage S3 drill captured a 2,184,000-byte file
 fixture directly to the emulator using a 1,048,576-byte staging mount, ran an

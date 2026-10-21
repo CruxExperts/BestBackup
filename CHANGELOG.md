@@ -60,6 +60,21 @@ current uv-based install, development, and release instructions.
   entry, forget, or prune; inspection created and released two temporary locks.
   This small workstation result leaves aged reclamation, the protection window,
   and off-host recovery unqualified.
+- A separate live B2 maintenance interruption drill used one zero-forget plan
+  and one small fixture. After confirming the owned native prune process, its
+  durable intent, and a fresh lock witness, one SIGINT reached the owned CLI.
+  The native process stopped and the CLI exited 3. One read-only reconciliation
+  after process quiescence recorded an abandoned plan while prune stayed uncertain; apply was
+  not replayed. A no-lock read and two restores matched the fixture, all 69
+  previously observed versions and markers survived, and the catalog was
+  unchanged. This does not claim prune completion or qualify provider protection.
+- A separate new, empty File Lock-enabled B2 bucket tested overlapping native
+  lifecycle rules at creation. Read-only S3 inspection returned the expected
+  hide, orphan-marker, and noncurrent-delete actions, and central retention
+  refused the enabled expiration rules. No objects were uploaded or deleted;
+  this did not test elapsed expiry or physical reclamation. A read-only first-
+  entry inventory observation found no versions. The v2.0.3 support scope
+  remains unchanged, and requests #23–#26 remain open.
 - On 2026-10-21, isolated PostgreSQL 17.11 containers passed covered capture
   and restore into a fresh replacement database. The encrypted snapshot omitted
   raw PostgreSQL files; recovered materials and their tested procedure rebuilt

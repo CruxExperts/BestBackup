@@ -25,6 +25,32 @@ An implemented capability does not establish completion of its entire delivery s
 
 ## Implemented capabilities
 
+### Unreleased cloud and machine recovery program
+
+Open requests are sequenced as restricted B2 recovery
+([#23](https://github.com/CruxExperts/BestBackup/issues/23)), central retention
+([#25](https://github.com/CruxExperts/BestBackup/issues/25)), remote-primary disk
+budgets ([#26](https://github.com/CruxExperts/BestBackup/issues/26)), and integrated
+privileged Linux recovery ([#24](https://github.com/CruxExperts/BestBackup/issues/24)).
+Linux coverage discovery can proceed independently. Each request needs its own
+implementation, focused regressions, documentation, review, signed commit, and
+acceptance evidence before closeout. A release follows completion and final
+source/artifact validation; a mocked provider result cannot qualify B2.
+
+The first unreleased slice adds a restricted source-key metadata assessment to
+native B2 inspection and an independent `recovery accept` command. Acceptance
+reconstructs signed exact versions using the escrow kit, checks the repository
+and snapshot, and signs a central record with a separate verifier fingerprint.
+It does not establish independently controlled key custody by itself.
+
+Live B2 restricted-key capture/check/restore, denied forbidden operations,
+historical recovery after source compromise, lock/lifecycle interactions,
+measured costs, and independent escrow remain outstanding. Complete privileged
+Linux capture and replacement-machine recovery also remain unqualified. Do not
+close these issues or expand the supported release scope from fixture tests.
+
+### Existing version-2 behavior
+
 - Strict version-2 JSON configuration rejects duplicate keys, unknown fields,
   unsupported source types, and inconsistent repository references. Private host
   bindings and password files are separate from portable policy.

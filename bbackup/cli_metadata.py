@@ -1991,6 +1991,14 @@ PRODUCTION_COMMANDS.update({
     "recovery inspect": {"summary": "Inspect cloud versioning and lifecycle without a protection claim.", "fields": {"bucket": "string", "endpoint": "string", "prefix": "optional-string", "region": "optional-string"}},
     "recovery checkpoint": {"summary": "Check a quiescent repository and seal an independent recovery kit.", "fields": {"repository": "string", "snapshot": "string", "bucket": "string", "endpoint": "string", "prefix": "optional-string", "region": "optional-string", "target": "path", "signer": "string", "recipient": "string", "quiescent_window_confirmed": "boolean"}},
     "recovery open": {"summary": "Authenticate and decrypt a recovery kit into a new private directory.", "fields": {"kit": "path", "target": "path", "signer": "string"}},
+    "recovery accept": {
+        "summary": "Independently reconstruct and check a historical repository, then sign central acceptance with a separate verifier key.",
+        "fields": {
+            "kit": "path", "target": "path", "source_signer": "string", "verifier": "string",
+            "repository": "string", "repository_id": "string", "snapshot": "string",
+            "bucket": "string", "endpoint": "string", "prefix": "optional-string", "region": "optional-string",
+        },
+    },
     "recovery restore": {"summary": "Restore signed exact historical object versions into a new local repository.", "fields": {"manifest": "path", "signature": "path", "signer": "string", "password_file": "path", "repository": "string", "repository_id": "string", "snapshot": "string", "bucket": "string", "endpoint": "string", "prefix": "optional-string", "region": "optional-string", "target": "path"}},
 })
 

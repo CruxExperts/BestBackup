@@ -68,6 +68,30 @@ def test_schema_and_sanitized_listing(service):
     assert help_data["ui"]["activate"]["help"].startswith("Enable and start")
 
 
+def test_central_acceptance_dispatch_uses_independent_recovery_owner(monkeypatch):
+    from pathlib import Path
+    from bbackup import production_operations as module
+
+    calls = []
+    adapter = object()
+    monkeypatch.setattr(module, "S3CloudAdapter", lambda *args, **kwargs: adapter)
+    monkeypatch.setattr(module, "accept_recovery_checkpoint", lambda *args, **kwargs: calls.append(
+        (args, kwargs)) or {"protection_qualified": False})
+    values = {
+        "kit": "/private/kit.gpg", "target": "/private/acceptance", "source_signer": "A" * 40,
+        "verifier": "B" * 40, "repository": "cloud", "repository_id": "a" * 64,
+        "snapshot": "b" * 64, "bucket": "backup-bucket", "endpoint": "https://s3.example.test",
+    }
+    result = execute_operation("recovery accept", values)
+    assert result == {"protection_qualified": False}
+    assert calls[0][0] == (adapter, Path(values["kit"]), Path(values["target"]))
+    assert calls[0][1]["trusted_verifier"] == values["verifier"]
+    assert calls[0][1]["source_repository"] == "cloud"
+    schema = execute_operation("skills", {"name": "recovery accept"})["recovery accept"]["input_schema"]
+    assert schema["additionalProperties"] is False
+    assert {"kit", "verifier", "source_signer", "repository_id", "snapshot"} <= set(schema["required"])
+
+
 def test_cli_reports_enrollment_next_action(service):
     assert invoke(service, ["jobs", "list"]).exit_code == 0
     config = service.state / "cli-config.json"

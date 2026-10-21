@@ -229,6 +229,68 @@
     ],
     "type": "object"
   },
+  "recovery accept": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "bucket": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "endpoint": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "kit": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "prefix": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "region": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository_id": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "snapshot": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "source_signer": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "target": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "verifier": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "kit",
+      "target",
+      "source_signer",
+      "verifier",
+      "repository",
+      "repository_id",
+      "snapshot",
+      "bucket",
+      "endpoint"
+    ],
+    "type": "object"
+  },
   "recovery b2-inspect": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,

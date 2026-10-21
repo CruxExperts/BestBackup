@@ -1,6 +1,6 @@
 # Cloud storage: Backblaze B2 and Amazon S3
 
-Keep your first recovery point on local storage. The v2.0.2 tested stable-release
+Keep your first recovery point on local storage. The v2.0.3 tested stable-release
 scope includes local/file capture and restore, selected live database drills,
 headless dashboard happy paths, and AMD64 Ubuntu packages.
 
@@ -60,6 +60,55 @@ For the S3 route, supply the same B2 application key ID and application key unde
 the standard AWS credential variable names in the private process environment.
 For the native restic route, use the native variable names in the table above.
 The native SDK check does not change bucket policies or persist authorization.
+
+### Restricted source profile (unreleased)
+
+The `restricted_source_profile` result is a versioned assessment of the SDK's
+authorization metadata. It requires one exact bucket and a nonempty,
+directory-scoped machine prefix, repository read/list/write capabilities, and
+no permanent-version deletion, administration, or unknown capabilities. A broad
+key can still be inspected, but does not satisfy this profile. An eligible
+metadata result does not prove that an attempted forbidden operation was denied:
+live negative tests and recovery qualification remain required by
+[issue #23](https://github.com/CruxExperts/BestBackup/issues/23).
+
+Use a distinct prefix per machine, such as `machines/MACHINE_ID/`. Keep the
+provisioner, central verifier, and retention executor identities off source
+machines. Backblaze distinguishes deleting by name using `writeFiles` from
+permanently deleting a specific version using `deleteFiles`; a source writer may
+hide names or upload replacement versions. This profile does not prevent those
+attacks. Recovery depends on exact historical version identities, adequate
+noncurrent retention, independent escrow, and successful restoration. See
+[Backblaze's S3 app-key capabilities](https://www.backblaze.com/docs/cloud-storage-s3-compatible-app-keys)
+and [Object Lock behavior](https://www.backblaze.com/docs/cloud-storage-object-lock).
+
+### Central recovery acceptance (unreleased)
+
+On an independent verifier, `recovery accept` opens a source-signed encrypted
+recovery kit, reconstructs the exact historical repository versions, and runs a
+full Restic data check and exact repository/snapshot identity verification. Only
+then does it write a signed central acceptance record into a new private
+directory. The verifier fingerprint must differ from the source signer. Trust
+that fingerprint through separately controlled configuration and keep its
+private signing key and the escrow decryption authority off source hosts. Supply
+complete primary-key fingerprints; signing-subkey fingerprints are rejected.
+
+```bash
+bbackup production recovery accept \
+  --kit /secure/escrow/recovery-kit.gpg --target /secure/acceptances/NEW_RECORD \
+  --source-signer SOURCE_SIGNER_FINGERPRINT --verifier CENTRAL_VERIFIER_FINGERPRINT \
+  --repository cloud --repository-id FULL_REPOSITORY_ID --snapshot FULL_SNAPSHOT_ID \
+  --bucket YOUR_BUCKET --endpoint https://s3.REGION.backblazeb2.com \
+  --prefix machines/MACHINE_ID/
+```
+
+Run this with read-only historical-version access and enough private disk for
+the reconstructed repository. Use the independently retrieved kit and keys;
+the command does not establish their off-host custody. Central verification time
+comes from the verifier, not the source snapshot timestamp. A signed acceptance
+proves only the recorded repository check. It does not prove clean-machine
+recovery, application startup, B2 negative permission tests, or a guaranteed
+historical retention window. `protection_qualified` remains false.
 
 ## Bind the cloud repository
 

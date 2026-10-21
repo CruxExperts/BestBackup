@@ -14,7 +14,7 @@ from .configuration_workspace import ConfigurationWorkspace, read_document
 from .enrollment import parse_pair, policy_lease, read_pair, verify_bytes
 from .models import ConfigurationError
 from .operations import ReconciliationOutcome, repository_key
-from .recovery import (create_checked_kit, open_kit, verify_checkpoint,
+from .recovery import (accept_recovery_checkpoint, create_checked_kit, open_kit, verify_checkpoint,
                        verify_reconstructed_repository)
 from .scheduling import install_user_units, job_units
 from .service import BackupService, ServiceError
@@ -221,6 +221,13 @@ def _recovery_dispatch(service, command, values, cancel):
         return open_kit(Path(values["kit"]), Path(values["target"]), signer=values["signer"], cancel=cancel)
     adapter = S3CloudAdapter(values["bucket"], endpoint_url=values["endpoint"],
                              prefix=values.get("prefix", ""), region_name=values.get("region"))
+    if command == "recovery accept":
+        return accept_recovery_checkpoint(
+            adapter, Path(values["kit"]), Path(values["target"]),
+            source_signer=values["source_signer"], trusted_verifier=values["verifier"],
+            source_repository=values["repository"], repository_id=values["repository_id"],
+            snapshot=values["snapshot"], cancel=cancel,
+        )
     if command == "recovery inspect":
         return asdict(adapter.inspect_lifecycle())
     if command == "recovery checkpoint":

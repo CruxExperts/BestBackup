@@ -164,6 +164,22 @@ Authenticate and decrypt a recovery kit into a new private directory.
 - `--target`: path.
 - `--signer`: string.
 
+## `recovery accept`
+
+Independently reconstruct and check a historical repository, then sign central acceptance with a separate verifier key.
+
+- `--kit`: path.
+- `--target`: path.
+- `--source-signer`: string.
+- `--verifier`: string.
+- `--repository`: string.
+- `--repository-id`: string.
+- `--snapshot`: string.
+- `--bucket`: string.
+- `--endpoint`: string.
+- `--prefix`: optional-string.
+- `--region`: optional-string.
+
 ## `recovery restore`
 
 Restore signed exact historical object versions into a new local repository.

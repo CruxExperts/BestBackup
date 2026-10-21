@@ -12,6 +12,9 @@ current uv-based install, development, and release instructions.
 
 ### Added
 
+- Unreleased restricted B2 source-key metadata assessment and independently
+  checked, separately signed central recovery acceptance. Live B2 protection
+  and complete-machine recovery remain unqualified.
 - Refreshed matching 1280×640 GitHub social preview artwork, embedded ownership metadata, checked provenance, and explicit repository-settings upload instructions.
 
 ### Fixed

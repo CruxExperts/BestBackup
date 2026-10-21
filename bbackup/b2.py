@@ -20,6 +20,7 @@ class B2Error(RuntimeError):
 
 _ADMIN = {
     "deleteFiles",
+    "listKeys",
     "deleteKeys",
     "writeKeys",
     "writeBuckets",
@@ -34,9 +35,77 @@ _ADMIN = {
 }
 _SAFE_CAPABILITIES = {
     "listBuckets", "listAllBucketNames", "listFiles", "readFiles", "writeFiles",
-    "readBucketEncryption", "readBucketRetentions", "readFileRetentions",
-    "readFileLegalHolds", "readBucketReplications", "readBucketNotifications",
+    "readBuckets", "readBucketEncryption", "readBucketRetentions",
+    "readFileRetentions", "readFileLegalHolds", "readBucketReplications",
+    "readBucketNotifications",
 }
+_INSPECTION_CAPABILITIES = {"listBuckets", "listFiles", "readFiles"}
+_PROFILE_CAPABILITIES = _INSPECTION_CAPABILITIES | {"writeFiles"}
+
+
+def _restricted_source_profile(
+    *, bucket_id, bucket_name, allowed_buckets, prefix, allowed_prefix, capabilities
+):
+    """Assess the observed key declaration without claiming live denial proof."""
+    reasons = []
+    bucket_bound = bool(allowed_buckets and len(allowed_buckets) == 1)
+    bucket_matches = bool(
+        bucket_bound and bucket_id == allowed_buckets[0]["id"]
+        and bucket_name == allowed_buckets[0]["name"]
+    )
+    if not bucket_bound:
+        reasons.append("key_not_bucket_bound")
+    if not bucket_id:
+        reasons.append("selected_bucket_id_unavailable")
+    elif bucket_bound and not bucket_matches:
+        reasons.append("key_bucket_id_mismatch")
+
+    prefix_restricted = bool(allowed_prefix)
+    prefix_canonical = bool(
+        prefix_restricted and allowed_prefix.endswith("/") and "\0" not in allowed_prefix
+    )
+    prefix_contains_request = bool(
+        prefix_canonical and prefix.startswith(allowed_prefix)
+    )
+    if not prefix_restricted:
+        reasons.append("machine_prefix_restriction_missing")
+    elif not prefix_canonical:
+        reasons.append("machine_prefix_not_canonical_directory")
+    elif not prefix_contains_request:
+        reasons.append("requested_prefix_outside_machine_prefix")
+
+    observed = set(capabilities)
+    missing = sorted(_PROFILE_CAPABILITIES - observed)
+    if missing:
+        reasons.append("required_capabilities_missing")
+    if "deleteFiles" in observed:
+        reasons.append("permanent_deletion_capability_present")
+    if observed & (_ADMIN - {"deleteFiles"}):
+        reasons.append("administrative_capability_present")
+    if observed - _ADMIN - _SAFE_CAPABILITIES:
+        reasons.append("unrecognized_capability_present")
+
+    return {
+        "version": 1,
+        "status": "eligible_from_observed_metadata" if not reasons else "unqualified",
+        "basis": "sdk_authorization_metadata_only",
+        "reasons": reasons,
+        "required_capabilities": sorted(_PROFILE_CAPABILITIES),
+        "observed_capabilities": sorted(observed),
+        "missing_required_capabilities": missing,
+        "scope": {
+            "key_bucket_bound": bucket_bound,
+            "key_bucket_matches_selected_bucket": bucket_matches,
+            "machine_prefix_restricted": prefix_restricted,
+            "machine_prefix_canonical_directory": prefix_canonical,
+            "requested_prefix_within_machine_prefix": prefix_contains_request,
+        },
+        "negative_test_proof": {
+            "status": "not_performed",
+            "permanent_deletion_denial_demonstrated": False,
+            "administrative_denial_demonstrated": False,
+        },
+    }
 
 
 def _endpoint(value, pattern):
@@ -87,18 +156,35 @@ def inspect_sdk(
             )
             api.authorize_account(key_id, key)
         allowed = api.account_info.get_allowed()
-        capabilities = allowed["capabilities"]
+        if not isinstance(allowed, dict):
+            raise B2Error("B2 authorization metadata is invalid")
+        capabilities = allowed.get("capabilities")
         if (
             not isinstance(capabilities, list)
-            or any(not isinstance(c, str) for c in capabilities)
-            or not {"listBuckets", "listFiles", "readFiles"}.issubset(capabilities)
+            or any(not isinstance(c, str) or not c for c in capabilities)
         ):
+            raise B2Error("B2 authorization metadata is invalid")
+        if not _INSPECTION_CAPABILITIES.issubset(capabilities):
             raise B2Error(
                 "B2 key needs listBuckets, listFiles, and readFiles for inspection"
             )
-        allowed_prefix = allowed.get("namePrefix") or ""
-        if not isinstance(allowed_prefix, str) or not prefix.startswith(allowed_prefix):
-            raise B2Error("Requested prefix is outside the key scope")
+        # b2sdk v3 normalizes provider authorization into a list of buckets.
+        # None means unrestricted; one matching id/name is the source profile.
+        allowed_buckets = allowed.get("buckets")
+        allowed_prefix = allowed.get("namePrefix")
+        if (
+            allowed_buckets is not None
+            and (not isinstance(allowed_buckets, list) or any(
+                not isinstance(item, dict)
+                or not isinstance(item.get("id"), str) or not item["id"]
+                or not isinstance(item.get("name"), str) or not item["name"]
+                for item in allowed_buckets
+            ))
+        ) or (
+            allowed_prefix is not None
+            and (not isinstance(allowed_prefix, str) or "\0" in allowed_prefix)
+        ):
+            raise B2Error("B2 authorization metadata is invalid")
         s3_url = _endpoint(
             api.account_info.get_s3_api_url(), r"s3\.[a-z0-9-]+\.backblazeb2\.com"
         )
@@ -106,15 +192,32 @@ def inspect_sdk(
         if len(matches) != 1 or matches[0].name != bucket:
             raise B2Error("B2 bucket is missing or inaccessible")
         selected = matches[0]
-        # Ask for one version to verify listing access without walking a bucket.
-        versions = iter(
-            selected.ls(path=prefix, latest_only=False, recursive=True, fetch_count=1)
+        selected_bucket_id = getattr(selected, "id_", None)
+        if selected_bucket_id is not None and not isinstance(selected_bucket_id, str):
+            raise B2Error("B2 bucket identity metadata is invalid")
+        profile = _restricted_source_profile(
+            bucket_id=selected_bucket_id,
+            bucket_name=bucket,
+            allowed_buckets=allowed_buckets,
+            prefix=prefix,
+            allowed_prefix=allowed_prefix,
+            capabilities=capabilities,
         )
-        try:
-            next(versions, None)
-        finally:
-            if hasattr(versions, "close"):
-                versions.close()
+        version_listing_verified = False
+        # Inspection remains available to broader observer keys. The stricter
+        # machine-directory assessment is separate from the actual API scope.
+        if prefix.startswith(allowed_prefix or ""):
+            versions = iter(
+                selected.ls(
+                    path=prefix, latest_only=False, recursive=True, fetch_count=1
+                )
+            )
+            try:
+                next(versions, None)
+            finally:
+                if hasattr(versions, "close"):
+                    versions.close()
+            version_listing_verified = True
         rules = selected.lifecycle_rules
         if not isinstance(rules, list):
             raise ValueError()
@@ -146,7 +249,7 @@ def inspect_sdk(
             "s3_endpoint": s3_url,
             "prefix": prefix,
             "bucket_access_verified": True,
-            "version_listing_verified": True,
+            "version_listing_verified": version_listing_verified,
             "read_capability_present": True,
             "write_capability_present": "writeFiles" in capabilities,
             "credential_administration_denied": not administrative,
@@ -155,6 +258,7 @@ def inspect_sdk(
             "observed_noncurrent_days": min(noncurrent_days)
             if noncurrent_days
             else None,
+            "restricted_source_profile": profile,
             "protection_qualified": False,
             "live_recovery_demonstrated": False,
         }

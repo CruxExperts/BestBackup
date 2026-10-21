@@ -117,6 +117,12 @@ Units are installed under an absolute `$XDG_CONFIG_HOME/systemd/user`, or `~/.co
 
 Omit `--activate` to install disabled units. The command never enables lingering, installs a system-wide service, or elevates privileges. User timers require an available user systemd manager; boot operation may require administrator-managed lingering. A differing existing unit is preserved for review. [Installation](INSTALL.md#optional-systemd-scheduling) documents qualification limits.
 
+The unreleased [reviewed Linux coverage workflow](docs/development/version-2.md#reviewed-linux-coverage-unreleased)
+adds explicit private scope discovery, review and drift checks. Its
+`service render-system` command renders root-controlled system units for
+administrator review; it never installs them. A complete scope check does not
+qualify complete-machine disaster recovery.
+
 Persistent timers can catch up after an idle interruption. An interrupted mutation remains uncertain and blocks automatic replay until explicit reconciliation. Retention remains a separate reviewed action; scheduling does not silently prune data.
 
 ## Existing Docker and YAML users

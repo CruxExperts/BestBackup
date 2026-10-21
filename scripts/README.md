@@ -62,8 +62,12 @@ catch-up after a missed schedule, overlap refusal, and an abrupt guest reset
 without automatic replay of an uncertain operation. Both repositories share the
 guest; this does not prove off-host disaster recovery.
 
-The host needs Docker, KVM access, `genisoimage`, `gpgv`, and the Ubuntu cloud-image
-public keyring. Review the script's pinned image/toolchain before running it.
+The host needs Docker, `genisoimage`, `gpgv`, and the Ubuntu cloud-image public
+keyring. KVM hardware virtualization is the default. On hosts without KVM,
+`--accelerator tcg` selects slower software emulation and does not expose
+`/dev/kvm` to the container. The evidence records the selected accelerator;
+an emulated run does not measure native performance. Review the script's pinned
+image/toolchain before running it.
 Supply previously reviewed restic and uv executables, a target-compatible runtime
 wheelhouse, and hash-locked requirements exported from `uv.lock`:
 

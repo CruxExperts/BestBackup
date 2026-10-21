@@ -7,7 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from bbackup.models import Configuration, HostBindings, RepositoryBinding
+from bbackup.models import Configuration, HostBindings, RepositoryBinding, SourceBinding
+from bbackup.linux_coverage import CoverageCheck
 from bbackup.operations import (
     OperationPlan,
     OperationRun,
@@ -52,6 +53,85 @@ def _run(plan, *, status=OperationStatus.SUCCEEDED, exit_code=0, stdout=b""):
         stdout_bytes=len(stdout),
         stderr_bytes=0,
     )
+
+
+def test_covered_capture_requires_enrollment_and_exact_root_mapping(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    data.mkdir()
+    password = data / ".credential"
+    password.write_text("private fixture credential")
+    password.chmod(0o600)
+    scope = {"schema_version": 1, "approved_roots": ["data"],
+             "require_privileged": False, "filesystem_boundaries": "explicit",
+             "metadata_expectations": {name: True for name in
+                                       ("numeric_owner", "mode", "acl", "xattr", "links")}}
+    config = Configuration.parse({"schema_version": 3,
+        "repositories": [{"name": "primary"}],
+        "sources": [{"name": "files", "kind": "files"}],
+        "jobs": [{"name": "daily", "repository": "primary", "sources": ["files"],
+                  "coverage_policy": scope}]})
+    bindings = HostBindings(tmp_path / "state", {
+        "primary": RepositoryBinding(str(tmp_path / "repository"), password),
+    }, source_bindings={"files": SourceBinding(paths=(str(data),))}, schema_version=3,
+        coverage_declarations={"daily": tmp_path / "declaration.json"})
+    service = BackupService(config, bindings)
+    with pytest.raises(ServiceError, match="exact enrolled"):
+        service.capture("daily")
+    service = BackupService(config, bindings, policy_bytes=b'{"policy":1}',
+                            binding_bytes=b'{"binding":1}')
+    calls = []
+    def check(_path, _policy, **kwargs):
+        calls.append(kwargs)
+        return CoverageCheck("complete", (), "a" * 64, "b" * 64, {},
+                             (("data", data, "files", "files"),))
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage", check)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, stdout=(json.dumps({"message_type": "summary", "snapshot_id": "a" * 64}) + "\n").encode()))
+    assert service.capture("daily")["snapshot_id"] == "a" * 64
+    assert calls[0]["policy_bytes"] == b'{"policy":1}'
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage", lambda *_args, **_kwargs:
+        CoverageCheck("complete", (), "a" * 64, "b" * 64, {},
+                      (("data", tmp_path / "other", "files", "files"),)))
+    with pytest.raises(ServiceError, match="root mappings"):
+        service.capture("daily")
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("restic") is None, reason="requires restic")
+def test_covered_exact_exclusion_is_absent_from_real_restored_snapshot(tmp_path, monkeypatch):
+    data = tmp_path / "data[fixture]"
+    data.mkdir()
+    (data / "keep.txt").write_text("keep")
+    excluded = data / "omit*.txt"
+    excluded.write_text("excluded secret")
+    password = tmp_path / "password"
+    password.write_text("fixture-password")
+    password.chmod(0o600)
+    scope = {"schema_version": 1, "approved_roots": ["data"],
+             "require_privileged": False, "filesystem_boundaries": "explicit",
+             "metadata_expectations": {name: True for name in
+                                       ("numeric_owner", "mode", "acl", "xattr", "links")}}
+    config = Configuration.parse({"schema_version": 3,
+        "repositories": [{"name": "primary"}],
+        "sources": [{"name": "files", "kind": "files"}],
+        "jobs": [{"name": "daily", "repository": "primary", "sources": ["files"],
+                  "coverage_policy": scope}]})
+    bindings = HostBindings(tmp_path / "state", {
+        "primary": RepositoryBinding(str(tmp_path / "repository"), password),
+    }, source_bindings={"files": SourceBinding(paths=(str(data),))}, schema_version=3,
+        coverage_declarations={"daily": tmp_path / "declaration.json"})
+    service = BackupService(config, bindings, policy_bytes=b'{"policy":1}',
+                            binding_bytes=b'{"binding":1}')
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage", lambda *_args, **_kwargs:
+        CoverageCheck("complete", (), "a" * 64, "b" * 64, {},
+                      (("data", data, "files", "files"),), (excluded,)))
+    service.initialize("primary")
+    snapshot = service.capture("daily")["snapshot_id"]
+    restored = tmp_path / "restored"
+    service.restore("primary", snapshot, restored)
+    tree = restored / str(data).lstrip("/")
+    assert (tree / "keep.txt").read_text() == "keep"
+    assert not (tree / "omit*.txt").exists()
 
 
 def _remote_service(tmp_path, *, with_replica=False):

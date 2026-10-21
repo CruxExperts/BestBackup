@@ -162,6 +162,40 @@ Render disabled systemd service and persistent timer units.
 - `--name`: string.
 - `--executable`: path.
 
+## `service render-system`
+
+Render root system service and persistent timer units after validating root-controlled executable and configuration paths; never installs them.
+
+- `--name`: string.
+- `--executable`: path.
+
+## `coverage discover`
+
+Inventory exact private Linux scope and record a bounded candidate for review.
+
+- `--name`: string.
+
+## `coverage review`
+
+Approve an exact complete Linux coverage candidate for the enrolled machine, user, policy and bindings.
+
+- `--name`: string.
+- `--candidate-digest`: string.
+
+## `coverage check`
+
+Check reviewed Linux coverage and structural drift without exposing private paths.
+
+- `--name`: string.
+
+## `coverage recovery-evidence`
+
+Assess private local recovery evidence against the exact current baseline and snapshot; never qualifies whole-machine recovery.
+
+- `--name`: string.
+- `--snapshot`: string.
+- `--evidence-file`: optional-string.
+
 ## `service install`
 
 Install reviewed user-level units; activate the exact timer only with --activate.

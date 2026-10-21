@@ -11,12 +11,15 @@ from .b2 import inspect_b2
 from .cli_metadata import PRODUCTION_COMMANDS, production_schema
 from .cloud import S3CloudAdapter, _normalize_endpoint_url
 from .configuration_workspace import ConfigurationWorkspace, read_document
-from .enrollment import _read_regular, parse_pair, policy_lease, read_pair, verify_bytes
+from .enrollment import (_read_regular, machine_identity, parse_pair, policy_lease,
+                         read_pair, verify_bytes)
+from .linux_coverage import (check_coverage, discover_coverage,
+                             evaluate_recovery_evidence, review_coverage)
 from .models import ConfigurationError, strict_json
 from .operations import ReconciliationOutcome, repository_key
 from .recovery import (accept_recovery_checkpoint, create_checked_kit, open_kit, verify_checkpoint,
                        verify_reconstructed_repository)
-from .scheduling import install_user_units, job_units
+from .scheduling import install_user_units, job_units, system_job_units
 from .service import BackupService, ServiceError
 from .service_status import operational_status
 
@@ -66,7 +69,8 @@ def _operation_lease(config_path, bindings_path):
         verify_bytes(current_bindings.state_dir, policy_bytes, binding_bytes)
         if read_pair(config_path, bindings_path) != (policy_bytes, binding_bytes):
             raise ConfigurationError("Configuration changed during enrollment validation; review and retry")
-        yield BackupService(current_config, current_bindings)
+        yield BackupService(current_config, current_bindings,
+                            policy_bytes=policy_bytes, binding_bytes=binding_bytes)
 
 
 def execute_operation(command: str, values: dict[str, Any], *, service: BackupService | None = None,
@@ -106,6 +110,17 @@ def execute_operation(command: str, values: dict[str, Any], *, service: BackupSe
         return workspace.save(read_document(Path(values["document_file"])), values["revision"])
     if command.startswith("recovery ") and command != "recovery checkpoint":
         return _recovery_dispatch(service, command, values, cancel)
+    if command == "coverage review":
+        # Review owns an exclusive policy lease; do not nest it inside the
+        # ordinary shared operation lease and deadlock the same process.
+        if config_path is None or bindings_path is None:
+            raise ConfigurationError("Coverage review requires configuration and bindings paths")
+        policy_bytes, binding_bytes = read_pair(config_path, bindings_path)
+        configuration, bindings = parse_pair(policy_bytes, binding_bytes)
+        if configuration.schema_version != 3:
+            raise ConfigurationError("Coverage review requires version-three enrollment")
+        return _coverage_operation(configuration, bindings, policy_bytes, binding_bytes,
+                                   command, values)
     if command == "doctor" and config_path is not None and bindings_path is not None:
         policy_bytes, binding_bytes = read_pair(config_path, bindings_path)
         configuration, bindings = parse_pair(policy_bytes, binding_bytes)
@@ -130,6 +145,9 @@ def execute_operation(command: str, values: dict[str, Any], *, service: BackupSe
 
 
 def _service_operation(service, command, values, config_path, bindings_path, cancel):
+    if command.startswith("coverage "):
+        return _coverage_operation(service.config, service.bindings,
+                                   service.policy_bytes, service.binding_bytes, command, values)
     if command.startswith("cloud-retention "):
         return _cloud_retention_operation(service, command, values, cancel)
     if command == "doctor":
@@ -202,11 +220,12 @@ def _service_operation(service, command, values, config_path, bindings_path, can
     if command in ("runs list", "runs stream"):
         events = service.ledger.events(**values)
         return [asdict(event) for event in events]
-    if command == "service render":
+    if command in ("service render", "service render-system"):
         if config_path is None or bindings_path is None:
             raise ConfigurationError("Rendering services requires configuration paths")
-        return job_units(service._job(values["name"]), executable=Path(values["executable"]),
-                         config=config_path.absolute(), bindings=bindings_path.absolute())
+        render = system_job_units if command == "service render-system" else job_units
+        return render(service._job(values["name"]), executable=Path(values["executable"]),
+                      config=config_path.absolute(), bindings=bindings_path.absolute())
     if command == "service install":
         if config_path is None or bindings_path is None:
             raise ConfigurationError("Installing services requires configuration paths")
@@ -214,6 +233,28 @@ def _service_operation(service, command, values, config_path, bindings_path, can
                           config=config_path.absolute(), bindings=bindings_path.absolute())
         return install_user_units(units, activate=values["activate"])
     raise ServiceError("Unsupported command")
+
+
+def _coverage_operation(configuration, bindings, policy_bytes, binding_bytes, command, values):
+    job = next((item for item in configuration.jobs if item.name == values["name"]), None)
+    if job is None or job.coverage_policy is None or job.name not in bindings.coverage_declarations:
+        raise ConfigurationError("Job requires portable coverage policy and private declaration")
+    arguments = {"state": bindings.state_dir, "policy_bytes": policy_bytes,
+                 "binding_bytes": binding_bytes}
+    declaration = bindings.coverage_declarations[job.name]
+    if command == "coverage discover":
+        return discover_coverage(declaration, job.coverage_policy, **arguments)
+    if command == "coverage review":
+        return review_coverage(declaration, job.coverage_policy, values["candidate_digest"], **arguments)
+    coverage = check_coverage(declaration, job.coverage_policy, **arguments)
+    if command == "coverage check":
+        return coverage.public_result()
+    if not coverage.capture_ready or coverage.baseline_digest is None:
+        raise ConfigurationError("Recovery evidence requires the exact current reviewed coverage baseline")
+    return evaluate_recovery_evidence(
+        Path(values["evidence_file"]) if "evidence_file" in values else None,
+        baseline_digest=coverage.baseline_digest, snapshot_id=values["snapshot"],
+        source_machine_digest=machine_identity()[0])
 
 
 def _private_json(path):

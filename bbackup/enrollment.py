@@ -69,6 +69,19 @@ def evidence_bytes(policy: bytes, bindings: bytes) -> dict[str, object]:
             "bindings_digest": canonical_digest(bindings)}
 
 
+def coverage_evidence_bytes(policy: bytes, bindings: bytes, *, declaration_digest: str,
+                            scope_policy_digest: str, baseline_digest: str) -> dict[str, object]:
+    """Bind a separately reviewed coverage baseline to exact host enrollment.
+
+    Ordinary ``write_bytes`` never writes or approves this coverage receipt.
+    """
+    if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+           for value in (declaration_digest, scope_policy_digest, baseline_digest)):
+        raise ConfigurationError("Invalid coverage evidence digest")
+    return {**evidence_bytes(policy, bindings), "declaration_digest": declaration_digest,
+            "scope_policy_digest": scope_policy_digest, "baseline_digest": baseline_digest}
+
+
 def evidence(config_path: Path, bindings_path: Path) -> dict[str, object]:
     return evidence_bytes(*read_pair(config_path, bindings_path))
 

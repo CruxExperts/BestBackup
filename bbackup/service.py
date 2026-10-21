@@ -72,8 +72,10 @@ def _overlap(a: Path, b: Path) -> bool:
 
 
 class BackupService:
-    def __init__(self, config: Configuration, bindings: HostBindings):
+    def __init__(self, config: Configuration, bindings: HostBindings, *,
+                 policy_bytes: bytes | None = None, binding_bytes: bytes | None = None):
         self.config, self.bindings = config, bindings
+        self.policy_bytes, self.binding_bytes = policy_bytes, binding_bytes
         if config.schema_version != bindings.schema_version:
             raise ServiceError("Policy and private binding versions must match")
         if set(bindings.repositories) != {r.name for r in config.repositories}:
@@ -411,6 +413,27 @@ class BackupService:
         if remote_primary:
             self._operation_environment(job.repository)
         sources = tuple(source for source in self.sources if source.name in job.sources)
+        covered = job.coverage_policy is not None
+        coverage_exclusions = ()
+        if covered:
+            from .linux_coverage import check_coverage
+            if self.policy_bytes is None or self.binding_bytes is None:
+                raise ServiceError("Covered capture requires exact enrolled policy and binding snapshots")
+            declaration = self.bindings.coverage_declarations.get(job.name)
+            if declaration is None:
+                raise ServiceError("Covered capture declaration is missing")
+            coverage = check_coverage(declaration, job.coverage_policy, state=self.state,
+                                      policy_bytes=self.policy_bytes, binding_bytes=self.binding_bytes)
+            if not coverage.capture_ready:
+                raise ServiceError("Covered capture is not ready; inspect and review current coverage")
+            expected = {(source.name, Path(path), source.kind)
+                        for source in sources for path in source.paths}
+            approved = {(source_id, path, adapter)
+                        for _, path, source_id, adapter in coverage.approved_roots}
+            if (any(source.kind != "files" for source in sources)
+                    or expected != approved):
+                raise ServiceError("Covered capture sources differ from reviewed root mappings")
+            coverage_exclusions = coverage.approved_exclusions
         if remote_primary and any(source.kind == "docker" for source in sources):
             raise ServiceError("Remote-primary Docker capture has no bounded export support")
         monitor = None
@@ -420,7 +443,8 @@ class BackupService:
         for binding in self.bindings.repositories.values():
             if binding.repository.startswith("/"):
                 protected.append(Path(binding.repository).resolve())
-        protected.extend(Path(path).resolve() for path in self.bindings.sensitive_paths)
+        if not covered:
+            protected.extend(Path(path).resolve() for path in self.bindings.sensitive_paths)
         for source in sources:
             for raw in source.paths:
                 if any(_overlap(Path(raw).resolve(), path) for path in protected):
@@ -498,7 +522,12 @@ class BackupService:
 
             try:
                 args = [*engine.base_args(), "backup", "--tag", f"bbackup-job={job.name}",
-                        "--tag", f"bbackup-capture={capture_id}", "--", *paths]
+                        "--tag", f"bbackup-capture={capture_id}"]
+                if coverage_exclusions:
+                    from .linux_coverage import restic_literal_exclusion
+                    for excluded in coverage_exclusions:
+                        args.extend(("--exclude", restic_literal_exclusion(excluded)))
+                args.extend(("--", *paths))
                 plan, _ = self._execute(
                     job.repository,
                     args,

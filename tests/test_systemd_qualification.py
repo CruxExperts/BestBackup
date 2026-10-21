@@ -23,6 +23,27 @@ def test_guest_stage_is_valid_python_before_any_guest_boot():
     compile(GUEST_STAGE, "<qualification guest>", "exec")
 
 
+@pytest.mark.parametrize("accelerator", ["kvm", "tcg"])
+def test_guest_runner_uses_only_selected_accelerator(tmp_path, monkeypatch, accelerator):
+    from scripts import qualify_systemd as module
+
+    commands = []
+
+    def run(args, **kwargs):
+        commands.append(args)
+        return SimpleNamespace(returncode=1 if args[1:3] == ["container", "inspect"] else 0,
+                               stdout="guest proof")
+
+    monkeypatch.setattr(module, "_run", run)
+    assert module._docker_qualification(tmp_path, tmp_path / "image", tmp_path / "seed",
+        tmp_path / "inputs", 600, accelerator=accelerator) == "guest proof"
+    command = commands[-1]
+    assert ("--device=/dev/kvm:/dev/kvm:rwm" in command) == (accelerator == "kvm")
+    assert f"accel={accelerator}" in command[-1]
+    assert ("-cpu host" in command[-1]) == (accelerator == "kvm")
+    assert "-display none" in command[-1]
+
+
 @pytest.mark.parametrize(("changes", "expected"), [
     ({}, True),
     ({"ActiveState": "active", "SubState": "running"}, False),

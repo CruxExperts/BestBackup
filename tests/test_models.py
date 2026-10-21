@@ -32,6 +32,32 @@ def test_defaults(config):
     assert parsed.jobs[0].schedule == "daily"
 
 
+def test_coverage_opt_in_requires_portable_scope_and_exact_private_job_mapping(config, tmp_path):
+    from bbackup.models import HostBindings
+    scope = {"schema_version": 1, "approved_roots": ["data"],
+             "require_privileged": False, "filesystem_boundaries": "explicit",
+             "metadata_expectations": {name: True for name in
+                                       ("numeric_owner", "mode", "acl", "xattr", "links")}}
+    config["jobs"][0]["coverage_policy"] = scope
+    with pytest.raises(ConfigurationError, match="version 3"):
+        Configuration.parse(config)
+    config["schema_version"] = 3
+    config["sources"] = [{"name": "files", "kind": "files"}]
+    parsed = Configuration.parse(config)
+    assert parsed.jobs[0].coverage_policy["approved_roots"] == ["data"]
+    raw = {"schema_version": 3, "state_dir": str(tmp_path / "state"),
+           "repositories": {name: {"repository": str(tmp_path / name),
+                                    "password_file": str(tmp_path / "password")}
+                            for name in ("local", "cloud")},
+           "source_bindings": {"files": {"paths": [str(tmp_path / "data")]}},
+           "coverage_declarations": {"daily": str(tmp_path / "declaration.json")}}
+    bindings = HostBindings.parse(raw, parsed)
+    assert bindings.coverage_declarations["daily"] == tmp_path / "declaration.json"
+    del raw["coverage_declarations"]
+    with pytest.raises(ConfigurationError, match="opt-in jobs"):
+        HostBindings.parse(raw, parsed)
+
+
 def test_remote_primary_requires_versioned_zero_cache_resource_budget(config):
     config["repositories"][0]["role"] = "remote-primary"
     with pytest.raises(ConfigurationError, match="resource budget"):

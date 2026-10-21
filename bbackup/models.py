@@ -216,6 +216,7 @@ class Job:
     timeout_seconds: int = 3600
     retention: Retention = field(default_factory=Retention)
     resource_budget: ResourceBudget | None = None
+    coverage_policy: dict | None = None
 
     @classmethod
     def parse(cls, raw):
@@ -240,6 +241,13 @@ class Job:
                 "Schedule must be a single nonempty systemd calendar expression"
             )
         budget = ResourceBudget.parse(raw["resource_budget"]) if "resource_budget" in raw else None
+        coverage_policy = None
+        if "coverage_policy" in raw:
+            from .linux_coverage import validate_scope_policy
+            try:
+                coverage_policy = validate_scope_policy(raw["coverage_policy"])
+            except (ValueError, RuntimeError) as error:
+                raise ConfigurationError(str(error)) from None
         return cls(
             _name(raw["name"]),
             _name(raw["repository"]),
@@ -250,6 +258,7 @@ class Job:
             _positive(raw.get("timeout_seconds", 3600)),
             Retention.parse(raw.get("retention", {})),
             budget,
+            coverage_policy,
         )
 
 
@@ -287,6 +296,8 @@ class Configuration:
         repositories = {repo.name: repo for repo in config.repositories}
         sources = {source.name for source in config.sources}
         for job in config.jobs:
+            if job.coverage_policy is not None and version != 3:
+                raise ConfigurationError("Coverage scope requires portable policy version 3")
             if (job.repository not in repositories
                     or repositories[job.repository].role not in ("local", "remote-primary")):
                 raise ConfigurationError("Jobs require a declared primary repository")
@@ -469,6 +480,7 @@ class HostBindings:
     source_bindings: dict[str, SourceBinding] = field(default_factory=dict)
     schema_version: int = 2
     staging_dir: Path | None = None
+    coverage_declarations: dict[str, Path] = field(default_factory=dict)
     @classmethod
     def load(cls, path: Path, configuration: Configuration | None = None):
         if path.stat().st_mode & 0o077:
@@ -483,7 +495,7 @@ class HostBindings:
     def parse(cls, raw, configuration: Configuration | None = None):
         raw = _object(
             raw,
-            {"schema_version", "state_dir", "repositories", "database_bindings", "docker_bindings", "source_bindings", "staging_dir"},
+            {"schema_version", "state_dir", "repositories", "database_bindings", "docker_bindings", "source_bindings", "staging_dir", "coverage_declarations"},
             {"schema_version", "state_dir", "repositories"},
         )
         version = raw["schema_version"]
@@ -514,6 +526,23 @@ class HostBindings:
             needs_staging = any(r.role == "remote-primary" for r in configuration.repositories)
             if needs_staging != (staging_dir is not None):
                 raise ConfigurationError("Remote-primary bindings require a private staging directory")
+        raw_coverage = raw.get("coverage_declarations", {})
+        if version != 3 and raw_coverage:
+            raise ConfigurationError("Coverage declarations require version 3 bindings")
+        if not isinstance(raw_coverage, dict):
+            raise ConfigurationError("Coverage declarations must be a private job mapping")
+        coverage_declarations = {}
+        for name, location in raw_coverage.items():
+            name = _name(name)
+            if (not isinstance(location, str) or not Path(location).is_absolute()
+                    or ".." in Path(location).parts or any(c in location for c in "\0\r\n")
+                    or str(Path(location)) != location):
+                raise ConfigurationError("Coverage declaration must be an absolute private path")
+            coverage_declarations[name] = Path(location)
+        if configuration is not None:
+            covered = {job.name for job in configuration.jobs if job.coverage_policy is not None}
+            if set(coverage_declarations) != covered:
+                raise ConfigurationError("Coverage declarations must match opt-in jobs")
         locations = [value.repository for value in repositories.values()]
         if len(set(locations)) != len(locations):
             raise ConfigurationError("Multiple names for one repository are forbidden")
@@ -543,7 +572,7 @@ class HostBindings:
                 for source in configuration.sources
             }
         return cls(Path(state), repositories, database_bindings, docker_bindings,
-                   source_bindings, version, staging_dir)
+                   source_bindings, version, staging_dir, coverage_declarations)
 
     @property
     def sensitive_paths(self) -> tuple[Path, ...]:

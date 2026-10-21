@@ -49,6 +49,87 @@ measured costs, and independent escrow remain outstanding. Complete privileged
 Linux capture and replacement-machine recovery also remain unqualified. Do not
 close these issues or expand the supported release scope from fixture tests.
 
+### Reviewed Linux coverage (unreleased)
+
+An opt-in schema-3 job can declare `coverage_policy` and map its job name to a
+private `coverage_declarations` path in host bindings. Ordinary jobs keep their
+existing source-selection behavior. Coverage discovery records bounded Linux
+account/group, mount, package, application-unit and selected-tree metadata in
+private state. Public results contain counts, digests and reason codes only.
+`coverage_status: complete` means the exact declared scope is accounted for;
+it is not a claim that every machine file or application is recoverable.
+
+For example, this is a portable job-field fragment:
+
+```json
+{
+  "coverage_policy": {
+    "schema_version": 1,
+    "approved_roots": ["system", "homes"],
+    "require_privileged": true,
+    "filesystem_boundaries": "explicit",
+    "metadata_expectations": {
+      "numeric_owner": true, "mode": true, "acl": true,
+      "xattr": true, "links": true
+    }
+  }
+}
+```
+
+The separate mode-0600 declaration is schema 1. `roots` maps each approved root
+ID to an absolute `path`, configured `source_id` and `adapter`. It also requires
+`exclusions`, `mount_decisions`, `identity_decisions`, `applications`,
+`package_reconstruction`, and `reconstruction_evidence`. Empty arrays are
+permitted, but unresolved inventory gaps block approval. See the maintained
+[fixture declarations](../../tests/test_linux_coverage.py) for the exact shapes.
+Current covered capture supports ordinary file sources only. SQLite and native
+database exports and Docker require additional metadata/reconstruction support
+before they can satisfy this coverage profile; ordinary jobs still support
+their existing adapters.
+
+Each exclusion or reconstruction decision names a reason, consequence, recipe
+ID and procedure SHA-256. A referenced private procedure and private evidence
+record must match their digests and identify verified local execution. These
+records account for local scope decisions; they do not independently establish
+machine recovery. Symlinked homes or application state outside approved scope,
+unreadable data, unaccounted users/services/mounts and missing reconstruction
+evidence leave coverage incomplete. Declared exclusions become literal Restic
+exclusion patterns during capture, including paths containing glob characters.
+
+```bash
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage discover --name system
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage review --name system --candidate-digest EXACT_CANDIDATE_SHA256
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage check --name system
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  jobs run --name system
+```
+
+Discovery never approves coverage. Review binds an exact complete candidate to
+the enrolled machine, user, configuration, bindings, declaration and scope.
+Capture checks the current baseline again and refuses changed mappings or
+structural drift. Coverage receipts are separate per declaration/scope. Secrets
+inside an explicitly reviewed file root may enter the encrypted snapshot;
+runtime state, repositories and staging remain excluded from source overlap.
+
+`service render-system` renders root service/timer units without installing
+them or elevating privileges. It requires root identity and root-controlled
+executable, configuration, bindings and path ancestors. The system timer is
+persistent and the service dispatches through the same production command.
+Review and install those units deliberately using the system administrator's
+normal procedure. User-level `service install` remains unchanged.
+
+`coverage recovery-evidence` assesses a private record against the exact current
+baseline and snapshot. Local fixture records can produce `recovery_status:
+emulated`; absent, incomplete or unverified independent records stay `untested`.
+No command marks complete-machine recovery qualified. Current tests include
+small real Restic capture/restore with enforced exclusions, account and service
+drift, private evidence integrity and unprivileged readability. Privileged
+full-scope capture, metadata/secrets/users/application reconstruction on a clean
+replacement, and final remote-server qualification remain outstanding for #24.
+
 ### Existing version-2 behavior
 
 The unreleased remote-primary implementation adds HTTPS S3 primary repositories,

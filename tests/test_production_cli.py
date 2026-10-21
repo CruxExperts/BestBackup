@@ -160,6 +160,55 @@ def test_cloud_retention_requires_enrollment_and_private_record_list(service, tm
             "grant_file": str(tmp_path / "grant")})
 
 
+def test_coverage_cli_uses_enrolled_bytes_and_exclusive_review_owner(service, tmp_path, monkeypatch):
+    from dataclasses import replace
+    from bbackup import production_operations as module
+    scope = {"schema_version": 1, "approved_roots": ["home"], "require_privileged": False,
+             "filesystem_boundaries": "explicit", "metadata_expectations": {
+                 key: True for key in ("numeric_owner", "mode", "acl", "xattr", "links")}}
+    service.config = replace(service.config, jobs=(replace(
+        service.config.jobs[0], coverage_policy=scope),))
+    declaration = tmp_path / "private-coverage.json"
+    service.bindings = replace(service.bindings, coverage_declarations={"daily": declaration})
+    calls = []
+    def discover(path, policy, **kwargs):
+        assert path == declaration and policy == scope
+        assert b'"schema_version": 3' in kwargs["policy_bytes"]
+        assert str(declaration).encode() in kwargs["binding_bytes"]
+        calls.append("discover")
+        return {"coverage_status": "incomplete", "candidate_digest": "a" * 64}
+    def review(path, policy, candidate, **kwargs):
+        module.verify_bytes(kwargs["state"], kwargs["policy_bytes"], kwargs["binding_bytes"])
+        assert candidate == "a" * 64
+        calls.append("review")
+        return {"coverage_status": "complete", "recovery_status": "untested"}
+    monkeypatch.setattr(module, "discover_coverage", discover)
+    monkeypatch.setattr(module, "review_coverage", review)
+    result = invoke(service, ["coverage", "discover", "--name", "daily"])
+    assert result.exit_code == 0, result.output
+    assert calls == ["discover"]
+    monkeypatch.setattr(module, "_operation_lease", lambda *_args: pytest.fail("nested shared lease"))
+    result = invoke(service, ["coverage", "review", "--name", "daily", "--candidate-digest", "a" * 64])
+    assert result.exit_code == 0, result.output
+    assert calls == ["discover", "review"]
+
+
+def test_coverage_cli_sanitizes_errors_and_does_not_approve_an_ordinary_job(service, monkeypatch):
+    result = invoke(service, ["coverage", "check", "--name", "daily"])
+    assert result.exit_code == 2
+    assert json.loads(result.output)["errors"][0]["code"] == "invalid_input"
+    from bbackup import production_operations as module
+    from bbackup.linux_coverage import CoverageError
+    def failed(*args, **kwargs):
+        raise CoverageError("private paths must never escape the CLI")
+    monkeypatch.setattr(module, "execute_operation", failed)
+    # The CLI imports its owner function; exercise the sanitizing boundary.
+    monkeypatch.setattr("bbackup.production_cli.execute_operation", failed)
+    result = invoke(service, ["coverage", "discover", "--name", "daily"])
+    assert result.exit_code == 3 and "private paths" not in result.output
+    assert json.loads(result.output)["errors"][0]["code"] == "operation_failed"
+
+
 def test_resource_failure_keeps_structured_evidence_without_source_paths(service, monkeypatch):
     from bbackup.service import BackupService, ResourceBudgetExceeded
 

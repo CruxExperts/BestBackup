@@ -22,6 +22,9 @@ current uv-based install, development, and release instructions.
   dependencies, explicit catalog and grants, shared repository leases, lock and
   expiry checks, and journaled exact-version deletion without automatic replay.
   Current-pack compaction and live provider qualification remain outstanding.
+- Opt-in reviewed Linux file coverage with private inventory, exact scope and
+  exclusions, drift checks, bounded reconstruction evidence, and root system
+  unit rendering. Complete-machine recovery remains unqualified.
 - Refreshed matching 1280×640 GitHub social preview artwork, embedded ownership metadata, checked provenance, and explicit repository-settings upload instructions.
 
 ### Fixed

@@ -1980,6 +1980,11 @@ PRODUCTION_COMMANDS: dict[str, ProductionCommand] = {
     "restore": {"summary": "Restore and verify files in a new isolated directory.", "fields": {"repository": "string", "snapshot": "string", "target": "path"}},
     "runs list": {"summary": "Read sanitized operation events.", "fields": {"limit": "limit", "offset": "offset"}},
     "service render": {"summary": "Render disabled systemd service and persistent timer units.", "fields": {"name": "string", "executable": "path"}},
+    "service render-system": {"summary": "Render root system service and persistent timer units after validating root-controlled executable and configuration paths; never installs them.", "fields": {"name": "string", "executable": "path"}},
+    "coverage discover": {"summary": "Inventory exact private Linux scope and record a bounded candidate for review.", "fields": {"name": "string"}},
+    "coverage review": {"summary": "Approve an exact complete Linux coverage candidate for the enrolled machine, user, policy and bindings.", "fields": {"name": "string", "candidate_digest": "string"}},
+    "coverage check": {"summary": "Check reviewed Linux coverage and structural drift without exposing private paths.", "fields": {"name": "string"}},
+    "coverage recovery-evidence": {"summary": "Assess private local recovery evidence against the exact current baseline and snapshot; never qualifies whole-machine recovery.", "fields": {"name": "string", "snapshot": "string", "evidence_file": "optional-string"}},
     "service install": {"summary": "Install reviewed user-level units; activate the exact timer only with --activate.", "fields": {"name": "string", "executable": "path", "activate": "boolean"}},
 }
 

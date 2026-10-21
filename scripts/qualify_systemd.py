@@ -674,14 +674,16 @@ def _container_image() -> None:
 
 
 def _docker_qualification(stage: Path, image: Path, seed: Path, inputs_iso: Path,
-                           timeout: int) -> str:
+                           timeout: int, *, accelerator: str = "kvm") -> str:
+    if accelerator not in {"kvm", "tcg"}:
+        raise ValueError("unsupported guest accelerator")
     name = f"bbackup-systemd-qualification-{uuid.uuid4().hex[:12]}"
     existing = _run(["docker", "container", "inspect", name])
     if existing.returncode == 0:
         raise RuntimeError("task container name collision; refuse to touch it")
     docker_command = [
         "docker", "run", "--rm", "--name", name, "--platform=linux/amd64",
-        "--device=/dev/kvm:/dev/kvm:rwm",
+        *(["--device=/dev/kvm:/dev/kvm:rwm"] if accelerator == "kvm" else []),
         "--mount", f"type=bind,src={stage},dst=/work",
         "--mount", f"type=bind,src={image},dst=/ubuntu.img,readonly",
         ALPINE_IMAGE,
@@ -693,7 +695,8 @@ def _docker_qualification(stage: Path, image: Path, seed: Path, inputs_iso: Path
         "for p in qemu-10.1.5-r0 qemu-img-10.1.5-r0 qemu-system-x86_64-10.1.5-r0 seabios-1.17.0-r0; do "
         "grep -F \"$p \" /work/apk-installed.txt >/dev/null || { echo \"missing pinned $p\"; exit 21; }; done; "
         "qemu-img create -q -f qcow2 -F qcow2 -b /ubuntu.img /work/guest.qcow2 16G; "
-        "exec qemu-system-x86_64 -machine q35,accel=kvm -cpu host -smp 2 -m 4096 "
+        f"exec qemu-system-x86_64 -machine q35,accel={accelerator} "
+        f"-cpu {'host' if accelerator == 'kvm' else 'max'} -smp 2 -m 4096 "
         "-drive file=/work/guest.qcow2,if=virtio,format=qcow2 "
         "-drive file=/work/seed.iso,media=cdrom,readonly=on "
         "-drive file=/work/inputs.iso,media=cdrom,readonly=on "
@@ -757,6 +760,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--uv", type=Path, required=True, help="existing uv executable used to install locked wheels inside guest")
     parser.add_argument("--state-root", type=Path, default=DEFAULT_STATE, help="private ignored task state root")
     parser.add_argument("--timeout-seconds", type=int, default=1500, help="maximum guest runtime")
+    parser.add_argument("--accelerator", choices=("kvm", "tcg"), default="kvm",
+                        help="KVM hardware virtualization or slower TCG software emulation")
     return parser.parse_args()
 
 
@@ -785,7 +790,8 @@ def main() -> int:
                                                 args.requirements, restic, uv)
     _container_image()
     start = time.monotonic()
-    serial = _docker_qualification(stage, image, seed, inputs_iso, args.timeout_seconds)
+    serial = _docker_qualification(stage, image, seed, inputs_iso, args.timeout_seconds,
+                                  accelerator=args.accelerator)
     elapsed = round(time.monotonic() - start, 1)
     result_marker = re.search(r"QUALIFICATION_RESULT (\{.*\})", serial)
     if result_marker is None:
@@ -803,6 +809,7 @@ def main() -> int:
         "guest_image": {"distribution": f"Ubuntu {args.ubuntu_codename}", "codename": args.ubuntu_codename,
                         "sha256": _sha256(image), "signed_manifest": "Canonical gpgv valid"},
         "qemu_toolchain": {"image": ALPINE_IMAGE, "packages": list(ALPINE_PACKAGES),
+                           "accelerator": args.accelerator,
                            "verified": "image digest and installed package versions checked at runtime"},
         "input_digests": input_digests,
         "elapsed_seconds": elapsed,

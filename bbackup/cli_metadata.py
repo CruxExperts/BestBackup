@@ -1977,6 +1977,26 @@ PRODUCTION_COMMANDS: dict[str, ProductionCommand] = {
         "summary": "Reconcile a cloud-version deletion journal using read-only observations without replaying it.",
         "fields": {"repository": "string", "policy_file": "path", "plan_file": "path"},
     },
+    "cloud-maintenance catalog-enroll": {
+        "summary": "Explicitly initialize the central catalog under a current-repository maintenance grant.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path"},
+    },
+    "cloud-maintenance records-enroll": {
+        "summary": "Explicitly register independently signed accepted recovery records without changing version-age evidence.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path", "records_file": "path"},
+    },
+    "cloud-maintenance plan": {
+        "summary": "Plan exact accepted and unprotected snapshot removal using read-only Restic observations.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path", "records_file": "path", "maintenance_bindings_file": "path", "quiescent_window_confirmed": "boolean"},
+    },
+    "cloud-maintenance apply": {
+        "summary": "Apply a reviewed snapshot-forget and no-repack prune plan under one repository lease.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path", "records_file": "path", "maintenance_bindings_file": "path", "plan_id": "string", "plan_sha256": "string", "quiescent_window_confirmed": "boolean"},
+    },
+    "cloud-maintenance reconcile": {
+        "summary": "Observe an interrupted maintenance attempt without replaying forget or prune.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path", "records_file": "path", "maintenance_bindings_file": "path", "plan_id": "string", "plan_sha256": "string", "quiescent_window_confirmed": "boolean"},
+    },
     "restore": {"summary": "Restore and verify files in a new isolated directory.", "fields": {"repository": "string", "snapshot": "string", "target": "path"}},
     "runs list": {"summary": "Read sanitized operation events.", "fields": {"limit": "limit", "offset": "offset"}},
     "service render": {"summary": "Render disabled systemd service and persistent timer units.", "fields": {"name": "string", "executable": "path"}},

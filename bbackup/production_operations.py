@@ -152,6 +152,8 @@ def _service_operation(service, command, values, config_path, bindings_path, can
                                    service.policy_bytes, service.binding_bytes, command, values)
     if command.startswith("cloud-retention "):
         return _cloud_retention_operation(service, command, values, cancel)
+    if command.startswith("cloud-maintenance "):
+        return _cloud_maintenance_operation(service, command, values, cancel)
     if command == "doctor":
         return {"restic_available": shutil.which("restic") is not None,
                 "jobs": len(service.config.jobs), "production_qualified": False,
@@ -275,6 +277,26 @@ def _private_json(path):
 
 def _cloud_retention_operation(service, command, values, cancel):
     """Bind central cloud authority to the enrolled repository and its ledger."""
+    adapter, lease_id = _central_cloud_adapter(service, values)
+    if command == "cloud-retention catalog-enroll":
+        return adapter.initialize_central_retention_catalog(values["policy_file"], values["grant_file"])
+    if command == "cloud-retention reconcile":
+        return adapter.reconcile_central_retention(
+            values["plan_file"], ledger=service.ledger, expected_repository_lease_id=lease_id)
+    directories = _central_record_directories(values["records_file"])
+    if command == "cloud-retention plan":
+        return adapter.plan_central_retention(
+            values["policy_file"], values["grant_file"], directories,
+            quiescent_window_confirmed=values["quiescent_window_confirmed"],
+            repository_lease_id=lease_id)
+    return adapter.apply_central_retention(
+        values["plan_id"], values["plan_sha256"], values["policy_file"], values["grant_file"],
+        directories, quiescent_window_confirmed=values["quiescent_window_confirmed"],
+        ledger=service.ledger, cancel_event=cancel, expected_repository_lease_id=lease_id)
+
+
+def _central_cloud_adapter(service, values, *, maintenance=False):
+    """Freeze one inspection/deletion pair for native and S3 authority."""
     policy = _private_json(values["policy_file"])
     if not isinstance(policy, dict):
         raise ConfigurationError("Invalid central retention policy")
@@ -287,19 +309,21 @@ def _cloud_retention_operation(service, command, values, cancel):
     expected = f"s3:{endpoint}/{bucket}/{prefix.rstrip('/')}"
     if identity.rstrip("/") != expected:
         raise ConfigurationError("Central retention target differs from enrolled repository")
-    if policy.get("schema_version") == 2:
+    native = policy.get("lock_metadata") is not None
+    freeze_pair = native or policy.get("schema_version") == 2 or (policy.get("schema_version") == 3 and maintenance)
+    if freeze_pair:
         parsed = urlsplit(endpoint)
         match = re.fullmatch(r"s3\.([a-z0-9-]+)\.backblazeb2\.com", parsed.netloc)
         if parsed.scheme != "https" or match is None or parsed.path not in ("", "/") or parsed.query or parsed.fragment:
-            raise ConfigurationError("Schema-2 retention requires a canonical B2 S3 endpoint")
+            raise ConfigurationError("Native B2 retention requires a canonical B2 S3 endpoint")
         lock_metadata = policy.get("lock_metadata")
-        if (
+        if native and (
             not isinstance(lock_metadata, dict) or set(lock_metadata) != {"provider", "bucket_id"}
             or lock_metadata.get("provider") != "b2-native"
             or not isinstance(lock_metadata.get("bucket_id"), str)
             or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", lock_metadata["bucket_id"])
         ):
-            raise ConfigurationError("Schema-2 native lock target is invalid")
+            raise ConfigurationError("Native B2 lock target is invalid")
         try:
             import boto3
             from botocore.config import Config
@@ -309,10 +333,10 @@ def _cloud_retention_operation(service, command, values, cancel):
             if frozen is None or not frozen.access_key or not frozen.secret_key or frozen.token:
                 raise ValueError()
             pair = (frozen.access_key, frozen.secret_key)
-            reader = B2VersionLockReader(
+            reader = (B2VersionLockReader(
                 bucket, lock_metadata["bucket_id"], prefix, endpoint,
                 access_key_id=pair[0], secret_access_key=pair[1],
-            )
+            ) if native else None)
             client = boto3.client(
                 "s3", endpoint_url=endpoint, region_name=match.group(1),
                 aws_access_key_id=pair[0], aws_secret_access_key=pair[1],
@@ -321,34 +345,41 @@ def _cloud_retention_operation(service, command, values, cancel):
                               signature_version="s3v4"),
             )
         except Exception:
-            raise ConfigurationError("Could not bind schema-2 B2 retention authority") from None
+            raise ConfigurationError("Could not bind native B2 retention authority") from None
         adapter = S3CloudAdapter(
             bucket, client=client, endpoint_url=endpoint, region_name=match.group(1),
             prefix=prefix, native_lock_reader=reader, credential_pair=pair,
         )
     else:
         adapter = S3CloudAdapter(bucket, endpoint_url=endpoint, prefix=prefix)
-    lease_id = repository_key(identity)
-    if command == "cloud-retention catalog-enroll":
-        return adapter.initialize_central_retention_catalog(values["policy_file"], values["grant_file"])
-    if command == "cloud-retention reconcile":
-        return adapter.reconcile_central_retention(
-            values["plan_file"], ledger=service.ledger, expected_repository_lease_id=lease_id)
-    directories = _private_json(values["records_file"])
+    return adapter, repository_key(identity)
+
+
+def _central_record_directories(path):
+    directories = _private_json(path)
     if (not isinstance(directories, list) or not directories or len(directories) > 10000
             or any(not isinstance(path, str) or not Path(path).is_absolute()
                    or any(char in path for char in "\0\r\n") for path in directories)
             or len(set(directories)) != len(directories)):
         raise ConfigurationError("Expected unique absolute central acceptance directories")
-    if command == "cloud-retention plan":
-        return adapter.plan_central_retention(
+    return directories
+
+
+def _cloud_maintenance_operation(service, command, values, cancel):
+    adapter, lease_id = _central_cloud_adapter(service, values, maintenance=True)
+    if command == "cloud-maintenance catalog-enroll":
+        return adapter.initialize_central_retention_catalog(
+            values["policy_file"], values["grant_file"],
+            expected_action="maintain_current_repository",
+        )
+    directories = _central_record_directories(values["records_file"])
+    if command == "cloud-maintenance records-enroll":
+        return adapter.enroll_central_maintenance_records(
             values["policy_file"], values["grant_file"], directories,
-            quiescent_window_confirmed=values["quiescent_window_confirmed"],
-            repository_lease_id=lease_id)
-    return adapter.apply_central_retention(
-        values["plan_id"], values["plan_sha256"], values["policy_file"], values["grant_file"],
-        directories, quiescent_window_confirmed=values["quiescent_window_confirmed"],
-        ledger=service.ledger, cancel_event=cancel, expected_repository_lease_id=lease_id)
+        )
+    return service.cloud_maintenance(
+        command, adapter, values, directories, lease_id=lease_id, cancel=cancel,
+    )
 
 
 def _recovery_dispatch(service, command, values, cancel):

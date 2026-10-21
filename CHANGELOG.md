@@ -25,6 +25,11 @@ current uv-based install, development, and release instructions.
   Schema-2 B2 policies can select a native lock-metadata reader; schema-1
   generic S3 policies remain unchanged. Current-pack compaction and complete
   provider protection qualification remain outstanding.
+- Experimental central snapshot maintenance with explicit accepted-record
+  enrollment, policy-selected full snapshot IDs, separate Restic credentials,
+  bounded staging and `prune --max-repack-size 0`. Protected checkpoints and
+  unknown snapshots remain preserved; historical-version deletion stays
+  separate. Repacking and aged live reclamation remain unqualified.
 - Opt-in reviewed Linux file and transactional SQLite coverage with private
   inventory, exact scope and exclusions, drift checks, reviewed database
   identity/metadata and reconstruction evidence, and root system unit rendering.

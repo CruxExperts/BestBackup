@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from threading import Event
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -87,6 +88,20 @@ class RestoreRecord:
     destination: Path
     expires_at: str | None
     protection_expired: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CloudMaintenanceSelection:
+    """Immutable accepted-snapshot protection and bounded S3 inventory summary."""
+
+    accepted_snapshot_ids: tuple[str, ...]
+    protected_snapshot_ids: tuple[str, ...]
+    protected_version_sha256: str
+    policy_sha256: str
+    grant_sha256: str
+    catalog_sha256: str
+    inventory_sha256: str
+    resources: Mapping[str, Any]
 
 
 def _iso(value: datetime) -> str:
@@ -1082,13 +1097,51 @@ class S3CloudAdapter:
             repository_lease_id=repository_lease_id,
         )
 
+    @contextmanager
+    def maintenance_session(
+        self,
+        policy_path: str | os.PathLike[str],
+        grant_path: str | os.PathLike[str],
+        record_dirs: Sequence[str | os.PathLike[str]],
+        *,
+        quiescent_window_confirmed: bool,
+        repository_lease_id: str,
+        reconcile_only: bool = False,
+    ) -> Iterator[Any]:
+        """Hold the central catalog lock during one authorized logical maintenance."""
+        with _CentralMaintenance(
+            self,
+            policy_path,
+            grant_path,
+            record_dirs,
+            quiescent_window_confirmed=quiescent_window_confirmed,
+            repository_lease_id=repository_lease_id,
+            reconcile_only=reconcile_only,
+        ) as session:
+            yield session
+
     def initialize_central_retention_catalog(
         self,
         policy_path: str | os.PathLike[str],
         grant_path: str | os.PathLike[str],
+        *,
+        expected_action: str = "delete_noncurrent_versions",
     ) -> dict[str, Any]:
         """Explicitly enroll a new private catalog before the first plan."""
-        return _CentralRetention(self).initialize_catalog(policy_path, grant_path)
+        return _CentralRetention(self).initialize_catalog(
+            policy_path, grant_path, expected_action=expected_action
+        )
+
+    def enroll_central_maintenance_records(
+        self,
+        policy_path: str | os.PathLike[str],
+        grant_path: str | os.PathLike[str],
+        recovery_record_dirs: Sequence[str | os.PathLike[str]],
+    ) -> dict[str, Any]:
+        """Explicitly register independently accepted records without observing versions."""
+        return _CentralRetention(self).enroll_accepted_records(
+            policy_path, grant_path, recovery_record_dirs
+        )
 
     def apply_central_retention(
         self,
@@ -1211,6 +1264,126 @@ _RETENTION_JOURNAL_FIELDS = {
     "updated_at",
     "items",
 }
+_MAINTENANCE_MODE = "forget-and-prune-no-repack"
+_MAINTENANCE_PHASES = (
+    "check_before",
+    "forget",
+    "verify_snapshots",
+    "prune",
+    "check_after",
+    "protected_versions",
+)
+_MAINTENANCE_MUTATION_PHASES = frozenset({"forget", "prune"})
+_MAINTENANCE_PLAN_FIELDS = {
+    "schema_version",
+    "operation_kind",
+    "operation_id",
+    "created_at",
+    "deadline",
+    "target",
+    "repository_lease_id",
+    "policy_id",
+    "policy_revision",
+    "policy_sha256",
+    "grant_sha256",
+    "grant_expires_at",
+    "catalog_sha256",
+    "accepted_manifest_digests",
+    "selected_manifest_digests",
+    "accepted_snapshot_ids",
+    "protected_snapshot_ids",
+    "protected_sha256",
+    "protected_version_count",
+    "inventory_sha256",
+    "version_count",
+    "resource_inventory_sha256",
+    "resources",
+    "apply_limits",
+    "maintenance",
+    "config_repository_id",
+    "visible_snapshot_ids",
+    "snapshot_inventory_sha256",
+    "target_snapshot_ids",
+    "bindings_sha256",
+    "credential_identity_sha256",
+}
+_MAINTENANCE_JOURNAL_FIELDS = {
+    "schema_version",
+    "operation_kind",
+    "operation_id",
+    "plan_sha256",
+    "status",
+    "updated_at",
+    "phases",
+    "reconciliation",
+}
+
+
+def _maintenance_snapshot_ids(value: Any, *, label: str) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or any(not isinstance(item, str) or not _FULL_ID.fullmatch(item) for item in value)
+        or value != sorted(set(value))
+    ):
+        raise CloudError(f"Central maintenance {label} must be sorted unique full snapshot IDs")
+    return list(value)
+
+
+def _maintenance_snapshot_digest(repository_id: str, snapshot_ids: Sequence[str]) -> str:
+    return _retention_digest(
+        _retention_json_bytes(
+            {
+                "config_repository_id": repository_id,
+                "visible_snapshot_ids": list(snapshot_ids),
+            }
+        )
+    )
+
+
+def _maintenance_restic_evidence(
+    value: Any, *, expected_repository_id: str
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "config_repository_id",
+        "visible_snapshot_ids",
+        "snapshot_inventory_sha256",
+    }:
+        raise CloudError("Central maintenance Restic evidence schema is invalid")
+    repository_id = value.get("config_repository_id")
+    if repository_id != expected_repository_id or not _FULL_ID.fullmatch(str(repository_id)):
+        raise CloudError("Central maintenance Restic repository identity differs from policy")
+    snapshot_ids = _maintenance_snapshot_ids(
+        value.get("visible_snapshot_ids"), label="visible snapshot inventory"
+    )
+    digest = value.get("snapshot_inventory_sha256")
+    if (
+        not isinstance(digest, str)
+        or not _FULL_ID.fullmatch(digest)
+        or digest != _maintenance_snapshot_digest(repository_id, snapshot_ids)
+    ):
+        raise CloudError("Central maintenance Restic snapshot inventory digest is invalid")
+    return {
+        "config_repository_id": repository_id,
+        "visible_snapshot_ids": snapshot_ids,
+        "snapshot_inventory_sha256": digest,
+    }
+
+
+def _maintenance_credential_digest(value: Any) -> str:
+    if not isinstance(value, Mapping) or set(value) != {"key_id", "profile"}:
+        raise CloudError("Central maintenance credential identity schema is invalid")
+    key_id = value.get("key_id")
+    profile = value.get("profile")
+    if (
+        not isinstance(key_id, str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", key_id)
+        or not isinstance(profile, str)
+        or profile not in {"restricted", "management"}
+    ):
+        raise CloudError("Central maintenance credential identity is invalid")
+    return _retention_digest(
+        _retention_json_bytes({"key_id": key_id, "profile": profile})
+    )
 
 
 def _retention_json_default(item: Any) -> str:
@@ -1399,16 +1572,50 @@ def _validate_retention_policy(
     policy: Mapping[str, Any], adapter: S3CloudAdapter
 ) -> tuple[dict[str, Any], Path]:
     version = policy.get("schema_version")
-    if type(version) is not int or version not in (1, 2):
+    if type(version) is not int or version not in (1, 2, 3):
         raise CloudError("Unsupported central retention policy version")
-    if set(policy) != (_RETENTION_POLICY_FIELDS | ({"lock_metadata"} if version == 2 else set())):
+    expected_fields = set(_RETENTION_POLICY_FIELDS)
+    if version == 2 or (version == 3 and "lock_metadata" in policy):
+        expected_fields.add("lock_metadata")
+    if version == 3:
+        expected_fields.add("maintenance")
+    if set(policy) != expected_fields:
         raise CloudError("Central retention policy schema is invalid")
+    maintenance = None
+    if version == 3:
+        maintenance_value = policy.get("maintenance")
+        if (
+            not isinstance(maintenance_value, dict)
+            or set(maintenance_value) != {"mode", "resource_budget", "timeout_seconds"}
+            or maintenance_value.get("mode") != "forget-and-prune-no-repack"
+            or type(maintenance_value.get("timeout_seconds")) is not int
+            or not 1 <= maintenance_value["timeout_seconds"] <= 86400
+        ):
+            raise CloudError("Central logical-maintenance policy is invalid")
+        try:
+            from .models import ResourceBudget
+
+            budget = ResourceBudget.parse(maintenance_value["resource_budget"])
+        except Exception:
+            raise CloudError("Central logical-maintenance resource budget is invalid") from None
+        maintenance = {
+            "mode": "forget-and-prune-no-repack",
+            "resource_budget": {
+                "schema_version": 1,
+                "staging_max_bytes": budget.staging_max_bytes,
+                "minimum_free_bytes": budget.minimum_free_bytes,
+                "cache_max_bytes": budget.cache_max_bytes,
+            },
+            "timeout_seconds": maintenance_value["timeout_seconds"],
+        }
     from .b2 import B2VersionLockReader
 
     reader = adapter.native_lock_reader
     if version == 1 and reader is not None:
         raise CloudError("Schema-1 retention cannot use a native lock reader")
-    if version == 2:
+    if version == 3 and "lock_metadata" not in policy and reader is not None:
+        raise CloudError("Schema-3 retention without lock metadata cannot use a native lock reader")
+    if version == 2 or (version == 3 and "lock_metadata" in policy):
         metadata = policy["lock_metadata"]
         if (
             not isinstance(metadata, dict) or set(metadata) != {"provider", "bucket_id"}
@@ -1478,6 +1685,8 @@ def _validate_retention_policy(
     clean["endpoint_url"] = endpoint
     clean["trusted_verifier"] = verifier
     clean.update(digests)
+    if maintenance is not None:
+        clean["maintenance"] = maintenance
     return clean, state_dir
 
 
@@ -1487,11 +1696,20 @@ def _validate_retention_grant(
     *,
     policy_digest: str,
     now: datetime,
+    expected_action: str = "delete_noncurrent_versions",
+    allow_expired: bool = False,
 ) -> tuple[dict[str, Any], datetime]:
     if set(grant) != _RETENTION_GRANT_FIELDS:
         raise CloudError("Recurring retention grant schema is invalid")
-    if type(grant.get("schema_version")) is not int or grant["schema_version"] != 1:
+    version = grant.get("schema_version")
+    if type(version) is not int or version not in (1, 2):
         raise CloudError("Unsupported recurring retention grant version")
+    if expected_action not in {"delete_noncurrent_versions", "maintain_current_repository"}:
+        raise CloudError("Unsupported central cloud operation")
+    if version == 1 and expected_action != "delete_noncurrent_versions":
+        raise CloudError("Schema-1 recurring grants authorize deletion only")
+    if grant.get("action") not in {"delete_noncurrent_versions", "maintain_current_repository"}:
+        raise CloudError("Recurring retention grant action is invalid")
     expected = {
         "policy_id": policy["policy_id"],
         "catalog_id": policy["catalog_id"],
@@ -1501,7 +1719,7 @@ def _validate_retention_grant(
         "bucket": policy["bucket"],
         "prefix": policy["prefix"],
         "repository_id": policy["repository_id"],
-        "action": "delete_noncurrent_versions",
+        "action": expected_action,
     }
     if any(grant.get(key) != value for key, value in expected.items()):
         raise CloudError("Recurring retention grant does not match this policy target")
@@ -1509,7 +1727,7 @@ def _validate_retention_grant(
         expires = _parse_time(grant.get("expires_at"))
     except CloudError:
         raise CloudError("Recurring retention grant expiry is invalid") from None
-    if expires <= now:
+    if expires <= now and not allow_expired:
         raise CloudError("Recurring retention grant has expired")
     for name in ("max_apply_objects", "max_apply_bytes"):
         value = grant.get(name)
@@ -1632,6 +1850,9 @@ class _CentralRetention:
         self,
         policy_path: str | os.PathLike[str],
         grant_path: str | os.PathLike[str],
+        *,
+        expected_action: str = "delete_noncurrent_versions",
+        allow_expired: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any], Path, datetime, str, str, Path, Path]:
         policy_file = Path(policy_path).absolute()
         grant_file = Path(grant_path).absolute()
@@ -1644,6 +1865,8 @@ class _CentralRetention:
             clean_policy,
             policy_digest=_retention_digest(policy_raw),
             now=now,
+            expected_action=expected_action,
+            allow_expired=allow_expired,
         )
         return (
             clean_policy,
@@ -1803,12 +2026,16 @@ class _CentralRetention:
         self,
         policy_path: str | os.PathLike[str],
         grant_path: str | os.PathLike[str],
+        *,
+        expected_action: str = "delete_noncurrent_versions",
     ) -> dict[str, Any]:
         policy, _grant, state_dir, _now, _policy_sha, _grant_sha = self._authority(
-            policy_path, grant_path
+            policy_path, grant_path, expected_action=expected_action
         )[:6]
         with _retention_catalog_lock(state_dir):
-            policy = self._authority(policy_path, grant_path)[0]
+            policy = self._authority(
+                policy_path, grant_path, expected_action=expected_action
+            )[0]
             path = self._catalog_path(state_dir)
             if os.path.lexists(path):
                 raise CloudError("Central retention catalog is already enrolled")
@@ -1827,6 +2054,33 @@ class _CentralRetention:
             }
             raw = _write_private_json(path, catalog, replace=False)
             return {"status": "enrolled", "catalog_id": policy["catalog_id"], "catalog_sha256": _retention_digest(raw)}
+
+    def enroll_accepted_records(
+        self,
+        policy_path: str | os.PathLike[str],
+        grant_path: str | os.PathLike[str],
+        recovery_record_dirs: Sequence[str | os.PathLike[str]],
+    ) -> dict[str, Any]:
+        """Reuse catalog acceptance, leaving historical first-seen evidence untouched."""
+        policy, _grant, state_dir, _now, _policy_sha, _grant_sha = self._authority(
+            policy_path, grant_path, expected_action="maintain_current_repository"
+        )[:6]
+        with _retention_catalog_lock(state_dir):
+            policy, _grant, state_dir, now = self._authority(
+                policy_path, grant_path, expected_action="maintain_current_repository"
+            )[:4]
+            catalog, old_raw = self._load_catalog(state_dir, policy)
+            with tempfile.TemporaryDirectory(prefix="maintenance-records-", dir=state_dir) as name:
+                temporary = Path(name)
+                os.chmod(temporary, 0o700)
+                records = self._pin_records(recovery_record_dirs, policy, temporary, now)
+                self._merge_catalog_records(catalog, records, policy)
+            if _retention_json_bytes(catalog) == old_raw:
+                return {"status": "unchanged", "accepted_record_count": len(catalog["accepted_records"]),
+                        "catalog_sha256": _retention_digest(old_raw)}
+            raw = _write_private_json(self._catalog_path(state_dir), catalog, replace=True)
+            return {"status": "enrolled", "accepted_record_count": len(catalog["accepted_records"]),
+                    "catalog_sha256": _retention_digest(raw)}
 
     def _merge_catalog_records(
         self,
@@ -2223,6 +2477,7 @@ class _CentralRetention:
         now: datetime,
         temporary: Path,
         update_catalog: bool,
+        maintenance_mode: bool = False,
     ) -> dict[str, Any]:
         records = self._pin_records(recovery_record_dirs, policy, temporary, now)
         catalog, original_catalog_bytes = self._load_catalog(state_dir, policy)
@@ -2265,6 +2520,8 @@ class _CentralRetention:
                 for key, version_id, kind, size, is_latest in inventory.execute(
                     "SELECT key, version_id, kind, size, is_latest FROM versions ORDER BY key, version_id"
                 ):
+                    if maintenance_mode:
+                        break
                     if kind != "object" or is_latest:
                         continue
                     if protected.execute(
@@ -3030,9 +3287,1061 @@ class _CentralRetention:
         }
 
 
+class _CentralMaintenance:
+    """Reviewed logical maintenance over the current Restic repository namespace."""
+
+    def __init__(
+        self,
+        adapter: S3CloudAdapter,
+        policy_path: str | os.PathLike[str],
+        grant_path: str | os.PathLike[str],
+        record_dirs: Sequence[str | os.PathLike[str]],
+        *,
+        quiescent_window_confirmed: bool,
+        repository_lease_id: str,
+        reconcile_only: bool = False,
+    ) -> None:
+        self.adapter = adapter
+        self.owner = _CentralRetention(adapter)
+        self.policy_path = Path(policy_path).absolute()
+        self.grant_path = Path(grant_path).absolute()
+        if isinstance(record_dirs, (str, bytes)) or not isinstance(record_dirs, Sequence):
+            raise CloudError("Central maintenance recovery record inputs are invalid")
+        self.record_dirs = tuple(record_dirs)
+        if quiescent_window_confirmed is not True:
+            raise CloudError("Central maintenance requires an explicitly coordinated quiescent window")
+        if not isinstance(repository_lease_id, str) or not re.fullmatch(
+            r"[a-f0-9]{64}", repository_lease_id
+        ):
+            raise CloudError("Central maintenance repository lease identity is invalid")
+        self.repository_lease_id = repository_lease_id
+        self.reconcile_only = reconcile_only
+        self._lock_context = None
+        self._authority_snapshot: tuple[str, str, Path] | None = None
+        self._selection_data: dict[str, Any] | None = None
+        self._last_verified_protected: dict[str, Any] | None = None
+        self.selection: CloudMaintenanceSelection | None = None
+
+    def __enter__(self) -> _CentralMaintenance:
+        authority = self.owner._authority(
+            self.policy_path,
+            self.grant_path,
+            expected_action="maintain_current_repository",
+            allow_expired=self.reconcile_only,
+        )
+        state_dir = authority[2]
+        self._lock_context = _retention_catalog_lock(state_dir)
+        self._lock_context.__enter__()
+        try:
+            self._set_authority_snapshot()
+            captured = self._capture(allow_expired=self.reconcile_only)
+            self._selection_data = captured
+            self.selection = CloudMaintenanceSelection(
+                accepted_snapshot_ids=tuple(captured["accepted_snapshot_ids"]),
+                protected_snapshot_ids=tuple(captured["protected_snapshot_ids"]),
+                protected_version_sha256=captured["protected_sha256"],
+                policy_sha256=captured["policy_sha256"],
+                grant_sha256=captured["grant_sha256"],
+                catalog_sha256=captured["catalog_sha256"],
+                inventory_sha256=captured["inventory_sha256"],
+                resources=MappingProxyType(
+                    {
+                        **captured["resources"],
+                        "resource_budget": MappingProxyType(
+                            dict(captured["resources"]["resource_budget"])
+                        ),
+                    }
+                ),
+            )
+            return self
+        except BaseException:
+            self._release_lock()
+            raise
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self._release_lock()
+
+    def _release_lock(self) -> None:
+        if self._lock_context is not None:
+            context, self._lock_context = self._lock_context, None
+            context.__exit__(None, None, None)
+
+    def _set_authority_snapshot(self) -> None:
+        authority = self.owner._authority(
+            self.policy_path,
+            self.grant_path,
+            expected_action="maintain_current_repository",
+            allow_expired=self.reconcile_only,
+        )
+        self._authority_snapshot = (authority[4], authority[5], authority[2])
+
+    def _authority(
+        self, *, allow_expired: bool = False
+    ) -> tuple[dict[str, Any], dict[str, Any], Path, datetime, str, str, Path, Path]:
+        authority = self.owner._authority(
+            self.policy_path,
+            self.grant_path,
+            expected_action="maintain_current_repository",
+            allow_expired=allow_expired,
+        )
+        if self._authority_snapshot is not None and (
+            authority[4], authority[5], authority[2]
+        ) != self._authority_snapshot:
+            raise CloudError("Central maintenance authority changed during the session")
+        return authority
+
+    def _maintenance_resources(
+        self,
+        inputs: Mapping[str, Any],
+        policy: Mapping[str, Any],
+        grant: Mapping[str, Any],
+        *,
+        now: datetime,
+    ) -> tuple[dict[str, Any], str, str]:
+        inventory: sqlite3.Connection = inputs["inventory"]
+        evidence = inputs["evidence"]
+        maximum_objects = min(policy["max_apply_objects"], grant["max_apply_objects"])
+        maximum_bytes = min(policy["max_apply_bytes"], grant["max_apply_bytes"])
+        current_payload_count = 0
+        current_payload_bytes = 0
+        inventory_count = 0
+        inventory_digest = hashlib.sha256()
+        resource_digest = hashlib.sha256()
+        for key, version_id, kind, size, is_latest in inventory.execute(
+            "SELECT key, version_id, kind, size, is_latest FROM versions ORDER BY key, version_id"
+        ):
+            if not is_latest or _is_lock_key(_relative_key(key, self.adapter.prefix)):
+                continue
+            inventory_count += 1
+            inventory_item = {
+                "key": key,
+                "version_id": version_id,
+                "kind": kind,
+                "size": size,
+                "is_latest": True,
+            }
+            inventory_digest.update(_retention_json_bytes(inventory_item))
+            if kind == "object":
+                lock, held = self.owner._version_lock(
+                    key,
+                    version_id,
+                    lock_enabled=evidence["object_lock_enabled"],
+                    now=now,
+                )
+                lock_sha256 = _retention_digest(_retention_json_bytes(lock))
+                current_payload_count += 1
+                current_payload_bytes += size
+                if current_payload_count > maximum_objects or current_payload_bytes > maximum_bytes:
+                    raise CloudError(
+                        "Central maintenance current payload inventory exceeds authorized bounds"
+                    )
+            else:
+                held = False
+                lock_sha256 = None
+            resource_digest.update(
+                _retention_json_bytes(
+                    {
+                        **inventory_item,
+                        "held": held,
+                        "lock_sha256": lock_sha256,
+                    }
+                )
+            )
+        maintenance = policy["maintenance"]
+        resources = {
+            "inventory_version_count": inventory_count,
+            "current_payload_count": current_payload_count,
+            "current_payload_bytes": current_payload_bytes,
+            "max_apply_objects": maximum_objects,
+            "max_apply_bytes": maximum_bytes,
+            "resource_budget": dict(maintenance["resource_budget"]),
+            "timeout_seconds": maintenance["timeout_seconds"],
+        }
+        return (
+            resources,
+            inventory_digest.hexdigest(),
+            resource_digest.hexdigest(),
+        )
+
+    def _capture(self, *, allow_expired: bool = False) -> dict[str, Any]:
+        policy, grant, state_dir, now, policy_sha256, grant_sha256 = self._authority(
+            allow_expired=allow_expired
+        )[:6]
+        with tempfile.TemporaryDirectory(prefix="maintenance-plan-", dir=state_dir) as temporary_name:
+            temporary = Path(temporary_name)
+            os.chmod(temporary, 0o700)
+            original_catalog, original_catalog_raw = self.owner._load_catalog(
+                state_dir, policy
+            )
+            original_accepted_digests = set(original_catalog["accepted_records"])
+            inputs = self.owner._plan_inputs(
+                policy,
+                state_dir,
+                self.record_dirs,
+                now=now,
+                temporary=temporary,
+                update_catalog=False,
+                maintenance_mode=True,
+            )
+            try:
+                supplied_accepted_digests = {
+                    record["manifest_sha256"] for record in inputs["records"]
+                }
+                if supplied_accepted_digests != original_accepted_digests:
+                    raise CloudError(
+                        "Logical maintenance cannot enroll or omit accepted recovery records"
+                    )
+                if inputs["catalog_sha256"] != _retention_digest(original_catalog_raw):
+                    raise CloudError(
+                        "Logical maintenance cannot change central catalog acceptance state"
+                    )
+                resources, maintenance_inventory_sha256, resource_inventory_sha256 = self._maintenance_resources(
+                    inputs, policy, grant, now=now
+                )
+                catalog = inputs["catalog"]
+                accepted_snapshot_ids = sorted(
+                    entry["snapshot_id"]
+                    for entry in catalog["accepted_records"].values()
+                )
+                if len(set(accepted_snapshot_ids)) != len(accepted_snapshot_ids):
+                    raise CloudError("Central recovery catalog repeats a snapshot identity")
+                selected = set(inputs["selected_manifest_digests"])
+                protected_snapshot_ids = sorted(
+                    entry["snapshot_id"]
+                    for digest, entry in catalog["accepted_records"].items()
+                    if digest in selected
+                )
+                data = {
+                    "policy": policy,
+                    "grant": grant,
+                    "state_dir": state_dir,
+                    "policy_sha256": policy_sha256,
+                    "grant_sha256": grant_sha256,
+                    "catalog_sha256": inputs["catalog_sha256"],
+                    "accepted_manifest_digests": inputs["accepted_manifest_digests"],
+                    "selected_manifest_digests": inputs["selected_manifest_digests"],
+                    "accepted_snapshot_ids": accepted_snapshot_ids,
+                    "protected_snapshot_ids": protected_snapshot_ids,
+                    "protected_sha256": inputs["protected_sha256"],
+                    "protected_version_count": inputs["protected_version_count"],
+                    "inventory_sha256": maintenance_inventory_sha256,
+                    "version_count": resources["inventory_version_count"],
+                    "resource_inventory_sha256": resource_inventory_sha256,
+                    "resources": resources,
+                    "evidence": inputs["evidence"],
+                }
+                return data
+            finally:
+                inputs["inventory"].close()
+
+    @staticmethod
+    def _compare_capture(expected: Mapping[str, Any], actual: Mapping[str, Any]) -> None:
+        for name in (
+            "policy_sha256",
+            "grant_sha256",
+            "catalog_sha256",
+            "accepted_manifest_digests",
+            "selected_manifest_digests",
+            "accepted_snapshot_ids",
+            "protected_snapshot_ids",
+            "protected_sha256",
+            "protected_version_count",
+            "inventory_sha256",
+            "version_count",
+            "resource_inventory_sha256",
+            "resources",
+        ):
+            if expected[name] != actual[name]:
+                raise CloudError("Central maintenance inputs drifted after selection")
+
+    @staticmethod
+    def _plans_directory(state_dir: Path, *, create: bool = False) -> Path:
+        return _CentralRetention._plans_directory(state_dir, create=create)
+
+    @staticmethod
+    def _operations_directory(state_dir: Path, *, create: bool = False) -> Path:
+        return _CentralRetention._operations_directory(state_dir, create=create)
+
+    def _plan_path(self, plan_id: str) -> Path:
+        if not isinstance(plan_id, str) or not re.fullmatch(r"[0-9a-f]{32}", plan_id):
+            raise CloudError("Central maintenance plan ID is invalid")
+        if self._selection_data is None:
+            raise CloudError("Central maintenance session is not active")
+        return self._plans_directory(self._selection_data["state_dir"]) / f"{plan_id}.json"
+
+    def _journal_path(self, plan_id: str) -> Path:
+        if self._selection_data is None:
+            raise CloudError("Central maintenance session is not active")
+        return self._operations_directory(
+            self._selection_data["state_dir"], create=True
+        ) / f"{plan_id}.json"
+
+    def _assert_no_unresolved_maintenance(self, state_dir: Path) -> None:
+        operations_path = state_dir / "retention-operations"
+        if not os.path.lexists(operations_path):
+            return
+        operations = self._operations_directory(state_dir)
+        for path in sorted(operations.glob("*.json")):
+            journal, _raw = _read_private_json(path)
+            if journal.get("operation_kind") != "maintenance":
+                continue
+            try:
+                plan_id = journal["operation_id"]
+                plan_sha256 = journal["plan_sha256"]
+                if path.name != f"{plan_id}.json":
+                    raise CloudError("Central maintenance journal path is invalid")
+                plan, _digest = self._private_plan(plan_id, plan_sha256)
+                journal, _path = self._read_journal(plan_id, plan_sha256)
+                phases = journal["phases"]
+                previous_complete = True
+                for phase in _MAINTENANCE_PHASES:
+                    value = phases[phase]
+                    if value is not None and not previous_complete:
+                        raise CloudError("Central maintenance journal phase order is invalid")
+                    if value is not None and value["status"] == "completed":
+                        if phase == "protected_versions":
+                            if value["evidence"] != {
+                                "protected_version_sha256": plan["protected_sha256"],
+                                "protected_version_count": plan["protected_version_count"],
+                            }:
+                                raise CloudError("Central maintenance protected phase is invalid")
+                        elif self._phase_evidence(plan, phase, value["evidence"]) != value["evidence"]:
+                            raise CloudError("Central maintenance phase evidence is invalid")
+                    previous_complete = value is not None and value["status"] == "completed"
+                mutation_started = self._mutation_started(journal)
+                status = journal["status"]
+                completed = all(
+                    phases[phase] is not None and phases[phase]["status"] == "completed"
+                    for phase in _MAINTENANCE_PHASES
+                )
+                terminal = status in {"complete", "partial_abandoned", "abandoned"}
+                if terminal:
+                    reconciliation = journal["reconciliation"]
+                    if not isinstance(reconciliation, dict) or set(reconciliation) != {
+                        "outcome", "repository_health", "snapshot_inventory_sha256",
+                        "visible_snapshot_ids", "protected_version_sha256",
+                        "protected_version_count",
+                    }:
+                        raise CloudError("Central maintenance terminal evidence is invalid")
+                    checked = self._health_observation({
+                        "repository_health": reconciliation["repository_health"],
+                        "config_repository_id": plan["config_repository_id"],
+                        "visible_snapshot_ids": reconciliation["visible_snapshot_ids"],
+                        "snapshot_inventory_sha256": reconciliation["snapshot_inventory_sha256"],
+                    }, plan, label="terminal")
+                    visible = set(checked["visible_snapshot_ids"])
+                    initial = set(plan["visible_snapshot_ids"])
+                    expected_survivors = initial - set(plan["target_snapshot_ids"])
+                    if (not expected_survivors <= visible or visible - initial
+                            or not set(plan["protected_snapshot_ids"]) <= visible
+                            or reconciliation["protected_version_sha256"] != plan["protected_sha256"]
+                            or reconciliation["protected_version_count"] != plan["protected_version_count"]
+                            or (status == "complete") != completed
+                            or (status == "partial_abandoned") != (mutation_started and not completed)
+                            or (status == "abandoned") != (not mutation_started)
+                            or reconciliation["outcome"] != (
+                                "succeeded" if status == "complete" else "abandoned"
+                            )
+                            or (completed and visible != expected_survivors)
+                            or (completed and phases["protected_versions"]["evidence"] != {
+                                "protected_version_sha256": reconciliation["protected_version_sha256"],
+                                "protected_version_count": reconciliation["protected_version_count"],
+                            })):
+                        raise CloudError("Central maintenance terminal evidence is inconsistent")
+            except (CloudError, KeyError, TypeError, ValueError):
+                raise CloudError("An existing central maintenance journal is invalid") from None
+            if not terminal:
+                raise CloudError("An earlier central maintenance attempt must be reconciled before planning")
+
+    def _read_plan(self, path: Path) -> tuple[dict[str, Any], bytes, str]:
+        plan, raw = _read_private_json(path)
+        if (
+            set(plan) != _MAINTENANCE_PLAN_FIELDS
+            or type(plan.get("schema_version")) is not int
+            or plan["schema_version"] != 1
+            or plan.get("operation_kind") != "maintenance"
+        ):
+            raise CloudError("Central maintenance plan schema is invalid")
+        plan_id = plan.get("operation_id")
+        if not isinstance(plan_id, str) or not re.fullmatch(r"[0-9a-f]{32}", plan_id):
+            raise CloudError("Central maintenance plan identity is invalid")
+        if path.name != f"{plan_id}.json" or path.parent.name != "retention-plans":
+            raise CloudError("Central maintenance plan path does not match its identity")
+        if plan.get("repository_lease_id") != self.repository_lease_id:
+            raise CloudError("Central maintenance plan belongs to a different repository lease")
+        if not isinstance(plan.get("target"), dict) or set(plan["target"]) != {
+            "endpoint_url", "bucket", "prefix", "repository_id"
+        }:
+            raise CloudError("Central maintenance plan target is invalid")
+        try:
+            _repository_identity(plan["target"]["repository_id"])
+        except CloudError:
+            raise CloudError("Central maintenance plan target is invalid") from None
+        expected_target = {
+            "endpoint_url": self.adapter.endpoint_url,
+            "bucket": self.adapter.bucket,
+            "prefix": self.adapter.prefix,
+            "repository_id": plan.get("target", {}).get("repository_id")
+            if isinstance(plan.get("target"), dict)
+            else None,
+        }
+        if plan.get("target") != expected_target:
+            raise CloudError("Central maintenance plan target is invalid")
+        for name in (
+            "policy_sha256",
+            "grant_sha256",
+            "catalog_sha256",
+            "protected_sha256",
+            "inventory_sha256",
+            "resource_inventory_sha256",
+            "snapshot_inventory_sha256",
+            "bindings_sha256",
+            "credential_identity_sha256",
+        ):
+            if not isinstance(plan.get(name), str) or not _FULL_ID.fullmatch(plan[name]):
+                raise CloudError("Central maintenance plan digest is invalid")
+        for name in ("created_at", "deadline", "grant_expires_at"):
+            _parse_time(plan.get(name))
+        for name in (
+            "accepted_manifest_digests",
+            "selected_manifest_digests",
+        ):
+            values = plan.get(name)
+            if (
+                not isinstance(values, list)
+                or any(not isinstance(value, str) or not _FULL_ID.fullmatch(value) for value in values)
+                or values != sorted(set(values))
+            ):
+                raise CloudError("Central maintenance recovery selection is invalid")
+        for name in ("accepted_snapshot_ids", "protected_snapshot_ids", "visible_snapshot_ids", "target_snapshot_ids"):
+            _maintenance_snapshot_ids(plan.get(name), label=name.replace("_", " "))
+        accepted = set(plan["accepted_snapshot_ids"])
+        protected = set(plan["protected_snapshot_ids"])
+        visible = set(plan["visible_snapshot_ids"])
+        targets = set(plan["target_snapshot_ids"])
+        if (
+            not protected <= accepted
+            or not protected <= visible
+            or not targets <= (accepted & visible)
+            or targets & protected
+            or targets != (accepted & visible) - protected
+            or plan["config_repository_id"] != plan["target"]["repository_id"]
+            or plan["snapshot_inventory_sha256"]
+            != _maintenance_snapshot_digest(plan["config_repository_id"], plan["visible_snapshot_ids"])
+        ):
+            raise CloudError("Central maintenance snapshot selection is invalid")
+        limits = plan.get("apply_limits")
+        if not isinstance(limits, dict) or set(limits) != {"max_apply_objects", "max_apply_bytes"} or any(
+            type(value) is not int or value < 1 for value in limits.values()
+        ):
+            raise CloudError("Central maintenance apply bounds are invalid")
+        resources = plan.get("resources")
+        if not isinstance(resources, dict) or set(resources) != {
+            "inventory_version_count",
+            "current_payload_count",
+            "current_payload_bytes",
+            "max_apply_objects",
+            "max_apply_bytes",
+            "resource_budget",
+            "timeout_seconds",
+        }:
+            raise CloudError("Central maintenance resource evidence is invalid")
+        for name in (
+            "inventory_version_count",
+            "current_payload_count",
+            "current_payload_bytes",
+            "max_apply_objects",
+            "max_apply_bytes",
+        ):
+            if type(resources[name]) is not int or resources[name] < 0:
+                raise CloudError("Central maintenance resource evidence is invalid")
+        if (
+            resources["current_payload_count"] > limits["max_apply_objects"]
+            or resources["current_payload_bytes"] > limits["max_apply_bytes"]
+            or resources["max_apply_objects"] != limits["max_apply_objects"]
+            or resources["max_apply_bytes"] != limits["max_apply_bytes"]
+        ):
+            raise CloudError("Central maintenance resource bounds are invalid")
+        if (
+            not isinstance(plan.get("maintenance"), dict)
+            or set(plan["maintenance"]) != {"mode", "resource_budget", "timeout_seconds"}
+            or plan["maintenance"]["mode"] != _MAINTENANCE_MODE
+            or plan["maintenance"]["resource_budget"] != resources["resource_budget"]
+            or type(plan["maintenance"]["timeout_seconds"]) is not int
+            or plan["maintenance"]["timeout_seconds"] != resources["timeout_seconds"]
+            or not 1 <= resources["timeout_seconds"] <= 86400
+        ):
+            raise CloudError("Central maintenance mode or budget is invalid")
+        if not isinstance(resources["resource_budget"], dict) or set(resources["resource_budget"]) != {
+            "schema_version", "staging_max_bytes", "minimum_free_bytes", "cache_max_bytes"
+        }:
+            raise CloudError("Central maintenance resource budget is invalid")
+        try:
+            from .models import ResourceBudget
+
+            budget = ResourceBudget.parse(resources["resource_budget"])
+        except Exception:
+            raise CloudError("Central maintenance resource budget is invalid") from None
+        if {
+            "schema_version": 1,
+            "staging_max_bytes": budget.staging_max_bytes,
+            "minimum_free_bytes": budget.minimum_free_bytes,
+            "cache_max_bytes": budget.cache_max_bytes,
+        } != resources["resource_budget"]:
+            raise CloudError("Central maintenance resource budget is invalid")
+        if type(plan.get("protected_version_count")) is not int or plan["protected_version_count"] < 0:
+            raise CloudError("Central maintenance protected-version count is invalid")
+        if (
+            type(plan.get("version_count")) is not int
+            or plan["version_count"] < 0
+            or plan["version_count"] != resources["inventory_version_count"]
+        ):
+            raise CloudError("Central maintenance inventory count is invalid")
+        return plan, raw, _retention_digest(raw)
+
+    def _assert_plan_current(self, plan: Mapping[str, Any], *, require_live: bool) -> None:
+        policy, grant, state_dir, now, policy_sha256, grant_sha256 = self._authority(
+            allow_expired=not require_live
+        )[:6]
+        if (
+            policy_sha256 != plan["policy_sha256"]
+            or grant_sha256 != plan["grant_sha256"]
+            or policy["policy_id"] != plan["policy_id"]
+            or policy["revision"] != plan["policy_revision"]
+            or grant.get("action") != "maintain_current_repository"
+            or _retention_target(policy) != plan["target"]
+            or state_dir != self._selection_data["state_dir"]
+        ):
+            raise CloudError("Central maintenance authority changed after planning")
+        catalog, raw = self.owner._load_catalog(state_dir, policy)
+        del catalog
+        if _retention_digest(raw) != plan["catalog_sha256"]:
+            raise CloudError("Central maintenance catalog changed after planning")
+        if now >= _parse_time(plan["deadline"]) or now >= _parse_time(plan["grant_expires_at"]):
+            if require_live:
+                raise CloudError("Central maintenance plan or grant has expired")
+
+    def plan(
+        self,
+        restic_evidence: Mapping[str, Any],
+        *,
+        bindings_sha256: str,
+        credential_identity: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Create an immutable plan for accepted, visible, unprotected snapshots."""
+        if self._selection_data is None or self.selection is None:
+            raise CloudError("Central maintenance session is not active")
+        captured = self._capture()
+        self._compare_capture(self._selection_data, captured)
+        evidence = _maintenance_restic_evidence(
+            restic_evidence,
+            expected_repository_id=captured["policy"]["repository_id"],
+        )
+        if not isinstance(bindings_sha256, str) or not _FULL_ID.fullmatch(bindings_sha256):
+            raise CloudError("Central maintenance private bindings digest is invalid")
+        credential_digest = _maintenance_credential_digest(credential_identity)
+        visible = set(evidence["visible_snapshot_ids"])
+        protected = set(captured["protected_snapshot_ids"])
+        if not protected <= visible:
+            raise CloudError("A protected recovery snapshot is missing from the Restic repository")
+        self._assert_no_unresolved_maintenance(captured["state_dir"])
+        targets = sorted(
+            visible.intersection(captured["accepted_snapshot_ids"]) - protected
+        )
+        policy = captured["policy"]
+        grant = captured["grant"]
+        created = datetime.now(timezone.utc)
+        grant_expiry = _parse_time(grant["expires_at"])
+        deadline = min(
+            created + timedelta(seconds=policy["plan_max_age_seconds"]),
+            grant_expiry,
+        )
+        operation_id = uuid.uuid4().hex
+        plan = {
+            "schema_version": 1,
+            "operation_kind": "maintenance",
+            "operation_id": operation_id,
+            "created_at": _iso(created),
+            "deadline": _iso(deadline),
+            "target": _retention_target(policy),
+            "repository_lease_id": self.repository_lease_id,
+            "policy_id": policy["policy_id"],
+            "policy_revision": policy["revision"],
+            "policy_sha256": captured["policy_sha256"],
+            "grant_sha256": captured["grant_sha256"],
+            "grant_expires_at": _iso(grant_expiry),
+            "catalog_sha256": captured["catalog_sha256"],
+            "accepted_manifest_digests": captured["accepted_manifest_digests"],
+            "selected_manifest_digests": captured["selected_manifest_digests"],
+            "accepted_snapshot_ids": captured["accepted_snapshot_ids"],
+            "protected_snapshot_ids": captured["protected_snapshot_ids"],
+            "protected_sha256": captured["protected_sha256"],
+            "protected_version_count": captured["protected_version_count"],
+            "inventory_sha256": captured["inventory_sha256"],
+            "version_count": captured["version_count"],
+            "resource_inventory_sha256": captured["resource_inventory_sha256"],
+            "resources": captured["resources"],
+            "apply_limits": {
+                "max_apply_objects": captured["resources"]["max_apply_objects"],
+                "max_apply_bytes": captured["resources"]["max_apply_bytes"],
+            },
+            "maintenance": policy["maintenance"],
+            "config_repository_id": evidence["config_repository_id"],
+            "visible_snapshot_ids": evidence["visible_snapshot_ids"],
+            "snapshot_inventory_sha256": evidence["snapshot_inventory_sha256"],
+            "target_snapshot_ids": targets,
+            "bindings_sha256": bindings_sha256,
+            "credential_identity_sha256": credential_digest,
+        }
+        raw = _write_immutable_plan(
+            self._plans_directory(captured["state_dir"], create=True)
+            / f"{operation_id}.json",
+            plan,
+        )
+        return {
+            "status": "planned",
+            "plan_id": operation_id,
+            "plan_sha256": _retention_digest(raw),
+            "accepted_snapshot_ids": list(captured["accepted_snapshot_ids"]),
+            "protected_snapshot_ids": list(captured["protected_snapshot_ids"]),
+            "target_snapshot_ids": targets,
+            "protected_version_sha256": captured["protected_sha256"],
+            "resources": captured["resources"],
+            "deadline": plan["deadline"],
+        }
+
+    def _read_journal(self, plan_id: str, plan_sha256: str) -> tuple[dict[str, Any], Path]:
+        path = self._journal_path(plan_id)
+        journal, _raw = _read_private_json(path)
+        if (
+            set(journal) != _MAINTENANCE_JOURNAL_FIELDS
+            or type(journal.get("schema_version")) is not int
+            or journal["schema_version"] != 1
+            or journal.get("operation_kind") != "maintenance"
+            or journal.get("operation_id") != plan_id
+            or journal.get("plan_sha256") != plan_sha256
+            or not isinstance(journal.get("status"), str)
+        ):
+            raise CloudError("Central maintenance operation journal is invalid")
+        _parse_time(journal.get("updated_at"))
+        phases = journal.get("phases")
+        if not isinstance(phases, dict) or set(phases) != set(_MAINTENANCE_PHASES):
+            raise CloudError("Central maintenance phase journal is invalid")
+        for phase in _MAINTENANCE_PHASES:
+            value = phases[phase]
+            if value is not None and (
+                not isinstance(value, dict)
+                or set(value) != {"status", "evidence"}
+                or value.get("status") not in {"intent", "completed", "failed", "uncertain"}
+                or (value["evidence"] is not None and not isinstance(value["evidence"], dict))
+            ):
+                raise CloudError("Central maintenance phase journal is invalid")
+        if journal.get("reconciliation") is not None and not isinstance(
+            journal["reconciliation"], dict
+        ):
+            raise CloudError("Central maintenance reconciliation record is invalid")
+        return journal, path
+
+    @staticmethod
+    def _journal_value(plan: Mapping[str, Any], plan_sha256: str) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "operation_kind": "maintenance",
+            "operation_id": plan["operation_id"],
+            "plan_sha256": plan_sha256,
+            "status": "prepared",
+            "updated_at": _iso(datetime.now(timezone.utc)),
+            "phases": {phase: None for phase in _MAINTENANCE_PHASES},
+            "reconciliation": None,
+        }
+
+    @staticmethod
+    def _save_maintenance_journal(path: Path, journal: dict[str, Any]) -> None:
+        journal["updated_at"] = _iso(datetime.now(timezone.utc))
+        _write_private_json(path, journal, replace=os.path.lexists(path))
+
+    def _private_plan(
+        self, plan_id: str, expected_sha256: str
+    ) -> tuple[dict[str, Any], str]:
+        if not isinstance(expected_sha256, str) or not _FULL_ID.fullmatch(expected_sha256):
+            raise CloudError("Central maintenance expected plan digest is invalid")
+        plan, _raw, digest = self._read_plan(self._plan_path(plan_id))
+        if digest != expected_sha256:
+            raise CloudError("Central maintenance plan digest differs from the reviewed plan")
+        return plan, digest
+
+    def reconciliation_plan(
+        self,
+        plan_id: str,
+        expected_sha256: str,
+        *,
+        bindings_sha256: str,
+        credential_identity: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Read an exact expired attempt for observation, never mutation replay."""
+        if not self.reconcile_only:
+            raise CloudError("Central maintenance reconciliation requires read-only mode")
+        plan, _digest = self._private_plan(plan_id, expected_sha256)
+        self._assert_plan_current(plan, require_live=False)
+        if (plan["repository_lease_id"] != self.repository_lease_id
+                or plan["bindings_sha256"] != bindings_sha256
+                or plan["credential_identity_sha256"]
+                != _maintenance_credential_digest(credential_identity)):
+            raise CloudError("Central maintenance reconciliation identity changed")
+        return plan
+
+    def validate_plan(
+        self,
+        plan_id: str,
+        expected_sha256: str,
+        restic_evidence: Mapping[str, Any],
+        *,
+        bindings_sha256: str,
+        credential_identity: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Revalidate immutable authority, catalog, S3 inventory, and Restic inputs."""
+        plan, plan_sha256 = self._private_plan(plan_id, expected_sha256)
+        self._assert_plan_current(plan, require_live=True)
+        evidence = _maintenance_restic_evidence(
+            restic_evidence,
+            expected_repository_id=plan["config_repository_id"],
+        )
+        if evidence != {
+            "config_repository_id": plan["config_repository_id"],
+            "visible_snapshot_ids": plan["visible_snapshot_ids"],
+            "snapshot_inventory_sha256": plan["snapshot_inventory_sha256"],
+        }:
+            raise CloudError("Central maintenance Restic inventory changed after planning")
+        if not isinstance(bindings_sha256, str) or bindings_sha256 != plan["bindings_sha256"]:
+            raise CloudError("Central maintenance private bindings changed after planning")
+        if _maintenance_credential_digest(credential_identity) != plan["credential_identity_sha256"]:
+            raise CloudError("Central maintenance credential identity changed after planning")
+        captured = self._capture()
+        self._compare_capture(self._selection_data, captured)
+        comparisons = {
+            "policy_sha256": captured["policy_sha256"],
+            "grant_sha256": captured["grant_sha256"],
+            "catalog_sha256": captured["catalog_sha256"],
+            "accepted_manifest_digests": captured["accepted_manifest_digests"],
+            "selected_manifest_digests": captured["selected_manifest_digests"],
+            "accepted_snapshot_ids": captured["accepted_snapshot_ids"],
+            "protected_snapshot_ids": captured["protected_snapshot_ids"],
+            "protected_sha256": captured["protected_sha256"],
+            "protected_version_count": captured["protected_version_count"],
+            "inventory_sha256": captured["inventory_sha256"],
+            "version_count": captured["version_count"],
+            "resource_inventory_sha256": captured["resource_inventory_sha256"],
+            "resources": captured["resources"],
+        }
+        if any(plan[name] != value for name, value in comparisons.items()):
+            raise CloudError("Central maintenance inputs drifted after planning")
+        journal_path = self._journal_path(plan_id)
+        if os.path.lexists(journal_path):
+            journal, _path = self._read_journal(plan_id, plan_sha256)
+            if any(
+                journal["phases"][phase] is not None
+                for phase in _MAINTENANCE_MUTATION_PHASES
+            ):
+                raise CloudError("Central maintenance mutation already started; plan cannot be replayed")
+            if journal["status"] not in {"prepared", "active"}:
+                raise CloudError("Central maintenance plan has an unresolved attempt")
+        return plan
+
+    @staticmethod
+    def _expected_after_ids(plan: Mapping[str, Any]) -> list[str]:
+        return sorted(set(plan["visible_snapshot_ids"]) - set(plan["target_snapshot_ids"]))
+
+    @staticmethod
+    def _health_observation(
+        value: Any,
+        plan: Mapping[str, Any],
+        *,
+        label: str,
+    ) -> dict[str, Any]:
+        if not isinstance(value, Mapping) or set(value) != {
+            "repository_health",
+            "config_repository_id",
+            "visible_snapshot_ids",
+            "snapshot_inventory_sha256",
+        }:
+            raise CloudError(f"Central maintenance {label} observation schema is invalid")
+        if value.get("repository_health") != "healthy":
+            raise CloudError(f"Central maintenance {label} repository health is not proven")
+        evidence = _maintenance_restic_evidence(
+            {
+                "config_repository_id": value.get("config_repository_id"),
+                "visible_snapshot_ids": value.get("visible_snapshot_ids"),
+                "snapshot_inventory_sha256": value.get("snapshot_inventory_sha256"),
+            },
+            expected_repository_id=plan["config_repository_id"],
+        )
+        return {"repository_health": "healthy", **evidence}
+
+    def _phase_evidence(
+        self,
+        plan: Mapping[str, Any],
+        phase: str,
+        evidence: Any,
+    ) -> dict[str, Any]:
+        if phase == "check_before":
+            checked = self._health_observation(evidence, plan, label="pre-maintenance")
+            expected = {
+                "config_repository_id": plan["config_repository_id"],
+                "visible_snapshot_ids": plan["visible_snapshot_ids"],
+                "snapshot_inventory_sha256": plan["snapshot_inventory_sha256"],
+            }
+            if any(checked[name] != value for name, value in expected.items()):
+                raise CloudError("Central maintenance pre-check inventory differs from the plan")
+            return checked
+        if phase == "forget":
+            if not isinstance(evidence, Mapping) or set(evidence) != {"forgotten_snapshot_ids"}:
+                raise CloudError("Central maintenance forget evidence schema is invalid")
+            forgotten = _maintenance_snapshot_ids(
+                evidence["forgotten_snapshot_ids"], label="forgotten snapshot IDs"
+            )
+            if forgotten != plan["target_snapshot_ids"]:
+                raise CloudError("Central maintenance forget evidence differs from authorized targets")
+            return {"forgotten_snapshot_ids": forgotten}
+        if phase == "verify_snapshots":
+            checked = _maintenance_restic_evidence(
+                evidence,
+                expected_repository_id=plan["config_repository_id"],
+            )
+            if checked["visible_snapshot_ids"] != self._expected_after_ids(plan):
+                raise CloudError("Central maintenance snapshot verification found unexpected snapshots")
+            return checked
+        if phase == "prune":
+            if not isinstance(evidence, Mapping) or set(evidence) != {
+                "result", "evidence_sha256"
+            } or evidence.get("result") != "completed" or not isinstance(
+                evidence.get("evidence_sha256"), str
+            ) or not _FULL_ID.fullmatch(evidence["evidence_sha256"]):
+                raise CloudError("Central maintenance prune evidence is invalid")
+            return {
+                "result": "completed",
+                "evidence_sha256": evidence["evidence_sha256"],
+            }
+        if phase == "check_after":
+            checked = self._health_observation(evidence, plan, label="post-maintenance")
+            if checked["visible_snapshot_ids"] != self._expected_after_ids(plan):
+                raise CloudError("Central maintenance post-check snapshot inventory is unexpected")
+            return checked
+        if phase == "protected_versions":
+            if not isinstance(evidence, Mapping) or set(evidence) != {
+                "protected_version_sha256", "protected_version_count"
+            }:
+                raise CloudError("Central maintenance protected-version evidence is invalid")
+            if (
+                evidence.get("protected_version_sha256") != plan["protected_sha256"]
+                or type(evidence.get("protected_version_count")) is not int
+                or evidence["protected_version_count"] != plan["protected_version_count"]
+                or self._last_verified_protected != dict(evidence)
+            ):
+                raise CloudError("Central maintenance protected-version evidence was not freshly verified")
+            return dict(evidence)
+        raise CloudError("Unknown central maintenance phase")
+
+    @staticmethod
+    def _mutation_started(journal: Mapping[str, Any]) -> bool:
+        return any(journal["phases"][phase] is not None for phase in _MAINTENANCE_MUTATION_PHASES)
+
+    def record_phase(
+        self,
+        plan: Mapping[str, Any],
+        phase: str,
+        status: str,
+        *,
+        evidence: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Durably record a fixed maintenance phase without executing it."""
+        if phase not in _MAINTENANCE_PHASES or status not in {
+            "intent", "completed", "failed", "uncertain"
+        }:
+            raise CloudError("Central maintenance phase or status is invalid")
+        if not isinstance(plan, Mapping) or set(plan) != _MAINTENANCE_PLAN_FIELDS:
+            raise CloudError("Central maintenance private plan is invalid")
+        plan_id = plan.get("operation_id")
+        plan_digest = _retention_digest(_retention_json_bytes(plan))
+        stored, stored_digest = self._private_plan(plan_id, plan_digest)
+        if stored != dict(plan) or stored_digest != plan_digest:
+            raise CloudError("Central maintenance private plan differs from durable plan")
+        self._assert_plan_current(stored, require_live=(status == "intent"))
+        journal_path = self._journal_path(plan_id)
+        if os.path.lexists(journal_path):
+            journal, journal_path = self._read_journal(plan_id, plan_digest)
+        else:
+            journal = None
+        phases = _MAINTENANCE_PHASES
+        index = phases.index(phase)
+        if status == "intent":
+            if evidence is not None:
+                raise CloudError("Central maintenance phase intent cannot contain result evidence")
+            if journal is None:
+                if index != 0:
+                    raise CloudError("Central maintenance phases must start with check_before")
+                journal = self._journal_value(stored, plan_digest)
+            if journal["status"] not in {"prepared", "active"}:
+                raise CloudError("Central maintenance operation has an unresolved phase")
+            if journal["phases"][phase] is not None:
+                raise CloudError("Central maintenance phase intent was already recorded")
+            if any(journal["phases"][prior] is None or journal["phases"][prior]["status"] != "completed"
+                   for prior in phases[:index]):
+                raise CloudError("Central maintenance phase order is invalid")
+            journal["phases"][phase] = {"status": "intent", "evidence": None}
+            journal["status"] = "active"
+        else:
+            if journal is None:
+                raise CloudError("Central maintenance phase completion has no durable intent")
+            if journal["status"] not in {"prepared", "active"}:
+                raise CloudError("Central maintenance operation has an unresolved phase")
+            current = journal["phases"][phase]
+            if current is None or current["status"] != "intent":
+                raise CloudError("Central maintenance phase has no matching durable intent")
+            if evidence is not None and not isinstance(evidence, Mapping):
+                raise CloudError("Central maintenance phase evidence must be an object")
+            if status == "completed":
+                clean_evidence = self._phase_evidence(stored, phase, evidence)
+                journal["phases"][phase] = {"status": "completed", "evidence": clean_evidence}
+                journal["status"] = "active"
+            else:
+                if evidence is not None:
+                    raise CloudError("Failed maintenance phases cannot store raw result evidence")
+                journal["phases"][phase] = {"status": status, "evidence": None}
+                journal["status"] = "uncertain" if status == "uncertain" else "failed"
+        self._save_maintenance_journal(journal_path, journal)
+        return {
+            "status": journal["status"],
+            "plan_id": plan_id,
+            "phase": phase,
+            "phase_status": journal["phases"][phase]["status"],
+        }
+
+    def verify_protected_versions(
+        self, *, plan: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Reinventory and prove the exact selected recovery versions are present."""
+        if self._selection_data is None:
+            raise CloudError("Central maintenance session is not active")
+        if plan is None:
+            captured = self._capture(allow_expired=True)
+            for name in (
+                "policy_sha256", "grant_sha256", "catalog_sha256",
+                "accepted_manifest_digests", "selected_manifest_digests",
+                "accepted_snapshot_ids", "protected_snapshot_ids",
+                "protected_sha256", "protected_version_count",
+            ):
+                if captured[name] != self._selection_data[name]:
+                    raise CloudError("Central maintenance protected recovery set changed")
+            digest, count = captured["protected_sha256"], captured["protected_version_count"]
+        else:
+            self._assert_plan_current(plan, require_live=False)
+            if (plan["accepted_manifest_digests"] != self._selection_data["accepted_manifest_digests"]
+                    or not set(plan["selected_manifest_digests"]) <= set(plan["accepted_manifest_digests"])):
+                raise CloudError("Central maintenance accepted recovery set changed")
+            policy, _grant, state_dir, now = self._authority(allow_expired=True)[:4]
+            with tempfile.TemporaryDirectory(prefix="maintenance-protected-", dir=state_dir) as name:
+                temporary = Path(name)
+                os.chmod(temporary, 0o700)
+                records = self.owner._pin_records(self.record_dirs, policy, temporary, now)
+                if sorted(record["manifest_sha256"] for record in records) != plan["accepted_manifest_digests"]:
+                    raise CloudError("Central maintenance accepted records changed")
+                inventory, _digest, _count = self.owner._inventory(temporary / "inventory.sqlite3")
+                try:
+                    protected, digest, count = self.owner._protected_versions(
+                        records, set(plan["selected_manifest_digests"]), inventory,
+                        temporary / "protected.sqlite3",
+                    )
+                    protected.close()
+                finally:
+                    inventory.close()
+            if digest != plan["protected_sha256"] or count != plan["protected_version_count"]:
+                raise CloudError("Central maintenance planned protected versions changed")
+        result = {"protected_version_sha256": digest, "protected_version_count": count}
+        self._last_verified_protected = result
+        return result
+
+    def finish_reconciliation(
+        self,
+        plan: Mapping[str, Any],
+        observations: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Reconcile read-only observations; never infer prune completion from health alone."""
+        if not isinstance(plan, Mapping) or set(plan) != _MAINTENANCE_PLAN_FIELDS:
+            raise CloudError("Central maintenance private plan is invalid")
+        plan_id = plan.get("operation_id")
+        plan_digest = _retention_digest(_retention_json_bytes(plan))
+        stored, stored_digest = self._private_plan(plan_id, plan_digest)
+        if stored != dict(plan) or stored_digest != plan_digest:
+            raise CloudError("Central maintenance private plan differs from durable plan")
+        self._assert_plan_current(stored, require_live=False)
+        if not isinstance(observations, Mapping) or set(observations) != {
+            "schema_version",
+            "repository_health",
+            "config_repository_id",
+            "visible_snapshot_ids",
+            "snapshot_inventory_sha256",
+        } or type(observations.get("schema_version")) is not int or observations["schema_version"] != 1:
+            raise CloudError("Central maintenance reconciliation observation schema is invalid")
+        checked = self._health_observation(
+            {name: observations[name] for name in (
+                "repository_health", "config_repository_id", "visible_snapshot_ids", "snapshot_inventory_sha256"
+            )},
+            stored,
+            label="reconciliation",
+        )
+        visible = set(checked["visible_snapshot_ids"])
+        initial = set(stored["visible_snapshot_ids"])
+        targets = set(stored["target_snapshot_ids"])
+        expected_survivors = initial - targets
+        if not expected_survivors <= visible or visible - initial:
+            raise CloudError("Central maintenance reconciliation found repository snapshot drift")
+        protected = set(stored["protected_snapshot_ids"])
+        if not protected <= visible:
+            raise CloudError("Central maintenance reconciliation cannot prove protected snapshots")
+        protected_evidence = self.verify_protected_versions(plan=stored)
+        journal, journal_path = self._read_journal(plan_id, plan_digest)
+        completed = all(
+            isinstance(journal["phases"][phase], dict)
+            and journal["phases"][phase]["status"] == "completed"
+            for phase in _MAINTENANCE_PHASES
+        )
+        if completed and visible != expected_survivors:
+            raise CloudError("Completed central maintenance still has authorized target snapshots")
+        if completed and journal["phases"]["protected_versions"]["evidence"] != protected_evidence:
+            raise CloudError("Completed central maintenance protected-version evidence changed")
+        if completed:
+            status = "complete"
+            outcome = "succeeded"
+        elif self._mutation_started(journal):
+            status = "partial_abandoned"
+            outcome = "abandoned"
+        else:
+            status = "abandoned"
+            outcome = "abandoned"
+        journal["status"] = status
+        journal["reconciliation"] = {
+            "outcome": outcome,
+            "repository_health": "healthy",
+            "snapshot_inventory_sha256": checked["snapshot_inventory_sha256"],
+            "visible_snapshot_ids": checked["visible_snapshot_ids"],
+            **protected_evidence,
+        }
+        self._save_maintenance_journal(journal_path, journal)
+        return {
+            "status": status,
+            "outcome": outcome,
+            "plan_id": plan_id,
+            "target_snapshot_ids": stored["target_snapshot_ids"],
+            "remaining_target_snapshot_ids": sorted(targets & visible),
+            "protected_version_sha256": protected_evidence["protected_version_sha256"],
+            "protected_version_count": protected_evidence["protected_version_count"],
+        }
+
+
 __all__ = [
     "CheckpointRecord",
     "CloudError",
+    "CloudMaintenanceSelection",
     "LifecycleInspection",
     "RestoreRecord",
     "S3CloudAdapter",

@@ -13,17 +13,20 @@ import re
 import shutil
 import sqlite3
 import stat
+import sys
 import tempfile
 import uuid
 from urllib.parse import urlsplit
 
 from .capture import CaptureError, DurableCaptureArtifacts, capture_sources
+from .cloud import _retention_json_bytes
 from .config import SnapshotProfile
-from .models import Configuration, HostBindings, strict_json
+from .models import Configuration, HostBindings, ResourceBudget, strict_json
 from .docker_recovery import DockerRecoveryError, DockerRecoveryUncertainError, DockerRuntime
 from .snapshot import ResticRunner
 from .resource_limits import ResourceLimitError, ResourceMonitor
 from .progress import stdout_progress_handler
+from .enrollment import _read_regular
 from .operations import (
     OperationLedger,
     OperationPlan,
@@ -357,6 +360,243 @@ class BackupService:
         if value.startswith("/"):
             value = str(Path(value).resolve())
         return value
+
+    def _maintenance_bindings(self, path, adapter):
+        """Resolve the separate Restic pair from one bounded private declaration."""
+        try:
+            raw = _read_regular(Path(path), private=True)
+            value = strict_json(raw.decode("utf-8"))
+        except (OSError, UnicodeError, ValueError):
+            raise ServiceError("Private maintenance bindings are invalid") from None
+        required = {"schema_version", "staging_dir", "access_key_id_env", "secret_access_key_env"}
+        if (not isinstance(value, dict) or set(value) - required - {"credential_profile"}
+                or not required <= set(value) or value["schema_version"] != 1
+                or type(value["schema_version"]) is not int):
+            raise ServiceError("Private maintenance bindings are invalid")
+        profile = value.get("credential_profile", "restricted")
+        if profile not in {"restricted", "management"}:
+            raise ServiceError("Maintenance credential profile is invalid")
+        staging_value = value["staging_dir"]
+        if (not isinstance(staging_value, str) or not Path(staging_value).is_absolute()
+                or Path(staging_value).resolve() != Path(staging_value)):
+            raise ServiceError("Maintenance staging directory must be canonical and absolute")
+        names = (value["access_key_id_env"], value["secret_access_key_env"])
+        if (any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
+                for name in names) or names[0] == names[1]):
+            raise ServiceError("Maintenance credential environment references are invalid")
+        pair = tuple(os.environ.get(name) for name in names)
+        if (not all(pair) or any("\0" in item for item in pair)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", pair[0])):
+            raise ServiceError("Maintenance Restic credentials are unavailable")
+        if getattr(adapter, "_credential_pair", None) == pair:
+            raise ServiceError("Maintenance Restic credentials must differ from adapter credentials")
+        staging = Path(staging_value)
+        environment = {
+            "PATH": os.environ.get("PATH", os.defpath),
+            "HOME": str(staging),
+            "TMPDIR": str(staging),
+            "AWS_ACCESS_KEY_ID": pair[0],
+            "AWS_SECRET_ACCESS_KEY": pair[1],
+        }
+        endpoint_host = urlsplit(getattr(adapter, "endpoint_url", "") or "").hostname or ""
+        region = re.fullmatch(r"s3\.([a-z0-9-]+)\.backblazeb2\.com", endpoint_host)
+        if region is None:
+            raise ServiceError("Maintenance requires a canonical B2 endpoint")
+        environment["AWS_DEFAULT_REGION"] = region.group(1)
+        environment["AWS_REGION"] = region.group(1)
+        for name in ("SSL_CERT_FILE", "AWS_CA_BUNDLE"):
+            if name in os.environ:
+                environment[name] = os.environ[name]
+        return hashlib.sha256(raw).hexdigest(), {"key_id": pair[0], "profile": profile}, staging, environment, pair
+
+    def _maintenance_inspect_b2(self, adapter, identity, environment, pair, profile, cancel):
+        """Authenticate target and observed capabilities in a credential-limited child."""
+        from .b2 import B2Error
+
+        endpoint = getattr(adapter, "endpoint_url", None)
+        parsed = urlsplit(endpoint or "")
+        if (parsed.scheme != "https" or not re.fullmatch(
+            r"s3\.[a-z0-9-]+\.backblazeb2\.com", parsed.netloc
+        ) or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+            raise ServiceError("Maintenance requires a canonical B2 S3 endpoint")
+        inspection_env = {
+            "PATH": environment["PATH"], "HOME": environment["HOME"],
+            "TMPDIR": environment["TMPDIR"],
+            "B2_APPLICATION_KEY_ID": pair[0], "B2_APPLICATION_KEY": pair[1],
+        }
+        argv = (sys.executable, "-m", "bbackup.b2", "--bucket", adapter.bucket,
+                "--prefix", adapter.prefix, "--key-id-env", "B2_APPLICATION_KEY_ID",
+                "--key-env", "B2_APPLICATION_KEY")
+        result = self.runner.run(OperationPlan.create(
+            identity, "maintenance-b2-inspect", argv, env=inspection_env,
+            timeout_seconds=120), cancel_event=cancel)
+        if (result.status is not OperationStatus.SUCCEEDED or result.exit_code != 0
+                or result.stdout_bytes != len(result.stdout_tail)):
+            raise ServiceError("Maintenance B2 credential inspection failed")
+        try:
+            inspection = strict_json(result.stdout_tail.decode("utf-8"))
+            if (not isinstance(inspection, dict) or inspection.get("bucket") != adapter.bucket
+                    or inspection.get("prefix") != adapter.prefix
+                    or inspection.get("s3_endpoint") != endpoint
+                    or inspection.get("bucket_access_verified") is not True
+                    or inspection.get("version_listing_verified") is not True
+                    or inspection.get("write_capability_present") is not True
+                    or inspection.get("read_capability_present") is not True):
+                raise ValueError()
+            if profile == "restricted" and inspection.get("restricted_source_profile", {}).get("status") != "eligible_from_observed_metadata":
+                raise ValueError()
+        except (ValueError, UnicodeError, TypeError, AttributeError, B2Error):
+            raise ServiceError("Maintenance B2 key scope or target is unqualified") from None
+
+    def _maintenance_restic(self, identity, password_file, environment, monitor, argv,
+                            *, cancel, timeout, complete_output=False):
+        base = ("restic", "-r", identity, "--password-file", str(password_file),
+                "--no-cache", "--retry-lock", "0s")
+        plan = OperationPlan.create(identity, "maintenance-restic", (*base, *argv),
+                                    env=environment, timeout_seconds=timeout)
+        monitor.check()
+        result = self.runner.run(plan, on_tick=monitor.check, cancel_event=cancel)
+        monitor.check()
+        if result.status is not OperationStatus.SUCCEEDED or result.exit_code != 0:
+            raise ServiceError("Maintenance Restic inspection or command failed")
+        if complete_output and result.stdout_bytes != len(result.stdout_tail):
+            raise ServiceError("Maintenance Restic metadata exceeded bounded capture")
+        return result
+
+    def _maintenance_observe(self, identity, password_file, environment, monitor,
+                             *, cancel, timeout, no_lock, check):
+        prefix = ("--no-lock",) if no_lock else ()
+        def query(*args, complete=True):
+            return self._maintenance_restic(
+                identity, password_file, environment, monitor, (*prefix, *args),
+                cancel=cancel, timeout=timeout, complete_output=complete,
+            )
+        if no_lock and query("list", "locks").stdout_tail.strip() not in {b"", b"[]"}:
+            raise ServiceError("Maintenance observed an active Restic lock")
+        try:
+            config = strict_json(query("cat", "config").stdout_tail.decode("utf-8"))
+            snapshots = strict_json(query("snapshots", "--json").stdout_tail.decode("utf-8"))
+            repository_id = config["id"]
+            ids = sorted(item["id"] for item in snapshots)
+            if (not re.fullmatch(r"[0-9a-f]{64}", repository_id) or len(ids) != len(set(ids))
+                    or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids)):
+                raise ValueError()
+        except (ValueError, UnicodeError, KeyError, TypeError):
+            raise ServiceError("Maintenance Restic metadata is invalid or incomplete") from None
+        if check:
+            query("check", complete=False)
+        if no_lock and query("list", "locks").stdout_tail.strip() not in {b"", b"[]"}:
+            raise ServiceError("Maintenance observed a new Restic lock")
+        evidence = {"config_repository_id": repository_id, "visible_snapshot_ids": ids}
+        evidence["snapshot_inventory_sha256"] = hashlib.sha256(_retention_json_bytes(evidence)).hexdigest()
+        return evidence
+
+    def cloud_maintenance(self, command, adapter, values, directories, *, lease_id, cancel=None):
+        """Run one central maintenance operation using the existing catalog and ledger."""
+        from .resource_limits import ResourceMonitor
+
+        repository = values["repository"]
+        identity = self._identity(repository)
+        binding = self.bindings.repositories[repository]
+        if not binding.password_file.is_file() or binding.password_file.stat().st_mode & 0o077:
+            raise ServiceError("Maintenance repository password file must be private")
+        if values["quiescent_window_confirmed"] is not True:
+            raise ServiceError("Maintenance requires a confirmed quiet window")
+        digest, credential, staging, environment, pair = self._maintenance_bindings(
+            values["maintenance_bindings_file"], adapter
+        )
+        with adapter.maintenance_session(
+            values["policy_file"], values["grant_file"], directories,
+            quiescent_window_confirmed=True, repository_lease_id=lease_id,
+            reconcile_only=command == "cloud-maintenance reconcile",
+        ) as session:
+            budget = ResourceBudget.parse(dict(session.selection.resources["resource_budget"]))
+            timeout = session.selection.resources["timeout_seconds"]
+            try:
+                monitor = ResourceMonitor(staging, self.state, budget,
+                    read_only_reconcile=command != "cloud-maintenance apply")
+            except ResourceLimitError:
+                raise ServiceError("Maintenance staging mount or reserve is unqualified") from None
+            with monitor:
+                self._maintenance_inspect_b2(adapter, identity, environment, pair, credential["profile"], cancel)
+                if command == "cloud-maintenance plan":
+                    observed = self._maintenance_observe(
+                        identity, binding.password_file, environment, monitor,
+                        cancel=cancel, timeout=timeout, no_lock=True, check=False)
+                    return session.plan(observed, bindings_sha256=digest,
+                                        credential_identity=credential)
+                plan_id, plan_sha = values["plan_id"], values["plan_sha256"]
+                if command == "cloud-maintenance reconcile":
+                    plan = session.reconciliation_plan(plan_id, plan_sha,
+                        bindings_sha256=digest, credential_identity=credential)
+                    observed = self._maintenance_observe(
+                        identity, binding.password_file, environment, monitor,
+                        cancel=cancel, timeout=timeout, no_lock=True, check=True)
+                    outcome = session.finish_reconciliation(plan, {
+                        "schema_version": 1, "repository_health": "healthy", **observed})
+                    ledger_state = self.ledger.inspect(lease_id, plan_id)
+                    if ledger_state is not None and ledger_state[1] in {
+                        OperationStatus.RUNNING, OperationStatus.UNCERTAIN,
+                    }:
+                        self.ledger.reconcile(lease_id, plan_id,
+                            ReconciliationOutcome.SUCCEEDED if outcome["outcome"] == "succeeded"
+                            else ReconciliationOutcome.ABANDONED)
+                    return outcome
+                observed = self._maintenance_observe(
+                    identity, binding.password_file, environment, monitor,
+                    cancel=cancel, timeout=timeout, no_lock=False, check=False)
+                plan = session.validate_plan(plan_id, plan_sha, observed,
+                    bindings_sha256=digest, credential_identity=credential)
+                ledger_plan = OperationPlan(plan_id, lease_id, "cloud-maintenance",
+                    ("restic", "check"), destructive=True)
+                with self.ledger.begin(ledger_plan) as lease:
+                    mutation_started = False
+                    try:
+                        def phase(name, command_args=None, evidence=None):
+                            nonlocal mutation_started
+                            session.record_phase(plan, name, "intent")
+                            try:
+                                result = None
+                                if command_args is not None:
+                                    if name in {"forget", "prune"}:
+                                        mutation_started = True
+                                    result = self._maintenance_restic(
+                                        identity, binding.password_file, environment, monitor,
+                                        command_args, cancel=cancel, timeout=timeout,
+                                        complete_output=name == "prune")
+                                value = evidence(result) if callable(evidence) else evidence
+                                session.record_phase(plan, name, "completed", evidence=value)
+                            except BaseException:
+                                session.record_phase(plan, name,
+                                    "uncertain" if name in {"forget", "prune"} else "failed")
+                                raise
+                        before = self._maintenance_observe(
+                            identity, binding.password_file, environment, monitor,
+                            cancel=cancel, timeout=timeout, no_lock=False, check=True)
+                        phase("check_before", evidence={"repository_health": "healthy", **before})
+                        phase("forget", ("forget", "--", *plan["target_snapshot_ids"])
+                              if plan["target_snapshot_ids"] else None,
+                              {"forgotten_snapshot_ids": plan["target_snapshot_ids"]})
+                        after_forget = self._maintenance_observe(
+                            identity, binding.password_file, environment, monitor,
+                            cancel=cancel, timeout=timeout, no_lock=False, check=False)
+                        phase("verify_snapshots", evidence=after_forget)
+                        phase("prune", ("prune", "--max-repack-size", "0"),
+                              lambda result: {"result": "completed", "evidence_sha256":
+                                  hashlib.sha256(result.stdout_tail + b"\0" + result.stderr_tail).hexdigest()})
+                        after_prune = self._maintenance_observe(
+                            identity, binding.password_file, environment, monitor,
+                            cancel=cancel, timeout=timeout, no_lock=False, check=True)
+                        phase("check_after", evidence={"repository_health": "healthy", **after_prune})
+                        phase("protected_versions", evidence=session.verify_protected_versions())
+                        outcome = session.finish_reconciliation(plan, {
+                            "schema_version": 1, "repository_health": "healthy", **after_prune})
+                        lease.finish(OperationStatus.SUCCEEDED, 0)
+                        return outcome
+                    except BaseException:
+                        if not mutation_started:
+                            lease.finish(OperationStatus.FAILED, None)
+                        raise
 
     def _execute(
         self,

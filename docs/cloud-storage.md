@@ -243,6 +243,15 @@ and the native reader observed both protections. The provisioning identity
 subsequently removed protection and deleted only those canaries. These checks do
 not qualify aged-version reclamation or the promised historical recovery window.
 
+A separate two-object workstation probe used the restricted source key for S3
+deletion **without** a version ID. Both the governance-locked current object and
+the legally held current object received one hide marker and became absent by
+current-name lookup. Independent native inspection confirmed that each exact
+original version and its protection survived. Read-only reconciliation found no
+uncertain operations; the provisioning identity then removed protection and
+deleted only those two canaries and their markers. This tests name hiding and
+historical-version survival, not aged reclamation or a guaranteed recovery window.
+
 A live central-retention rehearsal enrolled a catalog, planned with
 a fresh thirty-day first-seen grace period, ran a guarded zero-apply, and
 reconciled an empty plan. The plan identified 10 protected versions among 31
@@ -283,6 +292,122 @@ Fixture tests include real signed recovery records, dependency loss, lock and
 lifecycle changes, cancellation, contention, expiry, and lost responses before
 and after deletion. They do not establish B2/AWS semantics or production savings.
 `protection_qualified` remains false.
+
+### Central snapshot maintenance (unreleased)
+
+The separate experimental `cloud-maintenance` commands retire obsolete visible
+snapshots before historical-version reclamation. Run them on the central
+management machine. They preserve every checkpoint still protected by the
+central daily/weekly/monthly selection, known-good and pending pins, or acceptance
+grace. They forget only explicit full IDs that are visible, independently accepted
+and no longer protected. Unknown snapshots remain untouched. Full repository
+manifests can conservatively pin data shared with older checkpoints.
+The current production maintenance path requires a canonical Backblaze B2 S3
+endpoint; it does not qualify generic S3 or AWS maintenance.
+
+Maintenance runs Restic `forget` with the exact planned IDs, then
+`prune --max-repack-size 0`. This avoids repacking shared packs, while still
+allowing removal of wholly unused packs and index rewrites. B2 versionless
+removal hides names; it does not permanently remove historical versions.
+Permanent reclamation remains the separate `cloud-retention` workflow after
+its real first-observed noncurrent grace. Never reset a catalog or backdate its
+records to make a version eligible.
+
+A schema-3 central policy retains the existing target, retention and protection
+fields, including the B2 native `lock_metadata` selector when used, and adds:
+
+```json
+{
+  "schema_version": 3,
+  "maintenance": {
+    "mode": "forget-and-prune-no-repack",
+    "resource_budget": {
+      "schema_version": 1,
+      "staging_max_bytes": 1048576,
+      "minimum_free_bytes": 65536,
+      "cache_max_bytes": 0
+    },
+    "timeout_seconds": 3600
+  }
+}
+```
+
+This is a policy fragment, not a complete policy. A schema-2 recurring grant
+retains the existing authority fields and sets
+`action: "maintain_current_repository"`. A maintenance grant cannot authorize
+permanent-version deletion; a deletion grant cannot authorize maintenance.
+Plans bind the exact policy, grant, accepted records, protected versions, current
+inventory, Restic repository identity, visible snapshots and private bindings.
+Current object inventory, excluding transient Restic `locks/` entries, is bounded
+by the policy and grant limits, including retained or held current objects.
+Those limits do not promise a maximum prune request count or memory use.
+
+Keep a separate private maintenance bindings file. It references a distinct
+application key for the Restic child, rather than the central version-deletion
+credential pair:
+
+```json
+{
+  "schema_version": 1,
+  "staging_dir": "/secure/maintenance-staging",
+  "access_key_id_env": "BBACKUP_B2_MAINTENANCE_KEY_ID",
+  "secret_access_key_env": "BBACKUP_B2_MAINTENANCE_KEY",
+  "credential_profile": "restricted"
+}
+```
+
+Use an owned private, dedicated mounted filesystem within the staging budget;
+cache remains disabled and free-space reserves are observed continuously. The
+budget belongs to central policy and does not require a capture job on this
+machine. The standard restricted key is bound to the exact bucket and machine
+prefix with read/list/write permissions and no permanent deletion or management
+capability. An explicitly selected `management` profile permits a broader key;
+it does not expand the reviewed target or grant. Do not put inline secrets in
+bindings or pass provisioning/deletion credentials to Restic.
+
+For a new catalog, enroll it once, then explicitly register independently signed
+acceptance records with `cloud-maintenance records-enroll`. Registration uses
+the existing catalog owner and preserves established acceptance and first-seen
+state. Logical maintenance never silently accepts new records. Existing catalogs
+must be preserved, including when changing policy schema or grant action.
+
+```bash
+# New catalog only; skip this command for an established catalog.
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  cloud-maintenance catalog-enroll --repository cloud \
+  --policy-file /secure/maintenance/policy.json \
+  --grant-file /secure/maintenance/grant.json
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  cloud-maintenance records-enroll --repository cloud \
+  --policy-file /secure/maintenance/policy.json \
+  --grant-file /secure/maintenance/grant.json \
+  --records-file /secure/maintenance/records.json
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  cloud-maintenance plan --repository cloud \
+  --policy-file /secure/maintenance/policy.json \
+  --grant-file /secure/maintenance/grant.json \
+  --records-file /secure/maintenance/records.json \
+  --maintenance-bindings-file /secure/maintenance/bindings.json \
+  --quiescent-window-confirmed
+```
+
+Inspect the returned target IDs and immutable plan before applying its exact
+`--plan-id` and `--plan-sha256` with `cloud-maintenance apply`; retain the same
+policy, grant, records, bindings and quiet-window arguments. If the attempt is
+uncertain, use `cloud-maintenance reconcile` with those exact arguments and the
+original plan ID and digest. Do not run apply again to discover what happened.
+
+Plan and reconcile only while repository writers remain stopped for the entire
+operation, with `--quiescent-window-confirmed`. Their Restic inspections use
+`--no-lock --no-cache` and observe repository locks before and after reads.
+These observations cannot prevent another host from starting a writer. Apply
+uses the shared local repository lease and normal Restic mutation locks.
+
+Each mutation has a durable phase intent. An interrupted or uncertain attempt
+blocks replay of the plan; inspect and reconcile the original attempt instead.
+Healthy repository checks alone do not prove that prune completed. Reconciliation
+also verifies protected historical versions and records only what its evidence
+establishes. No automatic replay or implicit repository initialization occurs.
 
 ## Bind the cloud repository
 

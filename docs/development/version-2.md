@@ -197,9 +197,31 @@ lock/lifecycle checks, and single-request journaled deletion with read-only
 reconciliation. It uses the enrolled repository's shared lease. Missing protected
 versions or catalog records stop deletion. A schema-2 B2 policy can select a
 native lock-metadata reader; schema-1 generic S3 policy behavior is unchanged.
-This reclaims only noncurrent object versions; current-pack compaction, aged
-B2 reclamation, AWS behavior and production savings remain outstanding for #25. Focused tests
+This reclaims only noncurrent object versions; aged B2 reclamation, AWS behavior
+and production savings remain outstanding for #25. Focused tests
 include actual GPG-signed acceptance records and uncertainty before/after deletion.
+
+The separate unreleased `cloud-maintenance` workflow uses the same central
+catalog and independently accepted records to retire only visible accepted
+snapshots that are no longer protected. It leaves unknown snapshots untouched,
+uses a separate explicit Restic credential profile, and runs no-repack prune
+before any later historical-version reclamation. Policy schema 3 and action-bound
+schema-2 grants bind resource limits and immutable plans; explicit record
+enrollment preserves established acceptance and first-seen state. Read-only
+inspection requires operator-maintained quiescence and uses `--no-lock`, while
+mutations keep native locks and journal intent without automatic replay.
+Healthy reconciliation alone does not certify completed prune. Repacking,
+aged live deletion and the promised recovery window remain unqualified.
+See the [central maintenance workflow](../cloud-storage.md#central-snapshot-maintenance-unreleased).
+
+Local validation includes a real three-snapshot Restic repository: the exact
+obsolete accepted ID was forgotten, no-repack prune completed, and both the
+protected and unknown snapshots restored afterward. That drill uses a test
+double for the central cloud session; it is not live B2 maintenance evidence.
+The runtime suite passed 1,158 tests with two skips. The Unix-socket case skipped
+because the test temporary path exceeded the platform limit, then passed in a
+separate short-path run. The legacy Docker roundtrip still skipped after its
+backup returned false and supplies no Docker recovery qualification.
 
 #### Live Backblaze B2 source trial
 
@@ -298,6 +320,16 @@ future governance expiry and active legal hold. The provisioning identity then
 removed protection and deleted only those test canaries. Earlier inconclusive
 attempts remain separate and are not counted as successful denial checks. These
 checks do not demonstrate aged candidate deletion or a thirty-day recovery window.
+
+A separate probe created two further 39-byte protected canaries and issued a
+versionless S3 delete with the restricted source key. Both governance retention
+and legal hold allowed current-name hiding: each acquired exactly one marker,
+while independent native inspection verified the original exact version and
+unchanged active protection. Current-name reads reported absence. Read-only
+reconciliation recorded no uncertain operations, and exact scoped provisioning
+cleanup removed only those two uploads and their markers. This confirms that
+Object Lock protects historical versions without making current names append-only;
+it does not establish a thirty-day window or aged planner behavior.
 
 Thirty-day elapsed grace, overlapping lifecycle behavior, aged retention,
 off-host custody, clean replacement, final remote-server qualification, and all

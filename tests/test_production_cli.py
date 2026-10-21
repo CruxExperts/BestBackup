@@ -202,9 +202,53 @@ def test_schema2_retention_freezes_one_pair_for_native_and_s3(service, tmp_path,
     assert calls[2][1]["region_name"] == "us-west-004"
     frozen.token = "session-token"
     calls.clear()
-    with pytest.raises(ConfigurationError, match="bind schema-2"):
+    with pytest.raises(ConfigurationError, match="bind native B2"):
         module._cloud_retention_operation(service, "cloud-retention catalog-enroll", values, None)
     assert calls == []
+
+
+def test_schema3_maintenance_freezes_adapter_pair_without_native_metadata(service, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from bbackup import production_operations as module
+    from bbackup.models import RepositoryBinding
+    import boto3
+
+    endpoint = "https://s3.us-west-004.backblazeb2.com"
+    service.bindings.repositories["local"] = RepositoryBinding(
+        f"s3:{endpoint}/backup-bucket/repo", tmp_path / "password")
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps({"schema_version": 3, "endpoint_url": endpoint,
+                                  "bucket": "backup-bucket", "prefix": "repo/"}))
+    policy.chmod(0o600)
+    calls = []
+    frozen = SimpleNamespace(access_key="adapter-key", secret_key="adapter-secret", token=None)
+    monkeypatch.setattr(boto3, "Session", lambda: SimpleNamespace(
+        get_credentials=lambda: SimpleNamespace(get_frozen_credentials=lambda: frozen)))
+    monkeypatch.setattr(boto3, "client", lambda *_args, **kwargs: calls.append(("s3", kwargs)) or object())
+    class Adapter:
+        def __init__(self, *_args, **kwargs):
+            calls.append(("adapter", kwargs))
+        def initialize_central_retention_catalog(self, *_args, **kwargs):
+            return {"status": "enrolled"}
+    monkeypatch.setattr(module, "S3CloudAdapter", Adapter)
+    result = module._cloud_maintenance_operation(service, "cloud-maintenance catalog-enroll",
+        {"repository": "local", "policy_file": str(policy), "grant_file": str(tmp_path / "grant")}, None)
+    assert result["status"] == "enrolled"
+    assert calls[0][1]["aws_access_key_id"] == "adapter-key"
+    assert calls[1][1]["credential_pair"] == ("adapter-key", "adapter-secret")
+    assert calls[1][1]["native_lock_reader"] is None
+
+
+def test_cloud_maintenance_cli_has_exact_private_input_schemas():
+    for name in ("catalog-enroll", "records-enroll", "plan", "apply", "reconcile"):
+        definition = execute_operation("skills", {"name": "cloud-maintenance " + name})
+        assert definition["cloud-maintenance " + name]["input_schema"]["additionalProperties"] is False
+    catalog = execute_operation("skills", {"name": "cloud-maintenance catalog-enroll"})
+    assert set(catalog["cloud-maintenance catalog-enroll"]["input_schema"]["required"]) == {
+        "repository", "policy_file", "grant_file"}
+    apply = execute_operation("skills", {"name": "cloud-maintenance apply"})
+    assert {"records_file", "maintenance_bindings_file", "plan_id", "plan_sha256"} <= set(
+        apply["cloud-maintenance apply"]["input_schema"]["required"])
 
 
 def test_cloud_retention_requires_enrollment_and_private_record_list(service, tmp_path, monkeypatch):

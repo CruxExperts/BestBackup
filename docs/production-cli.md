@@ -140,6 +140,60 @@ Reconcile a cloud-version deletion journal using read-only observations without 
 - `--policy-file`: path.
 - `--plan-file`: path.
 
+## `cloud-maintenance catalog-enroll`
+
+Explicitly initialize the central catalog under a current-repository maintenance grant.
+
+- `--repository`: string.
+- `--policy-file`: path.
+- `--grant-file`: path.
+
+## `cloud-maintenance records-enroll`
+
+Explicitly register independently signed accepted recovery records without changing version-age evidence.
+
+- `--repository`: string.
+- `--policy-file`: path.
+- `--grant-file`: path.
+- `--records-file`: path.
+
+## `cloud-maintenance plan`
+
+Plan exact accepted and unprotected snapshot removal using read-only Restic observations.
+
+- `--repository`: string.
+- `--policy-file`: path.
+- `--grant-file`: path.
+- `--records-file`: path.
+- `--maintenance-bindings-file`: path.
+- `--quiescent-window-confirmed`: boolean.
+
+## `cloud-maintenance apply`
+
+Apply a reviewed snapshot-forget and no-repack prune plan under one repository lease.
+
+- `--repository`: string.
+- `--policy-file`: path.
+- `--grant-file`: path.
+- `--records-file`: path.
+- `--maintenance-bindings-file`: path.
+- `--plan-id`: string.
+- `--plan-sha256`: string.
+- `--quiescent-window-confirmed`: boolean.
+
+## `cloud-maintenance reconcile`
+
+Observe an interrupted maintenance attempt without replaying forget or prune.
+
+- `--repository`: string.
+- `--policy-file`: path.
+- `--grant-file`: path.
+- `--records-file`: path.
+- `--maintenance-bindings-file`: path.
+- `--plan-id`: string.
+- `--plan-sha256`: string.
+- `--quiescent-window-confirmed`: boolean.
+
 ## `restore`
 
 Restore and verify files in a new isolated directory.

@@ -331,6 +331,92 @@ def _refresh_grant_for_policy(env):
     _write_json(env["grant_path"], env["grant"])
 
 
+def _prepare_maintenance(env, *, max_objects=20, max_bytes=1024):
+    second_dir, _manifest, _digest, _acceptance = _make_record(
+        env["root"] / "maintenance-old-acceptance",
+        "b" * 64,
+        [("repo/other/old.bin", "old-v1", b"old!")],
+    )
+    env["second_record_dir"] = second_dir
+    records = [env["record_dir"], second_dir]
+    _plan(env, records)
+    FrozenDateTime.current += timedelta(days=31)
+
+    policy = dict(env["policy"])
+    policy["retention_counts"] = {"daily": 0, "weekly": 0, "monthly": 0}
+    policy["max_apply_objects"] = max_objects
+    policy["max_apply_bytes"] = max_bytes
+    _write_json(env["policy_path"], policy)
+    grant = dict(env["grant"])
+    grant["max_apply_objects"] = max_objects
+    grant["max_apply_bytes"] = max_bytes
+    grant["policy_sha256"] = cloud._retention_digest(env["policy_path"].read_bytes())
+    _write_json(env["grant_path"], grant)
+    env["policy"] = policy
+    env["grant"] = grant
+    _plan(env, records)
+
+    policy = dict(env["policy"])
+    policy["schema_version"] = 3
+    policy["maintenance"] = {
+        "mode": "forget-and-prune-no-repack",
+        "resource_budget": {
+            "schema_version": 1,
+            "staging_max_bytes": 1024**2,
+            "minimum_free_bytes": 64 * 1024,
+            "cache_max_bytes": 0,
+        },
+        "timeout_seconds": 3600,
+    }
+    _write_json(env["policy_path"], policy)
+    grant = dict(env["grant"])
+    grant["schema_version"] = 2
+    grant["action"] = "maintain_current_repository"
+    grant["policy_sha256"] = cloud._retention_digest(env["policy_path"].read_bytes())
+    _write_json(env["grant_path"], grant)
+    env["policy"] = policy
+    env["grant"] = grant
+    return records
+
+
+def _restic_evidence(snapshot_ids):
+    visible = sorted(snapshot_ids)
+    return {
+        "config_repository_id": REPOSITORY_ID,
+        "visible_snapshot_ids": visible,
+        "snapshot_inventory_sha256": cloud._maintenance_snapshot_digest(REPOSITORY_ID, visible),
+    }
+
+
+def _maintenance_context(env, records, *, snapshot_ids=None):
+    return env["adapter"].maintenance_session(
+        env["policy_path"],
+        env["grant_path"],
+        records,
+        quiescent_window_confirmed=True,
+        repository_lease_id=env["repository_lease_id"],
+    )
+
+
+def _maintenance_plan(session, snapshot_ids=None):
+    evidence = _restic_evidence(
+        snapshot_ids if snapshot_ids is not None else ["a" * 64, "b" * 64, "c" * 64]
+    )
+    public = session.plan(
+        evidence,
+        bindings_sha256="f" * 64,
+        credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"},
+    )
+    private = session.validate_plan(
+        public["plan_id"],
+        public["plan_sha256"],
+        evidence,
+        bindings_sha256="f" * 64,
+        credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"},
+    )
+    return evidence, public, private
+
+
 def _assert_repository_reacquirable(env):
     plan = OperationPlan(
         operation_id=uuid.uuid4().hex,
@@ -667,6 +753,389 @@ def test_known_good_pin_required_even_with_period_counts(retention_env):
     _refresh_grant_for_policy(env)
     with pytest.raises(CloudError, match="known-good"):
         _plan(env)
+
+
+def test_schema3_maintenance_requires_schema2_maintenance_grant_and_budget(retention_env):
+    env = retention_env
+    records = _prepare_maintenance(env)
+
+    grant = dict(env["grant"])
+    grant["schema_version"] = 1
+    _write_json(env["grant_path"], grant)
+    with pytest.raises(CloudError, match="authorize deletion only"):
+        with _maintenance_context(env, records):
+            pytest.fail("schema-1 grant must not open maintenance")
+
+    grant = dict(env["grant"])
+    grant["schema_version"] = 2
+    grant["action"] = "delete_noncurrent_versions"
+    _write_json(env["grant_path"], grant)
+    with pytest.raises(CloudError, match="does not match"):
+        with _maintenance_context(env, records):
+            pytest.fail("deletion grant must not open maintenance")
+
+    policy = dict(env["policy"])
+    policy["maintenance"] = dict(policy["maintenance"])
+    policy["maintenance"]["resource_budget"] = dict(policy["maintenance"]["resource_budget"])
+    policy["maintenance"]["resource_budget"]["extra"] = 1
+    _write_json(env["policy_path"], policy)
+    grant["action"] = "maintain_current_repository"
+    grant["policy_sha256"] = cloud._retention_digest(env["policy_path"].read_bytes())
+    _write_json(env["grant_path"], grant)
+    with pytest.raises(CloudError, match="resource budget"):
+        with _maintenance_context(env, records):
+            pytest.fail("unknown resource-budget fields must be rejected")
+
+
+def test_maintenance_selects_only_visible_accepted_unprotected_snapshots_and_preserves_catalog(retention_env):
+    env = retention_env
+    records = _prepare_maintenance(env)
+    catalog_path = env["state"] / "retention-catalog.json"
+    catalog_before = catalog_path.read_bytes()
+    evidence = _restic_evidence(["a" * 64, "b" * 64, "c" * 64])
+
+    with _maintenance_context(env, records) as session:
+        assert session.selection.accepted_snapshot_ids == ("a" * 64, "b" * 64)
+        assert session.selection.protected_snapshot_ids == ("a" * 64,)
+        assert session.selection.resources["current_payload_count"] == 2
+        assert session.selection.resources["current_payload_bytes"] == 16
+        with pytest.raises(TypeError):
+            session.selection.resources["timeout_seconds"] = 1
+
+        public, private = _maintenance_plan(session)[1:]
+        assert public["accepted_snapshot_ids"] == ["a" * 64, "b" * 64]
+        assert public["protected_snapshot_ids"] == ["a" * 64]
+        assert public["target_snapshot_ids"] == ["b" * 64]
+        assert private["target_snapshot_ids"] == ["b" * 64]
+        assert private["visible_snapshot_ids"] == evidence["visible_snapshot_ids"]
+        assert "credential_identity_sha256" in private
+        assert "key_id" not in json.dumps(private)
+    assert catalog_path.read_bytes() == catalog_before
+
+
+@pytest.mark.parametrize("limit", ["objects", "bytes"])
+def test_maintenance_bounds_all_current_payload_inventory_not_prune_candidates(retention_env, limit):
+    env = retention_env
+    max_objects = 1 if limit == "objects" else 20
+    max_bytes = 15 if limit == "bytes" else 1024
+    records = _prepare_maintenance(env, max_objects=max_objects, max_bytes=max_bytes)
+    with pytest.raises(CloudError, match="current payload inventory exceeds authorized bounds"):
+        with _maintenance_context(env, records):
+            pytest.fail("all current object versions must fit within authorized bounds")
+
+
+def test_maintenance_counts_held_current_payload_toward_quota(retention_env):
+    env = retention_env
+    records = _prepare_maintenance(env)
+    env["store"].legal_holds[("repo/data/restore.bin", "current-v2")] = "ON"
+    env["policy"]["max_apply_bytes"] = 5
+    env["grant"]["max_apply_bytes"] = 5
+    _write_json(env["policy_path"], env["policy"])
+    _refresh_grant_for_policy(env)
+    _write_json(env["grant_path"], env["grant"])
+    with pytest.raises(CloudError, match="current payload inventory exceeds authorized bounds"):
+        with _maintenance_context(env, records):
+            pytest.fail("held current payload must count toward a logical mutation bound")
+
+
+def test_maintenance_only_catalog_and_records_enrollment_does_not_seed_version_age(retention_env):
+    env = retention_env
+    state = env["root"] / "maintenance-only-state"
+    state.mkdir(mode=0o700)
+    policy = dict(env["policy"])
+    policy["schema_version"] = 3
+    policy["state_dir"] = str(state)
+    policy["maintenance"] = {"mode": "forget-and-prune-no-repack",
+        "resource_budget": {"schema_version": 1, "staging_max_bytes": 1048576,
+                            "minimum_free_bytes": 65536, "cache_max_bytes": 0},
+        "timeout_seconds": 3600}
+    _write_json(env["policy_path"], policy)
+    grant = dict(env["grant"])
+    grant["schema_version"] = 2
+    grant["action"] = "maintain_current_repository"
+    grant["policy_sha256"] = cloud._retention_digest(env["policy_path"].read_bytes())
+    _write_json(env["grant_path"], grant)
+    enrolled = env["adapter"].initialize_central_retention_catalog(
+        env["policy_path"], env["grant_path"],
+        expected_action="maintain_current_repository")
+    assert enrolled["status"] == "enrolled"
+    added = env["adapter"].enroll_central_maintenance_records(
+        env["policy_path"], env["grant_path"], [env["record_dir"]])
+    assert added["accepted_record_count"] == 1
+    catalog_path = state / "retention-catalog.json"
+    assert json.loads(catalog_path.read_text())["first_observed_noncurrent"] == {}
+    original = catalog_path.read_bytes()
+    assert env["adapter"].enroll_central_maintenance_records(
+        env["policy_path"], env["grant_path"], [env["record_dir"]])["status"] == "unchanged"
+    assert catalog_path.read_bytes() == original
+    with env["adapter"].maintenance_session(
+        env["policy_path"], env["grant_path"], [env["record_dir"]],
+        quiescent_window_confirmed=True, repository_lease_id=env["repository_lease_id"]
+    ) as session:
+        assert session.selection.accepted_snapshot_ids == ("a" * 64,)
+
+
+def test_maintenance_inventory_ignores_lock_prefix_and_noncurrent_history_but_binds_dependencies(retention_env):
+    env = retention_env
+    records = _prepare_maintenance(env)
+    evidence = _restic_evidence(["a" * 64, "b" * 64, "c" * 64])
+
+    with _maintenance_context(env, records) as session:
+        public = session.plan(
+            evidence,
+            bindings_sha256="f" * 64,
+            credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"},
+        )
+        private = session.validate_plan(
+            public["plan_id"], public["plan_sha256"], evidence,
+            bindings_sha256="f" * 64,
+            credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"},
+        )
+        initial_inventory = private["inventory_sha256"]
+        initial_resources = private["resources"]
+
+        env["store"].versions.extend(
+            [
+                ("repo/data/restore.bin", "old-history-v0", False, 99999),
+                ("repo/locks/session.lock", "ephemeral-lock-v1", True, 99999),
+            ]
+        )
+        validated = session.validate_plan(
+            public["plan_id"], public["plan_sha256"], evidence,
+            bindings_sha256="f" * 64,
+            credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"},
+        )
+        assert validated["inventory_sha256"] == initial_inventory
+        assert validated["resources"] == initial_resources
+
+        env["store"].versions.append(("repo/dependencies/index", "dependency-v1", True, 3))
+        with pytest.raises(CloudError, match="inputs drifted"):
+            session.validate_plan(
+                public["plan_id"], public["plan_sha256"], evidence,
+                bindings_sha256="f" * 64,
+                credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"},
+            )
+
+
+def test_maintenance_journal_sequence_and_health_alone_never_prove_prune_completion(retention_env):
+    env = retention_env
+    records = _prepare_maintenance(env)
+    evidence, public, private = None, None, None
+    with _maintenance_context(env, records) as session:
+        evidence, public, private = _maintenance_plan(session)
+        with pytest.raises(CloudError, match="start with check_before"):
+            session.record_phase(private, "forget", "intent")
+        session.record_phase(private, "check_before", "intent")
+        with pytest.raises(CloudError, match="phase order"):
+            session.record_phase(private, "forget", "intent")
+        before = {
+            "repository_health": "healthy",
+            **evidence,
+        }
+        session.record_phase(private, "check_before", "completed", evidence=before)
+        session.record_phase(private, "forget", "intent")
+        with pytest.raises(CloudError, match="mutation already started"):
+            session.validate_plan(
+                public["plan_id"], public["plan_sha256"], evidence,
+                bindings_sha256="f" * 64,
+                credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"},
+            )
+        with pytest.raises(CloudError, match="earlier central maintenance attempt"):
+            session.plan(
+                evidence,
+                bindings_sha256="f" * 64,
+                credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"},
+            )
+
+        result = session.finish_reconciliation(
+            private,
+            {
+                "schema_version": 1,
+                "repository_health": "healthy",
+                **evidence,
+            },
+        )
+        assert result["status"] == "partial_abandoned"
+        assert result["outcome"] == "abandoned"
+        assert result["remaining_target_snapshot_ids"] == ["b" * 64]
+        reconciled_journal = json.loads(
+            (env["state"] / "retention-operations" / f"{public['plan_id']}.json").read_text()
+        )
+        assert reconciled_journal["phases"]["prune"] is None
+        assert reconciled_journal["status"] == "partial_abandoned"
+        next_plan = session.plan(
+            evidence,
+            bindings_sha256="f" * 64,
+            credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"},
+        )
+        assert next_plan["plan_id"] != public["plan_id"]
+        with pytest.raises(CloudError, match="mutation already started"):
+            session.validate_plan(
+                public["plan_id"], public["plan_sha256"], evidence,
+                bindings_sha256="f" * 64,
+                credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"},
+            )
+
+
+def test_maintenance_fixed_phase_sequence_can_reconcile_complete(retention_env):
+    env = retention_env
+    records = _prepare_maintenance(env)
+    with _maintenance_context(env, records) as session:
+        _evidence, _public, private = _maintenance_plan(session)
+        target = ["b" * 64]
+        after = _restic_evidence(["a" * 64, "c" * 64])
+
+        session.record_phase(private, "check_before", "intent")
+        session.record_phase(
+            private,
+            "check_before",
+            "completed",
+            evidence={"repository_health": "healthy", **_evidence},
+        )
+        session.record_phase(private, "forget", "intent")
+        session.record_phase(
+            private, "forget", "completed", evidence={"forgotten_snapshot_ids": target}
+        )
+        session.record_phase(private, "verify_snapshots", "intent")
+        session.record_phase(private, "verify_snapshots", "completed", evidence=after)
+        session.record_phase(private, "prune", "intent")
+        session.record_phase(
+            private,
+            "prune",
+            "completed",
+            evidence={"result": "completed", "evidence_sha256": "e" * 64},
+        )
+        session.record_phase(private, "check_after", "intent")
+        session.record_phase(
+            private,
+            "check_after",
+            "completed",
+            evidence={"repository_health": "healthy", **after},
+        )
+        session.record_phase(private, "protected_versions", "intent")
+        protected_versions = session.verify_protected_versions()
+        session.record_phase(
+            private,
+            "protected_versions",
+            "completed",
+            evidence=protected_versions,
+        )
+        outcome = session.finish_reconciliation(
+            private,
+            {"schema_version": 1, "repository_health": "healthy", **after},
+        )
+
+    assert outcome["status"] == "complete"
+    assert outcome["outcome"] == "succeeded"
+    assert outcome["remaining_target_snapshot_ids"] == []
+    with _maintenance_context(env, records) as session:
+        fresh = session.plan(
+            after, bindings_sha256="f" * 64,
+            credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"},
+        )
+        assert fresh["plan_id"] != _public["plan_id"]
+        assert fresh["target_snapshot_ids"] == []
+        with pytest.raises(CloudError, match="mutation already started"):
+            session.validate_plan(
+                _public["plan_id"], _public["plan_sha256"], _evidence,
+                bindings_sha256="f" * 64,
+                credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"},
+            )
+
+
+def test_maintenance_pre_mutation_abandonment_allows_fresh_plan_not_replay(retention_env):
+    env = retention_env
+    records = _prepare_maintenance(env)
+    with _maintenance_context(env, records) as session:
+        evidence, original, private = _maintenance_plan(session)
+        session.record_phase(private, "check_before", "intent")
+        result = session.finish_reconciliation(private,
+            {"schema_version": 1, "repository_health": "healthy", **evidence})
+        assert result["status"] == "abandoned"
+        fresh = session.plan(evidence, bindings_sha256="f" * 64,
+            credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"})
+        assert fresh["plan_id"] != original["plan_id"]
+        with pytest.raises(CloudError, match="unresolved attempt"):
+            session.validate_plan(original["plan_id"], original["plan_sha256"], evidence,
+                bindings_sha256="f" * 64,
+                credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"})
+
+
+def test_maintenance_terminal_resolution_requires_durable_healthy_evidence(retention_env):
+    env = retention_env
+    records = _prepare_maintenance(env)
+    with _maintenance_context(env, records) as session:
+        evidence, original, private = _maintenance_plan(session)
+        session.record_phase(private, "check_before", "intent")
+        session.finish_reconciliation(private,
+            {"schema_version": 1, "repository_health": "healthy", **evidence})
+        journal_path = env["state"] / "retention-operations" / f"{original['plan_id']}.json"
+        journal = json.loads(journal_path.read_text())
+        journal["reconciliation"]["repository_health"] = "unknown"
+        _write_json(journal_path, journal)
+        with pytest.raises(CloudError, match="existing central maintenance journal is invalid"):
+            session.plan(evidence, bindings_sha256="f" * 64,
+                credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"})
+
+
+def test_expired_maintenance_attempt_reconciles_read_only_against_original_protection(retention_env):
+    env = retention_env
+    records = _prepare_maintenance(env)
+    with _maintenance_context(env, records) as session:
+        evidence, public, private = _maintenance_plan(session)
+        session.record_phase(private, "check_before", "intent")
+        session.record_phase(private, "check_before", "completed",
+                             evidence={"repository_health": "healthy", **evidence})
+        session.record_phase(private, "forget", "intent")
+    FrozenDateTime.current += timedelta(days=60)
+    with pytest.raises(CloudError, match="expired"):
+        with _maintenance_context(env, records):
+            pytest.fail("expired authority must never reopen apply mode")
+    with env["adapter"].maintenance_session(
+        env["policy_path"], env["grant_path"], records,
+        quiescent_window_confirmed=True, repository_lease_id=env["repository_lease_id"],
+        reconcile_only=True,
+    ) as session:
+        reopened = session.reconciliation_plan(public["plan_id"], public["plan_sha256"],
+            bindings_sha256="f" * 64,
+            credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"})
+        assert reopened == private
+        with pytest.raises(CloudError, match="identity changed"):
+            session.reconciliation_plan(public["plan_id"], public["plan_sha256"],
+                bindings_sha256="e" * 64,
+                credential_identity={"key_id": "K0000000000000000000000001", "profile": "restricted"})
+        outcome = session.finish_reconciliation(private,
+            {"schema_version": 1, "repository_health": "healthy", **evidence})
+        assert outcome["status"] == "partial_abandoned"
+        assert outcome["protected_version_count"] == private["protected_version_count"]
+
+
+def test_maintenance_reconciliation_requires_exact_protected_versions(retention_env):
+    env = retention_env
+    records = _prepare_maintenance(env)
+    with _maintenance_context(env, records) as session:
+        evidence, public, private = _maintenance_plan(session)
+        session.record_phase(private, "check_before", "intent")
+        session.record_phase(
+            private,
+            "check_before",
+            "completed",
+            evidence={"repository_health": "healthy", **evidence},
+        )
+        session.record_phase(private, "forget", "intent")
+        env["store"].versions = [
+            row for row in env["store"].versions
+            if (row[0], row[1]) != ("repo/data/restore.bin", "historical-v1")
+        ]
+        with pytest.raises(CloudError, match="protected recovery checkpoint version"):
+            session.finish_reconciliation(
+                private,
+                {
+                    "schema_version": 1,
+                    "repository_health": "healthy",
+                    **evidence,
+                },
+            )
 
 
 def test_newly_accepted_unselected_checkpoint_protects_aged_version(retention_env):

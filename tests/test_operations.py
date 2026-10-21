@@ -126,6 +126,56 @@ def test_runner_streams_giant_line_in_bounded_chunks_and_caps_tails(tmp_path: Pa
     assert result.stderr_bytes == len(b"finished\n")
 
 
+def test_runner_raw_stdout_hashes_binary_without_text_tail(tmp_path: Path) -> None:
+    payload = (b"private-sentinel-\xff\x00" * 1000)
+    observed = hashlib.sha256()
+    chunks = []
+    code = "import os; os.write(1, b'private-sentinel-\\xff\\x00' * 1000)"
+    result = OperationRunner(read_chunk_bytes=127).run(
+        OperationPlan.create(tmp_path / "repo", "binary", (sys.executable, "-c", code)),
+        on_stdout_chunk=lambda chunk: (observed.update(chunk), chunks.append(len(chunk))),
+    )
+    assert result.status is OperationStatus.SUCCEEDED
+    assert result.stdout_bytes == len(payload) == sum(chunks)
+    assert observed.hexdigest() == hashlib.sha256(payload).hexdigest()
+    assert result.stdout_tail == b""
+    assert b"private-sentinel" not in repr(result).encode()
+    assert max(chunks) <= 127
+
+
+def test_runner_raw_stdout_bound_failure_reaps_child(tmp_path: Path) -> None:
+    observed = 0
+
+    def bounded(chunk):
+        nonlocal observed
+        observed += len(chunk)
+        if observed > 1024:
+            raise RuntimeError("bounded raw inspection refused excess bytes")
+
+    code = "import os,time; os.write(1, b'x' * 100000); time.sleep(30)"
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="bounded raw inspection"):
+        OperationRunner(read_chunk_bytes=512).run(
+            OperationPlan.create(tmp_path / "repo", "bounded", (sys.executable, "-c", code),
+                                 timeout_seconds=10), on_stdout_chunk=bounded)
+    assert time.monotonic() - started < 5
+
+
+def test_runner_raw_stdout_cancellation_keeps_tail_empty(tmp_path: Path) -> None:
+    cancel = threading.Event()
+    timer = threading.Timer(0.2, cancel.set)
+    timer.start()
+    try:
+        result = OperationRunner().run(
+            OperationPlan.create(tmp_path / "repo", "binary-cancel",
+                (sys.executable, "-c", "import os,time; os.write(1,b'private'); time.sleep(30)"),
+                timeout_seconds=10), on_stdout_chunk=lambda _chunk: None, cancel_event=cancel)
+    finally:
+        timer.cancel()
+    assert result.status is OperationStatus.CANCELLED
+    assert result.stdout_tail == b""
+
+
 def test_runner_streams_file_backed_stdin_without_buffering_it(tmp_path: Path) -> None:
     payload = b"native-export" * 250_000
     source = tmp_path / "large.sql"

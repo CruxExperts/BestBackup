@@ -217,8 +217,14 @@ def _service_operation(service, command, values, config_path, bindings_path, can
             outcome = ReconciliationOutcome(values["outcome"])
         except ValueError:
             raise ConfigurationError("Invalid reconciliation outcome") from None
-        service.ledger.reconcile(repository_key(service._identity(values["repository"])), values["operation_id"], outcome)
-        return {"operation_id": values["operation_id"], "reviewed_outcome": outcome.value, "replayed": False}
+        return service.reconcile_run(values["repository"], values["operation_id"], outcome,
+                                     cancel=cancel)
+    if command == "runs retained-exports":
+        return service.retained_exports(values["repository"], limit=values["limit"],
+                                        offset=values["offset"])
+    if command == "runs discard-exports":
+        return service.discard_exports(values["repository"], values["operation_id"],
+                                       values["artifact_record_sha256"])
     if command in ("runs list", "runs stream"):
         events = service.ledger.events(**values)
         return [asdict(event) for event in events]

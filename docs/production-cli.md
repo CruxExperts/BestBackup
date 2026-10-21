@@ -291,6 +291,22 @@ Record an administrator-reviewed outcome for an uncertain operation without repl
 - `--outcome`: string.
 - `--repository-reviewed`: boolean.
 
+## `runs retained-exports`
+
+List bounded private remote capture artifact records, including captures stopped before dispatch; counts and digests are declared, not file-hash verification.
+
+- `--repository`: string.
+- `--limit`: limit.
+- `--offset`: offset.
+
+## `runs discard-exports`
+
+Explicitly discard the exact retained exports of a reviewed failed or abandoned remote capture, bound to its current private record digest.
+
+- `--repository`: string.
+- `--operation-id`: string.
+- `--artifact-record-sha256`: string.
+
 ## `databases restore`
 
 Restore a trusted native snapshot export; MySQL/MariaDB require an explicitly confirmed empty dedicated server and the original database name.

@@ -169,6 +169,18 @@ are refused. These implementation checks do not qualify B2 or whole-machine
 recovery. A small live B2 workstation source trial is recorded below; the final
 remote-server drill and production recovery qualification remain deferred.
 
+Remote database captures preserve completed exports in operation-owned staging
+with private size/hash records until a successful receipt or verified read-only
+reconciliation permits cleanup. Failed or uncertain uploads, receipt failures
+and later-export failures retain completed artifacts and block new captures.
+`runs retained-exports` exposes bounded IDs, declared counts and record digests,
+including pre-dispatch captures without a ledger row; `runs list` remains a
+ledger event stream. `runs discard-exports` requires the exact current record
+digest and a persisted reviewed failed outcome, verifies owned files under the
+staging lease, and keeps a disposal audit. It does not upload or replay a capture.
+Persistent dedicated staging is required for reboot survival; `tmpfs` retains
+exports only across process exit. Missing or changed retained data fails closed.
+
 The unreleased central retention slice adds explicit catalog enrollment and
 private recurring grants, signed central acceptance selection, exact manifest
 dependency preservation, central observation-based noncurrent grace, conservative

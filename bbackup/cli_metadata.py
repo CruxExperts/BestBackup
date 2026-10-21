@@ -2057,6 +2057,15 @@ PRODUCTION_COMMANDS["runs reconcile"] = {
     "fields": {"repository": "string", "operation_id": "string", "outcome": "string", "repository_reviewed": "boolean"},
 }
 
+PRODUCTION_COMMANDS["runs retained-exports"] = {
+    "summary": "List bounded private remote capture artifact records, including captures stopped before dispatch; counts and digests are declared, not file-hash verification.",
+    "fields": {"repository": "string", "limit": "limit", "offset": "offset"},
+}
+PRODUCTION_COMMANDS["runs discard-exports"] = {
+    "summary": "Explicitly discard the exact retained exports of a reviewed failed or abandoned remote capture, bound to its current private record digest.",
+    "fields": {"repository": "string", "operation_id": "string", "artifact_record_sha256": "string"},
+}
+
 PRODUCTION_COMMANDS["databases restore"] = {
     "summary": "Restore a trusted native snapshot export; MySQL/MariaDB require an explicitly confirmed empty dedicated server and the original database name.",
     "fields": {"repository": "string", "snapshot": "string", "source": "string", "connection": "string", "target_database": "string", "trusted_archive": "boolean", "isolated_server_confirmed": "boolean"},

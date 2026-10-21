@@ -12,13 +12,14 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import stat
 import tempfile
 import uuid
 from urllib.parse import urlsplit
 
-from .capture import capture_sources
+from .capture import CaptureError, DurableCaptureArtifacts, capture_sources
 from .config import SnapshotProfile
-from .models import Configuration, HostBindings
+from .models import Configuration, HostBindings, strict_json
 from .docker_recovery import DockerRecoveryError, DockerRecoveryUncertainError, DockerRuntime
 from .snapshot import ResticRunner
 from .resource_limits import ResourceLimitError, ResourceMonitor
@@ -313,7 +314,7 @@ class BackupService:
         return runner_type(SnapshotProfile(name=name, repository=binding.repository,
                                            password_file=str(binding.password_file), retry_lock="0s"))
 
-    def _resource_monitor(self, name):
+    def _resource_monitor(self, name, *, read_only_reconcile=False):
         if self.repository_roles[name] != "remote-primary":
             return None
         budgets = [job.resource_budget for job in self.config.jobs if job.repository == name]
@@ -323,6 +324,9 @@ class BackupService:
         if any(budget != budgets[0] for budget in budgets):
             raise ServiceError("Remote-primary jobs sharing a repository require one resource budget")
         try:
+            if read_only_reconcile:
+                return ResourceMonitor(self.bindings.staging_dir, self.state, budgets[0],
+                                       read_only_reconcile=True)
             return ResourceMonitor(self.bindings.staging_dir, self.state, budgets[0])
         except ResourceLimitError as exc:
             raise ResourceBudgetExceeded({"resource_budget_exceeded": True, "reason": str(exc),
@@ -545,6 +549,14 @@ class BackupService:
         engine = self._engine(job.repository)
         capture_id = uuid.uuid4().hex
         receipt = {}
+        required_replicas = {name: repository_key(self._identity(name)) for name in job.replicas}
+        artifacts = None
+        if remote_primary:
+            artifacts = DurableCaptureArtifacts(
+                self.bindings.staging_dir, self.state,
+                repository_key(self._identity(job.repository)), capture_id, job.name)
+            artifacts.record["required_replicas"] = required_replicas
+            self.ledger.mark_capture_artifacts(artifacts.record["repository_id"], capture_id)
 
         def finalize_capture(plan, result):
             tail = result.stdout_tail
@@ -565,11 +577,12 @@ class BackupService:
                        (repository, snapshot, job, operation, capture_token, required_replicas)
                        VALUES (?, ?, ?, ?, ?, ?)""",
                     (job.repository, snapshot, job.name, plan.operation_id, capture_id,
-                     json.dumps({"schema_version": 1, "bindings": {
-                         name: repository_key(self._identity(name)) for name in job.replicas
-                     }}, sort_keys=True, separators=(",", ":"))),
+                     json.dumps({"schema_version": 1, "bindings": required_replicas},
+                                sort_keys=True, separators=(",", ":"))),
                 )
             receipt["snapshot"] = snapshot
+            if artifacts is not None:
+                artifacts.cleanup_success()
 
         with ExitStack() as resource_stack, ExitStack() as capture_stack:
             if remote_primary:
@@ -587,16 +600,22 @@ class BackupService:
                     operation_id=capture_id,
                     resource_monitor=monitor,
                     coverage_sqlite=coverage_sqlite,
+                    durable_artifacts=artifacts,
                 ))
             except ResourceLimitError as exc:
                 raise ResourceBudgetExceeded({
                     "resource_budget_exceeded": True, "reason": str(exc),
                     "repository": job.repository, "operation_id": capture_id,
+                    "capture_token": capture_id,
                     "local_complete": False, "cloud_complete": False,
                     "replayed": False, "resource_observation": monitor.result(),
                 }) from None
             except DockerRecoveryError as exc:
                 raise ServiceError(str(exc)) from None
+            except (CaptureError, OSError) as exc:
+                if remote_primary:
+                    raise ServiceError(f"Remote capture failed before dispatch; retained capture token {capture_id}") from exc
+                raise
             lifecycle = capture_stack.pop_all()
 
             def finish_lifecycle():
@@ -632,6 +651,13 @@ class BackupService:
                     after_run=finish_lifecycle,
                     timeout_seconds=job.timeout_seconds,
                 )
+            except Exception as exc:
+                if remote_primary:
+                    if isinstance(exc, ResourceBudgetExceeded):
+                        exc.result["capture_token"] = capture_id
+                        raise
+                    raise ServiceError(f"Remote capture is incomplete; retained capture token {capture_id}") from exc
+                raise
             finally:
                 finish_lifecycle()
         snapshot = receipt["snapshot"]
@@ -643,6 +669,241 @@ class BackupService:
         if monitor is not None:
             response["resource_observation"] = monitor.result()
         return response
+
+    def reconcile_run(self, repository, operation_id, outcome, *, cancel=None):
+        """Inspect one remote capture under its staging lease before resolving it."""
+
+        repository_id = repository_key(self._identity(repository))
+        ledger_row = self.ledger.inspect(repository_id, operation_id)
+        if self.repository_roles[repository] != "remote-primary" or (
+                ledger_row is not None and ledger_row[0] != "capture"):
+            self.ledger.reconcile(repository_id, operation_id, outcome)
+            return {"operation_id": operation_id, "reviewed_outcome": outcome.value,
+                    "replayed": False}
+        if not re.fullmatch(r"[a-f0-9]{32}", operation_id):
+            raise ServiceError("Remote capture token is invalid")
+        try:
+            artifacts = DurableCaptureArtifacts.load(
+                self.bindings.staging_dir, self.state, repository_id, operation_id)
+        except FileNotFoundError:
+            if (ledger_row is not None and ledger_row[0] == "capture"
+                    and not self.ledger.has_capture_artifact_marker(repository_id, operation_id)):
+                self.ledger.reconcile(repository_id, operation_id, outcome)
+                return {"operation_id": operation_id, "reviewed_outcome": outcome.value,
+                        "replayed": False, "legacy_capture": True}
+            raise ServiceError("New remote capture artifact record is missing") from None
+        except (OSError, ValueError, CaptureError):
+            raise ServiceError("Remote capture artifact record is missing or invalid") from None
+        if ledger_row is None and outcome is ReconciliationOutcome.SUCCEEDED:
+            raise ServiceError("Capture has no dispatch record; success cannot be reconciled")
+        with self._resource_monitor(repository, read_only_reconcile=True):
+            try:
+                artifacts.recover_empty_preparation()
+            except (OSError, CaptureError):
+                raise ServiceError("Remote capture preparation is not an empty owned stage") from None
+            staging = self.bindings.staging_dir
+            expected = {".bbackup-staging.lock"}
+            if artifacts.directory.exists() or (artifacts.record["phase"] not in (
+                    "cleanup_started", "cleaned") and artifacts.record["stage_inode"] is not None):
+                expected.add(artifacts.directory.name)
+            if {path.name for path in staging.iterdir()} != expected:
+                raise ServiceError("Remote staging contains foreign or missing entries")
+            try:
+                artifacts.validate()
+            except (OSError, KeyError, TypeError, CaptureError):
+                raise ServiceError("Remote capture artifacts failed validation") from None
+            engine = self._engine(repository)
+            tag = f"bbackup-capture={operation_id}"
+
+            def inspect(argv):
+                plan = OperationPlan(operation_id, repository_id, "inspect", tuple(argv),
+                                     env=self._operation_environment(repository), timeout_seconds=3600)
+                result = self.runner.run(plan, cancel_event=cancel)
+                if (result.status is not OperationStatus.SUCCEEDED or result.exit_code != 0
+                        or result.stdout_bytes != len(result.stdout_tail)):
+                    raise ServiceError("Remote capture inspection was incomplete")
+                return result.stdout_tail
+
+            def inspect_export(snapshot_id, item):
+                expected_size = item["size"]
+                expected_hash = item["sha256"]
+                observed_size = 0
+                digest = hashlib.sha256()
+
+                def receive(chunk):
+                    nonlocal observed_size
+                    observed_size += len(chunk)
+                    if observed_size > expected_size:
+                        raise ServiceError("Remote capture export exceeds the recorded size")
+                    digest.update(chunk)
+
+                plan = OperationPlan(
+                    operation_id, repository_id, "inspect",
+                    tuple([*engine.base_args(), "dump", snapshot_id,
+                           str(artifacts.directory / item["name"])]),
+                    env=self._operation_environment(repository), timeout_seconds=3600,
+                )
+                result = self.runner.run(plan, cancel_event=cancel,
+                                         on_stdout_chunk=receive)
+                if (result.status is not OperationStatus.SUCCEEDED or result.exit_code != 0
+                        or result.stdout_bytes != observed_size or observed_size != expected_size
+                        or digest.hexdigest() != expected_hash or result.stdout_tail):
+                    raise ServiceError("Remote capture export differs from the retained record")
+
+            try:
+                inventory = strict_json(inspect([*engine.base_args(), "snapshots", "--tag", tag]))
+            except (ValueError, UnicodeDecodeError, TypeError):
+                raise ServiceError("Remote capture inventory is invalid") from None
+            if not isinstance(inventory, list) or len(inventory) > 1:
+                raise ServiceError("Remote capture tag is ambiguous")
+            snapshot = None
+            if inventory:
+                item = inventory[0]
+                if (not isinstance(item, dict) or not isinstance(item.get("tags"), list)
+                        or tag not in item["tags"]
+                        or f"bbackup-job={artifacts.record['job']}" not in item["tags"]):
+                    raise ServiceError("Remote capture tag does not match the record")
+                snapshot = _snapshot_id(item.get("id"))
+            with self._receipts() as db:
+                recorded = db.execute(
+                    "SELECT snapshot FROM snapshots WHERE repository=? AND capture_token=?",
+                    (repository, operation_id)).fetchall()
+            if len(recorded) > 1 or (recorded and (snapshot is None or recorded[0][0] != snapshot)):
+                raise ServiceError("Remote capture receipt conflicts with repository inspection")
+            if outcome is ReconciliationOutcome.SUCCEEDED:
+                if snapshot is None or artifacts.record["phase"] not in (
+                        "ready", "cleanup_started", "cleaned"):
+                    raise ServiceError("Remote capture success is not proven")
+                manifest = artifacts.record["manifest"]
+                for export in artifacts.record["exports"]:
+                    inspect_export(snapshot, export)
+                if manifest is not None:
+                    inspect_export(snapshot, manifest)
+                replicas = artifacts.record["required_replicas"]
+                if not isinstance(replicas, dict):
+                    raise ServiceError("Remote capture replica record is invalid")
+                required = json.dumps({"schema_version": 1, "bindings": replicas},
+                                      sort_keys=True, separators=(",", ":"))
+                with self._receipts() as db:
+                    existing = db.execute(
+                        "SELECT job,operation,capture_token,required_replicas FROM snapshots "
+                        "WHERE repository=? AND snapshot=?", (repository, snapshot)).fetchone()
+                    if existing is None:
+                        db.execute("INSERT INTO snapshots "
+                                   "(repository,snapshot,job,operation,capture_token,required_replicas) "
+                                   "VALUES (?,?,?,?,?,?)",
+                                   (repository, snapshot, artifacts.record["job"], operation_id,
+                                    operation_id, required))
+                    elif tuple(existing) != (artifacts.record["job"], operation_id,
+                                            operation_id, required):
+                        raise ServiceError("Remote capture receipt conflicts with the snapshot")
+                try:
+                    artifacts.cleanup_success()
+                except (OSError, KeyError, TypeError, CaptureError):
+                    raise ServiceError("Remote capture cleanup is incomplete; retry reconciliation") from None
+            elif snapshot is not None:
+                raise ServiceError("Remote capture snapshot exists; failure is not proven")
+            else:
+                if artifacts.record["phase"] in ("cleanup_started", "cleaned"):
+                    raise ServiceError("Remote capture cleanup already began after success")
+                artifacts.reviewed_failure(outcome.value)
+            if ledger_row is not None:
+                self.ledger.reconcile(repository_id, operation_id, outcome)
+        return {"operation_id": operation_id, "reviewed_outcome": outcome.value,
+                "snapshot_id": snapshot, "retained_exports": outcome is not ReconciliationOutcome.SUCCEEDED,
+                "artifact_record_sha256": artifacts.record_sha256(),
+                "replayed": False}
+
+    def retained_exports(self, repository, *, limit=100, offset=0):
+        """List bounded, declared private artifact summaries without provider access."""
+
+        if type(limit) is not int or not 1 <= limit <= 1000 or type(offset) is not int or offset < 0:
+            raise ServiceError("Invalid pagination")
+        if self.repository_roles.get(repository) != "remote-primary":
+            raise ServiceError("Retained exports require a remote-primary repository")
+        repository_id = repository_key(self._identity(repository))
+        directory = self.state / "capture-artifacts"
+        if not directory.exists():
+            return []
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise ServiceError("Private capture record directory changed")
+        summaries = []
+        for path in sorted(directory.iterdir()):
+            match = re.fullmatch(r"([a-f0-9]{32})\.json", path.name)
+            if match is None:
+                continue
+            token = match.group(1)
+            try:
+                descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                try:
+                    info = os.fstat(descriptor)
+                    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                            or info.st_mode & 0o077 or info.st_size > 1024 * 1024):
+                        raise ServiceError("Private capture record changed")
+                    with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as stream:
+                        record = json.load(stream)
+                finally:
+                    os.close(descriptor)
+                if not isinstance(record, dict):
+                    raise ServiceError("Private capture record is invalid")
+                if record.get("repository_id") != repository_id:
+                    continue
+                artifact = DurableCaptureArtifacts.load(
+                    self.bindings.staging_dir, self.state, repository_id, token)
+                if artifact.record["phase"] in ("cleaned", "discarded"):
+                    continue
+                exports = artifact.record["exports"]
+                if (not isinstance(exports, list) or any(
+                        not isinstance(item, dict) or type(item.get("size")) is not int
+                        or item["size"] < 0 for item in exports)):
+                    raise ServiceError("Private capture record is invalid")
+                summaries.append({
+                    "repository": repository, "operation_id": token,
+                    "phase": artifact.record["phase"],
+                    "reviewed_outcome": artifact.record.get("reviewed_outcome"),
+                    "completed_export_count": len(exports),
+                    "completed_export_bytes": sum(item["size"] for item in exports),
+                    "artifact_record_sha256": artifact.record_sha256(),
+                    "file_hashes_verified": False,
+                })
+            except (OSError, ValueError, KeyError, TypeError, CaptureError):
+                raise ServiceError("Private capture record is invalid") from None
+        return summaries[offset:offset + limit]
+
+    def discard_exports(self, repository, operation_id, artifact_record_sha256):
+        """Explicitly release a reviewed failed capture's exact private stage."""
+
+        if self.repository_roles.get(repository) != "remote-primary":
+            raise ServiceError("Retained exports require a remote-primary repository")
+        repository_id = repository_key(self._identity(repository))
+        try:
+            artifact = DurableCaptureArtifacts.load(
+                self.bindings.staging_dir, self.state, repository_id, operation_id)
+        except (OSError, ValueError, CaptureError):
+            raise ServiceError("Private capture record is missing or invalid") from None
+        row = self.ledger.inspect(repository_id, operation_id)
+        reviewed = artifact.record.get("reviewed_outcome")
+        if (reviewed not in ("failed", "abandoned")
+                or row is not None and row != (
+                    "capture", OperationStatus.RECONCILED_FAILED if reviewed == "failed"
+                    else OperationStatus.RECONCILED_ABANDONED)):
+            raise ServiceError("Capture failure has not been explicitly reconciled")
+        with self._resource_monitor(repository, read_only_reconcile=True):
+            staging = self.bindings.staging_dir
+            expected = {".bbackup-staging.lock"}
+            if artifact.directory.exists() or artifact.record["phase"] not in (
+                    "discard_started", "discarded"):
+                expected.add(artifact.directory.name)
+            if {path.name for path in staging.iterdir()} != expected:
+                raise ServiceError("Remote staging contains foreign or missing entries")
+            try:
+                artifact.discard(artifact_record_sha256)
+            except (OSError, ValueError, KeyError, TypeError, CaptureError):
+                raise ServiceError("Capture exports changed; explicit disposal was refused") from None
+        return {"repository": repository, "operation_id": operation_id,
+                "discarded_export_count": len(artifact.record["exports"]),
+                "artifact_record_sha256": artifact.record_sha256(), "replayed": False}
 
     def copy(self, source, destination, snapshot, *, cancel=None, timeout_seconds=3600):
         if any(self.repository_roles.get(name) == "remote-primary" for name in (source, destination)):

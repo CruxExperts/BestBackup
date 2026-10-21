@@ -27,8 +27,10 @@ def _volume(path: Path) -> tuple[int, int]:
 
 
 class ResourceMonitor:
-    def __init__(self, staging: Path, state: Path, budget: ResourceBudget):
+    def __init__(self, staging: Path, state: Path, budget: ResourceBudget, *,
+                 read_only_reconcile: bool = False):
         self.staging, self.state, self.budget = Path(staging), Path(state), budget
+        self.read_only_reconcile = read_only_reconcile
         self._lock_fd = None
         if (not self.staging.is_absolute() or self.staging.resolve() != self.staging
                 or not os.path.ismount(self.staging)):
@@ -55,7 +57,7 @@ class ResourceMonitor:
                 if exc.errno in (errno.EACCES, errno.EAGAIN):
                     raise ResourceLimitError("Remote staging is busy") from None
                 raise ResourceLimitError("Remote staging lock is unavailable") from None
-            if any(path.name != lock.name for path in self.staging.iterdir()):
+            if not read_only_reconcile and any(path.name != lock.name for path in self.staging.iterdir()):
                 raise ResourceLimitError("Remote staging must be empty before capture")
             if lock.lstat().st_ino != lock_info.st_ino:
                 raise ResourceLimitError("Remote staging lock changed during acquisition")
@@ -78,7 +80,8 @@ class ResourceMonitor:
             self.peak_state_used_bytes = 0
             self.minimum_staging_free_bytes = capacity
             self.minimum_state_free_bytes = 2**63 - 1
-            self.check()
+            if not read_only_reconcile:
+                self.check()
         except BaseException:
             self.close()
             raise

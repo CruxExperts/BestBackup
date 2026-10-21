@@ -234,8 +234,31 @@ class OperationLedger:
                     exit_code INTEGER,
                     FOREIGN KEY(operation_id) REFERENCES operations(operation_id)
                 );
+                CREATE TABLE IF NOT EXISTS capture_artifact_markers (
+                    operation_id TEXT PRIMARY KEY,
+                    repository_id TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL
+                );
                 """
             )
+
+    def mark_capture_artifacts(self, repository_id: str, operation_id: str) -> None:
+        """Persist that a new remote capture requires its private artifact record."""
+
+        if not re.fullmatch(r"[a-f0-9]{64}", repository_id) or not _SAFE_TOKEN.fullmatch(operation_id):
+            raise ValueError("Invalid capture artifact marker identity")
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO capture_artifact_markers VALUES (?,?,1)",
+                (operation_id, repository_id),
+            )
+
+    def has_capture_artifact_marker(self, repository_id: str, operation_id: str) -> bool:
+        with self._connect() as connection:
+            return connection.execute(
+                "SELECT 1 FROM capture_artifact_markers WHERE repository_id=? AND operation_id=?",
+                (repository_id, operation_id),
+            ).fetchone() is not None
 
     def _lock(self, repository_id: str) -> int:
         if not re.fullmatch(r"[a-f0-9]{64}", repository_id):
@@ -398,6 +421,16 @@ class OperationLedger:
             return OperationEvent(operation_id, repository_id, kind, occurred_at)
         finally:
             self._unlock(lock_fd)
+
+    def inspect(self, repository_id: str, operation_id: str) -> tuple[str, OperationStatus] | None:
+        """Read an exact operation label and status without changing its lifecycle."""
+
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT label, status FROM operations WHERE repository_id=? AND operation_id=?",
+                (repository_id, operation_id),
+            ).fetchone()
+        return (row["label"], OperationStatus(row["status"])) if row else None
 
     def events(
         self,
@@ -619,11 +652,15 @@ class OperationRunner:
         plan: OperationPlan,
         *,
         on_stdout: Callable[[bytes], None] | None = None,
+        on_stdout_chunk: Callable[[bytes], None] | None = None,
         on_stderr: Callable[[bytes], None] | None = None,
         on_tick: Callable[[], None] | None = None,
         cancel_event: Event | None = None,
     ) -> OperationRun:
         """Execute a plan and return bounded output tails and an explicit code."""
+
+        if on_stdout is not None and on_stdout_chunk is not None:
+            raise ValueError("Raw stdout sink cannot share line callbacks")
 
         started_at = _now()
         started = time.monotonic()
@@ -714,9 +751,13 @@ class OperationRunner:
                         emitters[fd].feed(b"", final=True)
                         stream.close()
                         continue
-                    tails[fd].append(data)
+                    raw_stdout = stream_names[fd] == "stdout" and on_stdout_chunk is not None
+                    if raw_stdout:
+                        on_stdout_chunk(data)
+                    else:
+                        tails[fd].append(data)
+                        emitters[fd].feed(data)
                     counters[stream_names[fd]] += len(data)
-                    emitters[fd].feed(data)
         except BaseException as exc:
             callback_error = exc
             self._terminate_group(process)
@@ -741,9 +782,13 @@ class OperationRunner:
                                 if not data:
                                     break
                                 drain_budget -= len(data)
-                                tails[fd].append(data)
+                                raw_stdout = stream_names[fd] == "stdout" and on_stdout_chunk is not None
+                                if raw_stdout:
+                                    on_stdout_chunk(data)
+                                else:
+                                    tails[fd].append(data)
+                                    emitters[fd].feed(data)
                                 counters[stream_names[fd]] += len(data)
-                                emitters[fd].feed(data)
                             emitters[fd].feed(b"", final=True)
                     except BlockingIOError:
                         pass

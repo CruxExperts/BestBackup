@@ -6,7 +6,7 @@ from threading import Event
 
 import pytest
 
-from bbackup.capture import CaptureError, capture_sources
+from bbackup.capture import CaptureError, DurableCaptureArtifacts, capture_sources
 from bbackup.linux_coverage import sqlite_file_identity
 from bbackup.models import Source
 
@@ -85,6 +85,83 @@ def test_sqlite_budget_preflight_refuses_export_before_writing(tmp_path):
                              resource_monitor=Monitor()):
             pass
     assert not list(tmp_path.glob("capture-*"))
+
+
+def test_durable_first_export_survives_later_source_failure(tmp_path):
+    staging = tmp_path / "staging"
+    state = tmp_path / "state"
+    staging.mkdir(mode=0o700)
+    state.mkdir(mode=0o700)
+    original = tmp_path / "live.sqlite"
+    with sqlite3.connect(original) as database:
+        database.execute("CREATE TABLE data(value TEXT)")
+        database.execute("INSERT INTO data VALUES ('first point in time')")
+    artifacts = DurableCaptureArtifacts(staging, state, "a" * 64, "b" * 32, "daily")
+    with pytest.raises(CaptureError, match="existing database"):
+        with capture_sources((Source("first", "sqlite", (str(original),)),
+                              Source("second", "sqlite", (str(tmp_path / "missing"),))),
+                             staging, durable_artifacts=artifacts):
+            pytest.fail("later failed export became a backup")
+    record = json.loads(artifacts.record_path.read_text())
+    assert record["phase"] == "prepared"
+    assert [item["name"] for item in record["exports"]] == ["first.sqlite"]
+    exported = artifacts.directory / "first.sqlite"
+    assert record["exports"][0]["sha256"] == hashlib.sha256(exported.read_bytes()).hexdigest()
+    with sqlite3.connect(original) as database:
+        database.execute("UPDATE data SET value='later state'")
+    with sqlite3.connect(exported) as database:
+        assert database.execute("SELECT value FROM data").fetchone() == ("first point in time",)
+
+
+def test_durable_cleanup_rejects_tampered_record_path(tmp_path):
+    staging = tmp_path / "staging"
+    state = tmp_path / "state"
+    staging.mkdir(mode=0o700)
+    state.mkdir(mode=0o700)
+    artifacts = DurableCaptureArtifacts(staging, state, "a" * 64, "b" * 32, "daily")
+    artifacts.prepare()
+    exported = artifacts.directory / "db.dump"
+    artifacts.begin_export(exported)
+    exported.write_bytes(b"point in time")
+    exported.chmod(0o600)
+    artifacts.finish_export(exported)
+    manifest = artifacts.directory / "bbackup-capture.json"
+    artifacts.begin_export(manifest)
+    manifest.write_text("{}")
+    manifest.chmod(0o600)
+    artifacts.ready(manifest)
+    outside = staging / "foreign"
+    outside.write_bytes(b"keep")
+    record = json.loads(artifacts.record_path.read_text())
+    record["phase"] = "cleanup_started"
+    record["exports"][0]["name"] = "../foreign"
+    artifacts.record_path.write_text(json.dumps(record))
+    with pytest.raises(CaptureError, match="names"):
+        DurableCaptureArtifacts.load(staging, state, "a" * 64, "b" * 32).cleanup_success()
+    assert outside.read_bytes() == b"keep"
+
+
+def test_reviewed_pending_export_is_hashed_and_change_blocks_discard(tmp_path):
+    staging = tmp_path / "staging"
+    state = tmp_path / "state"
+    staging.mkdir(mode=0o700)
+    state.mkdir(mode=0o700)
+    artifacts = DurableCaptureArtifacts(staging, state, "a" * 64, "b" * 32, "daily")
+    artifacts.prepare()
+    pending = artifacts.directory / "partial.dump"
+    artifacts.begin_export(pending)
+    pending.write_bytes(b"unfinished point in time")
+    pending.chmod(0o600)
+    artifacts.reviewed_failure("failed")
+    reviewed = json.loads(artifacts.record_path.read_text())
+    assert reviewed["pending_observed"] == [{
+        "name": "partial.dump", "size": pending.stat().st_size,
+        "sha256": hashlib.sha256(pending.read_bytes()).hexdigest()}]
+    digest = artifacts.record_sha256()
+    pending.write_bytes(b"changed but still retained")
+    with pytest.raises(CaptureError, match="changed"):
+        artifacts.discard(digest)
+    assert pending.exists()
 
 
 def test_native_export_checks_budget_before_writing():

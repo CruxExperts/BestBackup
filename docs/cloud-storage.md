@@ -362,7 +362,8 @@ repository to its HTTPS S3 URL and private password file as above, and set
 `staging_dir` in private host bindings. The staging directory must be an owned,
 mode-0700, dedicated mounted filesystem whose entire capacity is at most the
 configured staging budget. It must contain only the stable bbackup staging lock
-before an operation starts. Arrange the mount separately, including persistence
+before a new capture starts. Read-only reconciliation can inspect validated
+retained exports on that mount. Arrange the mount separately, including persistence
 for scheduled jobs; bbackup neither mounts it nor deletes unrelated content.
 Choose the limits from actual available capacity and export requirements.
 
@@ -385,6 +386,39 @@ provides a hard staging-capacity ceiling. Free-space reserve checks are observed
 thresholds, not a guarantee against unrelated writers between checks; results
 report `free_space_reserve_hard_guaranteed: false`. Observed changes in filesystem
 use are not attributed exclusively to the backup process.
+
+Completed remote database exports are unique recovery artifacts, not disposable
+cache. Their operation-owned staging files and private hash records survive a
+failed or uncertain upload, cancellation, or receipt failure. New captures stay
+blocked while exports remain. Successful reconciliation checks the exact remote
+capture tag and manifest before repairing a receipt and releasing the matching
+stage; it never repeats the upload. A reviewed failed outcome retains the data.
+
+Discover retained capture IDs and current artifact-record digests, including
+captures stopped before dispatch:
+
+```bash
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  runs retained-exports --repository cloud --limit 20 --offset 0
+```
+
+The counts are declared metadata, not file-hash verification. After independently
+recovering the needed export or deliberately accepting its loss, record the
+reviewed failed outcome through `runs reconcile` and inspect the updated record
+digest. Explicit disposal is then bound to that exact record:
+
+```bash
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  runs discard-exports --repository cloud --operation-id EXACT_OPERATION_ID \
+  --artifact-record-sha256 EXACT_CURRENT_RECORD_SHA256
+```
+
+The command refuses stale records or foreign files and keeps its disposal audit.
+Do not remove staging files or edit private records by hand.
+
+For survival across host reboot or power loss, use persistent dedicated staging.
+On `tmpfs`, exports survive process exit but disappear with the host's memory;
+the persistent record cannot recreate them, and reconciliation fails closed.
 
 ### Credential roles
 

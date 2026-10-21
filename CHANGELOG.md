@@ -59,6 +59,11 @@ current uv-based install, development, and release instructions.
 
 ### Fixed
 
+- Remote database captures retain completed exports after failed or uncertain
+  uploads and receipt failures. Read-only reconciliation verifies the matching
+  snapshot before cleanup; bounded discovery and digest-bound explicit disposal
+  replace manual edits to retained staging. Reboot survival requires persistent
+  staging rather than `tmpfs`.
 - Checkpoint receipts accept an absent expiry date instead of failing after the
   encrypted kit is written. Known legacy receipt schemas migrate with a private
   backup and preserved rows; additional schema constraints fail closed.

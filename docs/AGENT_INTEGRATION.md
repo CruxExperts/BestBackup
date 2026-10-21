@@ -66,7 +66,17 @@ bbackup production --config "$HOME/.config/bbackup/config.json" \
 
 ## Reconcile uncertain mutations
 
-If a mutating command returns `requires_reconciliation` or the connection is lost after dispatch, do not repeat the command. Read the repository or destination state, inspect the operation ID, and decide what actually completed. Reconciliation records an administrator-reviewed outcome; it does not rerun the command or repair missing receipts.
+If a mutating command returns `requires_reconciliation` or the connection is lost after dispatch, do not repeat the command. Read the repository or destination state, inspect the operation ID, and decide what actually completed. Reconciliation records an administrator-reviewed outcome without rerunning the command.
+
+For retained remote database exports, successful reconciliation verifies the
+snapshot and each export's actual bytes before repairing the capture receipt
+and releasing its owned staging files. A failed outcome retains the exports.
+`runs retained-exports` discovers bounded capture IDs, declared counts and record
+digests, including captures stopped before dispatch with no ledger row.
+`runs discard-exports` explicitly discards reviewed failed exports using the exact
+current record digest. See the [remote-primary recovery workflow](cloud-storage.md#remote-primary-with-bounded-staging-unreleased)
+for persistent-staging requirements and disposal steps. `runs list` remains a
+ledger event stream.
 
 ```bash
 bbackup production \

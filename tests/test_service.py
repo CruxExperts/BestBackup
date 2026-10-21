@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from bbackup.models import Configuration, HostBindings, RepositoryBinding, SourceBinding
+from bbackup.models import Configuration, HostBindings, RepositoryBinding, Source, SourceBinding
 from bbackup.enrollment import policy_lease, write_bytes
 from bbackup.linux_coverage import (CoverageCheck, InventoryPaths, check_coverage,
                                     discover_coverage, review_coverage,
@@ -21,6 +21,7 @@ from bbackup.operations import (
     OperationPlan,
     OperationRun,
     OperationStatus,
+    ReconciliationOutcome,
     RepositoryConflictError,
     repository_key,
 )
@@ -360,6 +361,313 @@ def _remote_service(tmp_path, *, with_replica=False):
         **({"copy": RepositoryBinding(str(tmp_path / "copy"), password)} if with_replica else {}),
     }, staging_dir=staging)
     return BackupService(config, bindings), data, staging
+
+
+def _remote_sqlite_service(tmp_path, monkeypatch):
+    database_path = tmp_path / "live.sqlite"
+    with sqlite3.connect(database_path) as database:
+        database.execute("CREATE TABLE data(value TEXT)")
+        database.execute("INSERT INTO data VALUES ('captured')")
+    password = tmp_path / "password"
+    password.write_text("fixture-secret")
+    password.chmod(0o600)
+    staging = tmp_path / "staging"
+    staging.mkdir(mode=0o700)
+    config = Configuration.parse({
+        "schema_version": 2,
+        "repositories": [{"name": "primary", "role": "remote-primary"}],
+        "sources": [{"name": "db", "kind": "sqlite", "paths": [str(database_path)]}],
+        "jobs": [{"name": "daily", "repository": "primary", "sources": ["db"],
+                  "resource_budget": {"schema_version": 1, "staging_max_bytes": 1024**3,
+                                      "minimum_free_bytes": 1, "cache_max_bytes": 0}}],
+    })
+    bindings = HostBindings(tmp_path / "state", {
+        "primary": RepositoryBinding("s3:https://s3.example.test/bucket/repo", password),
+    }, staging_dir=staging)
+    monkeypatch.setattr("bbackup.resource_limits.os.path.ismount", lambda path: path == staging)
+    monkeypatch.setattr("bbackup.resource_limits._volume", lambda _path: (1024**3, 1024**3 - 10000))
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fixture-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fixture-secret")
+    return BackupService(config, bindings), database_path, staging
+
+
+def _retained_capture(service, staging):
+    stages = [path for path in staging.iterdir() if path.name.startswith("capture-")]
+    assert len(stages) == 1
+    token = stages[0].name.removeprefix("capture-")
+    record = json.loads((service.state / "capture-artifacts" / f"{token}.json").read_text())
+    return token, stages[0], record
+
+
+def test_remote_failed_upload_keeps_exact_export_after_database_changes(tmp_path, monkeypatch):
+    service, database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError, match="retained capture token"):
+        service.capture("daily")
+    token, stage, record = _retained_capture(service, staging)
+    exported = stage / "db.sqlite"
+    digest = hashlib.sha256(exported.read_bytes()).hexdigest()
+    assert record["exports"][0]["sha256"] == digest
+    assert record["exports"][0]["size"] == exported.stat().st_size
+    with sqlite3.connect(database_path) as database:
+        database.execute("UPDATE data SET value='changed after failure'")
+    assert hashlib.sha256(exported.read_bytes()).hexdigest() == digest
+    with sqlite3.connect(exported) as database:
+        assert database.execute("SELECT value FROM data").fetchone() == ("captured",)
+    inspected = []
+
+    def inspect(plan, **_kwargs):
+        inspected.append(plan.argv)
+        assert "snapshots" in plan.argv
+        return _run(plan, stdout=b"[]")
+
+    monkeypatch.setattr(service.runner, "run", inspect)
+    result = service.reconcile_run("primary", token, ReconciliationOutcome.FAILED)
+    assert result["retained_exports"] is True
+    assert exported.exists() and inspected
+    monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "retained stage triggered another upload"))
+    with pytest.raises(ResourceBudgetExceeded):
+        service.capture("daily")
+
+
+def test_remote_pre_dispatch_failure_retains_completed_export_without_ledger_row(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    service.sources = (*service.sources, Source("missing", "sqlite", (str(tmp_path / "missing"),)))
+    original_job = service._job("daily")
+    monkeypatch.setattr(service, "_job", lambda _name: replace(original_job, sources=("db", "missing")))
+    monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "pre-dispatch failure reached upload"))
+    with pytest.raises(ServiceError, match="retained capture token"):
+        service.capture("daily")
+    token, stage, record = _retained_capture(service, staging)
+    assert service.ledger.inspect(repository_key(service._identity("primary")), token) is None
+    assert record["exports"][0]["name"] == "db.sqlite"
+    assert (stage / "db.sqlite").exists()
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(plan, stdout=b"[]"))
+    result = service.reconcile_run("primary", token, ReconciliationOutcome.ABANDONED)
+    assert result["retained_exports"] is True and (stage / "db.sqlite").exists()
+    listing = service.retained_exports("primary")
+    assert listing == [{"repository": "primary", "operation_id": token,
+                        "phase": "prepared", "reviewed_outcome": "abandoned",
+                        "completed_export_count": 1,
+                        "completed_export_bytes": (stage / "db.sqlite").stat().st_size,
+                        "artifact_record_sha256": result["artifact_record_sha256"],
+                        "file_hashes_verified": False}]
+    assert str(stage) not in str(listing)
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID")
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY")
+    disposed = service.discard_exports("primary", token, listing[0]["artifact_record_sha256"])
+    assert disposed["discarded_export_count"] == 1
+    assert not stage.exists() and service.retained_exports("primary") == []
+    assert {path.name for path in staging.iterdir()} == {".bbackup-staging.lock"}
+
+
+def test_remote_discard_refuses_unknown_outcome_stale_digest_and_foreign_file(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, _record = _retained_capture(service, staging)
+    before = service.retained_exports("primary")[0]["artifact_record_sha256"]
+    with pytest.raises(ServiceError, match="reconciled"):
+        service.discard_exports("primary", token, before)
+    assert (stage / "db.sqlite").exists()
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(plan, stdout=b"[]"))
+    service.reconcile_run("primary", token, ReconciliationOutcome.FAILED)
+    current = service.retained_exports("primary")[0]["artifact_record_sha256"]
+    assert current != before
+    with pytest.raises(ServiceError, match="refused"):
+        service.discard_exports("primary", token, before)
+    foreign = stage / "foreign"
+    foreign.write_text("keep")
+    with pytest.raises(ServiceError, match="refused"):
+        service.discard_exports("primary", token, current)
+    assert foreign.read_text() == "keep" and (stage / "db.sqlite").exists()
+    foreign.unlink()
+    service.discard_exports("primary", token, current)
+    assert not stage.exists()
+
+
+def test_remote_restart_orphan_does_not_dispatch_or_discard(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda _plan, **_kwargs: (_ for _ in ()).throw(
+        RuntimeError("fixture process lost")))
+    with pytest.raises(ServiceError, match="retained capture token"):
+        service.capture("daily")
+    token, stage, _record = _retained_capture(service, staging)
+    restarted = BackupService(service.config, service.bindings)
+    monkeypatch.setattr(restarted.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "restart replayed uncertain upload"))
+    with pytest.raises(ResourceBudgetExceeded):
+        restarted.capture("daily")
+    assert restarted.ledger.inspect(repository_key(restarted._identity("primary")), token)[1] is OperationStatus.UNCERTAIN
+    assert (stage / "db.sqlite").exists()
+
+
+def test_remote_receipt_failure_retains_completed_export(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    snapshot = "a" * 64
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, stdout=(json.dumps({"message_type": "summary", "snapshot_id": snapshot}) + "\n").encode()))
+    monkeypatch.setattr(service, "_receipts", lambda: (_ for _ in ()).throw(sqlite3.OperationalError(
+        "fixture receipt failure")))
+    with pytest.raises(ServiceError, match="retained capture token"):
+        service.capture("daily")
+    _, stage, record = _retained_capture(service, staging)
+    assert record["phase"] == "ready"
+    assert (stage / "db.sqlite").exists()
+
+
+def test_remote_success_reconciliation_repairs_receipt_and_cleans_exact_stage(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, record = _retained_capture(service, staging)
+    snapshot = "b" * 64
+    manifest = (stage / record["manifest"]["name"]).read_bytes()
+    exported = (stage / "db.sqlite").read_bytes()
+    inspected = []
+
+    def inspect(plan, **kwargs):
+        inspected.append(plan.argv)
+        if "snapshots" in plan.argv:
+            return _run(plan, stdout=json.dumps([{"id": snapshot,
+                "tags": [f"bbackup-capture={token}", "bbackup-job=daily"]}]).encode())
+        assert "dump" in plan.argv
+        payload = exported if plan.argv[-1].endswith("db.sqlite") else manifest
+        kwargs["on_stdout_chunk"](payload)
+        return replace(_run(plan, stdout=payload), stdout_tail=b"")
+
+    monkeypatch.setattr(service.runner, "run", inspect)
+    result = service.reconcile_run("primary", token, ReconciliationOutcome.SUCCEEDED)
+    assert result["snapshot_id"] == snapshot
+    assert {"snapshots", "dump"}.issubset({word for argv in inspected for word in argv})
+    assert not stage.exists()
+    assert {path.name for path in staging.iterdir()} == {".bbackup-staging.lock"}
+    assert service.snapshots()[0]["snapshot_id"] == snapshot
+    assert service.ledger.inspect(repository_key(service._identity("primary")), token)[1] is OperationStatus.RECONCILED_SUCCEEDED
+
+
+@pytest.mark.parametrize("remote_export", ["missing", "changed", "oversize"])
+def test_remote_success_reconciliation_requires_each_export_bytes(tmp_path, monkeypatch, remote_export):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, record = _retained_capture(service, staging)
+    snapshot = "d" * 64
+    manifest = (stage / record["manifest"]["name"]).read_bytes()
+    exported = (stage / "db.sqlite").read_bytes()
+
+    def inspect(plan, **kwargs):
+        if "snapshots" in plan.argv:
+            return _run(plan, stdout=json.dumps([{"id": snapshot,
+                "tags": [f"bbackup-capture={token}", "bbackup-job=daily"]}]).encode())
+        if plan.argv[-1].endswith("db.sqlite"):
+            if remote_export == "missing":
+                return _run(plan, status=OperationStatus.FAILED, exit_code=1)
+            payload = (exported + b"extra" if remote_export == "oversize"
+                       else bytes([exported[0] ^ 1]) + exported[1:])
+        else:
+            payload = manifest
+        kwargs["on_stdout_chunk"](payload)
+        return replace(_run(plan, stdout=payload), stdout_tail=b"")
+
+    monkeypatch.setattr(service.runner, "run", inspect)
+    with pytest.raises(ServiceError, match="Remote capture export"):
+        service.reconcile_run("primary", token, ReconciliationOutcome.SUCCEEDED)
+    assert (stage / "db.sqlite").exists()
+    assert service.snapshots() == []
+    assert service.ledger.inspect(repository_key(service._identity("primary")), token)[1] is OperationStatus.UNCERTAIN
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_remote_reconcile_recovers_only_empty_owned_inode_gap(tmp_path, monkeypatch, foreign):
+    from bbackup.capture import DurableCaptureArtifacts
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    token = "e" * 32
+    artifact = DurableCaptureArtifacts(staging, service.state,
+        repository_key(service._identity("primary")), token, "daily")
+    artifact._save()
+    artifact.directory.mkdir(mode=0o700)
+    if foreign:
+        (artifact.directory / "unexpected").write_text("keep")
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(plan, stdout=b"[]"))
+    if foreign:
+        with pytest.raises(ServiceError, match="empty owned stage"):
+            service.reconcile_run("primary", token, ReconciliationOutcome.ABANDONED)
+        assert (artifact.directory / "unexpected").read_text() == "keep"
+        assert json.loads(artifact.record_path.read_text())["stage_inode"] is None
+    else:
+        result = service.reconcile_run("primary", token, ReconciliationOutcome.ABANDONED)
+        assert result["retained_exports"] is True
+        assert json.loads(artifact.record_path.read_text())["stage_inode"] == artifact.directory.stat().st_ino
+        service.discard_exports("primary", token, result["artifact_record_sha256"])
+        assert not artifact.directory.exists()
+
+
+def test_legacy_remote_capture_reconciles_without_record_but_marked_new_refuses(tmp_path, monkeypatch):
+    service, _database_path, _staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    legacy = OperationPlan.create(service._identity("primary"), "capture", ["never-run"])
+    with service.ledger.begin(legacy):
+        pass
+    monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "record-less legacy reconcile dispatched a command"))
+    result = service.reconcile_run("primary", legacy.operation_id, ReconciliationOutcome.ABANDONED)
+    assert result["legacy_capture"] is True
+    marked = OperationPlan.create(service._identity("primary"), "capture", ["never-run"])
+    service.ledger.mark_capture_artifacts(marked.repository_id, marked.operation_id)
+    with service.ledger.begin(marked):
+        pass
+    with pytest.raises(ServiceError, match="New remote capture artifact record is missing"):
+        service.reconcile_run("primary", marked.operation_id, ReconciliationOutcome.ABANDONED)
+    assert service.ledger.inspect(marked.repository_id, marked.operation_id)[1] is OperationStatus.UNCERTAIN
+
+
+def test_remote_success_cleans_only_recorded_stage(tmp_path, monkeypatch):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    snapshot = "c" * 64
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, stdout=(json.dumps({"message_type": "summary", "snapshot_id": snapshot}) + "\n").encode()))
+    response = service.capture("daily")
+    record = json.loads((service.state / "capture-artifacts" /
+                         f"{response['operation_id']}.json").read_text())
+    assert record["phase"] == "cleaned" and record["exports"][0]["sha256"]
+    assert {path.name for path in staging.iterdir()} == {".bbackup-staging.lock"}
+    assert service.snapshots()[0]["snapshot_id"] == snapshot
+    from bbackup.capture import DurableCaptureArtifacts
+    token = response["operation_id"]
+    artifact = DurableCaptureArtifacts.load(staging, service.state,
+        repository_key(service._identity("primary")), token)
+    with pytest.raises(ServiceError, match="reconciled"):
+        service.discard_exports("primary", token, artifact.record_sha256())
+
+
+@pytest.mark.parametrize("foreign", ["file", "symlink"])
+def test_remote_reconciliation_rejects_foreign_stage_entry(tmp_path, monkeypatch, foreign):
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, _record = _retained_capture(service, staging)
+    extra = stage / "unexpected"
+    if foreign == "file":
+        extra.write_text("foreign")
+    else:
+        extra.symlink_to(tmp_path / "outside")
+    monkeypatch.setattr(service.runner, "run", lambda *_args, **_kwargs: pytest.fail(
+        "unsafe stage reached remote inspection"))
+    with pytest.raises(ServiceError, match="artifact"):
+        service.reconcile_run("primary", token, ReconciliationOutcome.FAILED)
+    assert extra.is_symlink() if foreign == "symlink" else extra.exists()
+    assert (stage / "db.sqlite").exists()
 
 
 def test_remote_primary_capture_direct_source_no_cache_and_explicit_provider_env(tmp_path, monkeypatch):

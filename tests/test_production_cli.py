@@ -8,7 +8,7 @@ import pytest
 from bbackup.production_cli import _default_paths, cli
 from bbackup.configuration_workspace import ConfigurationWorkspace
 from bbackup.models import ConfigurationError
-from bbackup.production_operations import execute_operation
+from bbackup.production_operations import _service_operation, execute_operation
 from tests.test_service import service  # noqa: F401
 
 
@@ -366,6 +366,33 @@ def test_reconciliation_requires_explicit_review_and_does_not_run_command(servic
                                "--outcome", "abandoned", "--repository-reviewed"])
     assert missing.exit_code == 3
     assert json.loads(missing.output)["success"] is False
+
+
+def test_retained_export_commands_have_closed_schema_and_route_exact_digest(service, monkeypatch):
+    listed = CliRunner().invoke(cli, ["runs", "retained-exports", "--schema"])
+    assert listed.exit_code == 0
+    listing_schema = json.loads(listed.output)["data"]
+    assert set(listing_schema["properties"]) == {"repository", "limit", "offset"}
+    disposal = CliRunner().invoke(cli, ["runs", "discard-exports", "--schema"])
+    assert disposal.exit_code == 0
+    disposal_schema = json.loads(disposal.output)["data"]
+    assert set(disposal_schema["required"]) == {
+        "repository", "operation_id", "artifact_record_sha256"}
+    assert disposal_schema["additionalProperties"] is False
+    calls = []
+    monkeypatch.setattr(service, "retained_exports", lambda *args, **kwargs: calls.append(
+        ("list", args, kwargs)) or [])
+    monkeypatch.setattr(service, "discard_exports", lambda *args: calls.append(
+        ("discard", args)) or {"discarded_export_count": 1})
+    assert _service_operation(service, "runs retained-exports",
+                              {"repository": "primary", "limit": 5, "offset": 2},
+                              None, None, None) == []
+    assert _service_operation(service, "runs discard-exports", {
+        "repository": "primary", "operation_id": "a" * 32,
+        "artifact_record_sha256": "b" * 64}, None, None, None) == {
+        "discarded_export_count": 1}
+    assert calls == [("list", ("primary",), {"limit": 5, "offset": 2}),
+                     ("discard", ("primary", "a" * 32, "b" * 64))]
 
 
 

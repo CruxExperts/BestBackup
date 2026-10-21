@@ -785,6 +785,30 @@
     ],
     "type": "object"
   },
+  "runs discard-exports": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "artifact_record_sha256": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "operation_id": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "operation_id",
+      "artifact_record_sha256"
+    ],
+    "type": "object"
+  },
   "runs list": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -827,6 +851,29 @@
       "repository",
       "operation_id",
       "outcome"
+    ],
+    "type": "object"
+  },
+  "runs retained-exports": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "limit": {
+        "maximum": 1000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "offset": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository"
     ],
     "type": "object"
   },

@@ -10,9 +10,11 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+## [2.0.4] - 2026-10-21
+
 ### Added
 
-- Unreleased restricted B2 source-key metadata assessment and independently
+- Experimental restricted B2 source-key metadata assessment and independently
   checked, separately signed central recovery acceptance. Live B2 protection
   and complete-machine recovery remain unqualified.
 - Experimental HTTPS S3 remote-primary capture with a dedicated bounded staging
@@ -41,8 +43,9 @@ current uv-based install, development, and release instructions.
   artifacts, and an explicit administrator-coordinated quiet-window assertion.
   Database-level ownership, ACLs, and connection limits require a verified
   reconstruction procedure after native restore.
-  A local covered capture and replacement rehearsal passed; stable v2.0.3
-  qualification and ordinary PostgreSQL adapters are unchanged.
+  A local covered capture and replacement rehearsal passed; stable v2.0.4
+  scope remains the v2.0.3 tested core scope, and ordinary PostgreSQL adapters
+  are unchanged.
 - Refreshed matching 1280×640 GitHub social preview artwork, embedded ownership metadata, checked provenance, and explicit repository-settings upload instructions.
 
 ### Qualification evidence
@@ -73,8 +76,8 @@ current uv-based install, development, and release instructions.
   hide, orphan-marker, and noncurrent-delete actions, and central retention
   refused the enabled expiration rules. No objects were uploaded or deleted;
   this did not test elapsed expiry or physical reclamation. A read-only first-
-  entry inventory observation found no versions. The v2.0.3 support scope
-  remains unchanged, and requests #23–#26 remain open.
+  entry inventory observation found no versions. The v2.0.4 stable scope
+  remains the v2.0.3 tested core scope, and requests #23–#26 remain open.
 - On 2026-10-21, isolated PostgreSQL 17.11 containers passed covered capture
   and restore into a fresh replacement database. The encrypted snapshot omitted
   raw PostgreSQL files; recovered materials and their tested procedure rebuilt
@@ -94,8 +97,9 @@ current uv-based install, development, and release instructions.
   The fixture, limits, and open qualification gaps are
   documented in
   [version 2 development](docs/development/version-2.md#live-backblaze-b2-source-trial).
-  This unreleased result does not qualify B2 protection or production recovery;
-  AWS has no live result and the v2.0.3 support scope is unchanged.
+  This workstation result does not qualify B2 protection or production recovery;
+  AWS has no live result and the v2.0.4 stable support scope remains the
+  v2.0.3 tested core scope.
 - A live central-retention rehearsal planned with a fresh thirty-day grace
   period, ran a guarded zero-apply, and reconciled an empty plan. It identified
   10 protected versions in a 31-version inventory, which remained unchanged;
@@ -115,6 +119,11 @@ current uv-based install, development, and release instructions.
 
 ### Fixed
 
+- Updated the pinned CI and release-build `uv` tool to 0.13.4 for
+  [GHSA-hq85-5cpj-mr62](https://github.com/advisories/GHSA-hq85-5cpj-mr62);
+  the amd64 and arm64 wheel digests are recorded in release dependency evidence.
+- Updated `certifi` to 2026.10.19 to address
+  [GHSA-6q48-6c7w-9gw2](https://github.com/advisories/GHSA-6q48-6c7w-9gw2).
 - Service operations disable Restic's cache when the child environment has no
   cache location, so verified restore also works from minimal system services.
 - Remote capture reconciliation uses Restic reads without cloud lock writes,
@@ -644,7 +653,8 @@ are still under development. See [implementation status](docs/development/versio
 
 The `Unreleased` comparison is a live `HEAD` link for navigation, not an immutable historical citation.
 
-[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.3...HEAD
+[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.4...HEAD
+[2.0.4]: https://github.com/CruxExperts/BestBackup/compare/v2.0.3...v2.0.4
 [2.0.3]: https://github.com/CruxExperts/BestBackup/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/CruxExperts/BestBackup/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/CruxExperts/BestBackup/compare/v2.0.0...v2.0.1

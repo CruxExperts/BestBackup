@@ -1,19 +1,19 @@
 # Cloud storage: Backblaze B2 and Amazon S3
 
-Keep your first recovery point on local storage. The v2.0.3 tested stable-release
-scope includes local/file capture and restore, selected live database drills,
+Keep your first recovery point on local storage. The v2.0.4 tested stable-release
+scope retains local/file capture and restore, selected live database drills,
 headless dashboard happy paths, and AMD64 Ubuntu packages.
 
 **Backblaze B2 and Amazon S3 are implemented but not production-qualified.** A
 small live B2 source-path drill passed on 2026-10-20; it does not qualify B2
 protection or production recovery. No live AWS capture/check/restore result is
 recorded. The local Garage S3 test also passed capture, copy, full-data checking,
-and restore, but does not qualify B2 or Amazon S3. Treat the provider setup below
-as experimental; keep B2/AWS outside production recovery until the remaining
-provider and independent-recovery evidence is complete. A separate live B2
+and restore, but does not qualify B2 or Amazon S3. The provider workflows ship
+as experimental in v2.0.4; keep B2/AWS outside production recovery until the
+remaining provider and independent-recovery evidence is complete. A separate live B2
 lifecycle-overlap guard confirmed only the configuration check and central
 retention refusal; it did not test elapsed expiry or physical deletion. See the
-[guard evidence](#b2-lifecycle-overlap-guard-unreleased).
+[guard evidence](#b2-lifecycle-overlap-guard-experimental).
 
 ## Choose a connection
 
@@ -72,7 +72,7 @@ identity; the source key does not need it. Do not add
 `writeBucketLifecycleRules` for a read-only inspection. See
 [Backblaze's S3-compatible app-key capabilities](https://www.backblaze.com/docs/cloud-storage-s3-compatible-app-keys).
 
-### Restricted source profile (unreleased)
+### Restricted source profile (experimental)
 
 The `restricted_source_profile` result is a versioned assessment of the SDK's
 authorization metadata. It requires one exact bucket and a nonempty,
@@ -105,7 +105,7 @@ limits are recorded in the
 This narrow result does not establish the thirty-day historical grace period,
 provider lock/hold behavior, off-host escrow, or production recovery.
 
-### Central recovery acceptance (unreleased)
+### Central recovery acceptance (experimental)
 
 On an independent verifier, `recovery accept` opens a source-signed encrypted
 recovery kit, reconstructs the exact historical repository versions, and runs a
@@ -141,7 +141,7 @@ verifier identity. This is a simulated compromise on one workstation; it does
 not establish off-host custody or replacement-machine recovery. See the
 [qualification record](development/version-2.md#live-backblaze-b2-source-trial).
 
-### Central noncurrent-version retention (unreleased)
+### Central noncurrent-version retention (experimental)
 
 The experimental `cloud-retention` commands reclaim **noncurrent object
 versions only**. They do not run Restic `forget` or `prune`, compact packs, or
@@ -296,7 +296,7 @@ lifecycle changes, cancellation, contention, expiry, and lost responses before
 and after deletion. They do not establish B2/AWS semantics or production savings.
 `protection_qualified` remains false.
 
-### B2 lifecycle-overlap guard (unreleased)
+### B2 lifecycle-overlap guard (experimental)
 
 On 2026-10-21, a new `allPrivate` B2 bucket was created with File Lock enabled,
 default retention `NONE`, and overlapping native lifecycle rules: a broader
@@ -327,7 +327,7 @@ not elapsed expiry, physical reclamation, or an object-level protection window.
 The [full qualification record](development/version-2.md#live-b2-lifecycle-overlap-guard-trial)
 also records the separate maintenance-interruption result.
 
-### Central snapshot maintenance (unreleased)
+### Central snapshot maintenance (experimental)
 
 The separate experimental `cloud-maintenance` commands retire obsolete visible
 snapshots before historical-version reclamation. Run them on the central
@@ -514,7 +514,7 @@ succeeded; reconcile uncertain operations before retrying.
 
 ## Retries, backoff, and interruption
 
-### Remote primary with bounded staging (unreleased)
+### Remote primary with bounded staging (experimental)
 
 An experimental `remote-primary` repository can capture ordinary files directly
 through Restic into an HTTPS S3 endpoint. It does not create a second local

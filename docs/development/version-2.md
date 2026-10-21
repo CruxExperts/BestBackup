@@ -1,12 +1,39 @@
 # Version 2 development
 
-> Stable v2.0.3 production qualification is limited to the tested scope
-> recorded below. Other implemented paths remain unqualified or deferred.
-> See the 2026-10-17 qualification record for exact evidence and limits.
+> Stable v2.0.4 production qualification retains the tested core scope recorded
+> below. Experimental additions remain unqualified. The 2026-10-17 record keeps
+> the original v2.0.3 evidence and limits.
+
+## v2.0.4 release scope and known limits
+
+The v2.0.4 stable qualified scope is unchanged from v2.0.3: local file capture
+and restore; live capture and restore for PostgreSQL 17.11, MySQL 8.4.12, and
+MariaDB 11.8.9; headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04
+packages. The separate user-timer reboot qualification applies only to the
+components and conditions recorded in its dated evidence below.
+
+This release also ships experimental restricted B2 source-key assessment and
+central recovery acceptance, central maintenance and noncurrent-version
+retention, HTTPS S3 remote-primary capture with bounded staging, and opt-in
+reviewed Linux file and SQLite coverage with a manual PostgreSQL covered-capture
+path. These additions are implemented workflows, not new production support.
+They do not establish B2 or AWS protection, a guaranteed thirty-day recovery
+window, off-host custody, final remote-server qualification, complete-machine
+recovery, or general automated PostgreSQL coverage. `protection_qualified`
+remains false. Requests #23–#26 remain open; this release does not close them.
+
+On 2026-10-21, the v2.0.4 candidate passed the full local suite with 1,242
+passed tests and one skipped test. The exact wheel and source archive built
+and passed isolated installed-artifact smoke tests. Ruff, Python compilation,
+version alignment, generated CLI catalogs, Markdown standards, publishing
+readiness, and artwork provenance checks passed. The dependency audit found
+and corrected the affected `certifi` pin to 2026.10.19; exact-version lookups
+for the corrected dependency returned no advisory records at retrieval time.
+These checks do not expand the production qualification boundary above.
 
 ## Direction and delivery order
 
-The selected stable v2.0.3 release scope is local/file capture and restore,
+The selected stable v2.0.4 release scope is local/file capture and restore,
 live capture-restore drills for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB
 11.8.9, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages.
 The CLI and Textual dashboard share one operations service. Existing 1.x commands
@@ -25,7 +52,7 @@ An implemented capability does not establish completion of its entire delivery s
 
 ## Implemented capabilities
 
-### Unreleased cloud and machine recovery program
+### Experimental cloud and machine recovery features
 
 Open requests are sequenced as restricted B2 recovery
 ([#23](https://github.com/CruxExperts/BestBackup/issues/23)), central retention
@@ -34,11 +61,13 @@ budgets ([#26](https://github.com/CruxExperts/BestBackup/issues/26)), and integr
 privileged Linux recovery ([#24](https://github.com/CruxExperts/BestBackup/issues/24)).
 Linux coverage discovery can proceed independently. Each request needs its own
 implementation, focused regressions, documentation, review, signed commit, and
-acceptance evidence before closeout. A release follows completion and final
-source/artifact validation; a mocked provider result cannot qualify B2. All four
-requests remain open; the live trials below do not close them.
+acceptance evidence before closeout. Stable qualification and issue closeout
+require completion and final source/artifact validation; this release ships the
+current workflows experimentally without closing the requests. A mocked
+provider result cannot qualify B2. All four requests remain open; the live
+trials below do not close them.
 
-The first unreleased slice adds a restricted source-key metadata assessment to
+The experimental B2 slice adds a restricted source-key metadata assessment to
 native B2 inspection and an independent `recovery accept` command. Acceptance
 reconstructs signed exact versions using the escrow kit, checks the repository
 and snapshot, and signs a central record with a separate verifier fingerprint.
@@ -55,7 +84,7 @@ Complete privileged Linux capture and replacement-machine recovery also remain
 unqualified. Do not close these issues or expand the supported release scope
 from fixture tests.
 
-### Reviewed Linux coverage (unreleased)
+### Reviewed Linux coverage (experimental)
 
 An opt-in schema-3 job can declare `coverage_policy` and map its job name to a
 private `coverage_declarations` path in host bindings. Ordinary jobs keep their
@@ -123,7 +152,7 @@ export and manifest; the reviewed reconstruction procedure must place the
 database and restore its original metadata. This does not provide automatic
 in-place application recovery or a shared transaction across files or databases.
 
-#### Experimental PostgreSQL covered capture (unreleased)
+#### Experimental PostgreSQL covered capture
 
 The private schema-2 declaration adds `database_roots` for selected logical
 databases and one `postgresql_clusters` entry. Each captured database maps to
@@ -245,8 +274,9 @@ application evidence.
 
 This is local emulation of the bounded manual path. It does not qualify
 off-host custody, provider access, whole-machine recovery, or unattended
-PostgreSQL coverage. The path remains unreleased and adds no qualification to
-stable v2.0.3; native PostgreSQL support for ordinary jobs is unchanged.
+PostgreSQL coverage. The path ships experimentally in v2.0.4 and adds no
+qualification to the v2.0.3 core scope; native PostgreSQL support for ordinary
+jobs is unchanged.
 
 The full regression run reported 1,241 passed, one known Docker skip, and one
 dashboard assertion failure. That assertion was updated to expect the new
@@ -332,9 +362,9 @@ establish independently controlled off-host escrow, provider protection, or
 complete-machine recovery. It does not extend the published v2.0.3 support
 scope or complete the final remote-server acceptance.
 
-### Remote-primary and central retention (unreleased)
+### Remote-primary and central retention (experimental)
 
-The unreleased remote-primary implementation adds HTTPS S3 primary repositories,
+The experimental remote-primary implementation adds HTTPS S3 primary repositories,
 versioned resource budgets, a dedicated capacity-bounded staging mount, disabled
 cache, a shared staging lease, export write checks, and continuous runner
 pressure checks. Completion results distinguish local and remote captures;
@@ -360,7 +390,7 @@ and uses Restic `--no-lock` reads to avoid creating cloud lock objects. Lock
 observations before and after inspection reject active locks but cannot enforce
 quiescence across machines; repository writers must remain stopped throughout.
 
-The unreleased central retention slice adds explicit catalog enrollment and
+The experimental central retention slice adds explicit catalog enrollment and
 private recurring grants, signed central acceptance selection, exact manifest
 dependency preservation, central observation-based noncurrent grace, conservative
 lock/lifecycle checks, and single-request journaled deletion with read-only
@@ -371,7 +401,7 @@ This reclaims only noncurrent object versions; aged B2 reclamation, AWS behavior
 and production savings remain outstanding for #25. Focused tests
 include actual GPG-signed acceptance records and uncertainty before/after deletion.
 
-The separate unreleased `cloud-maintenance` workflow uses the same central
+The separate experimental `cloud-maintenance` workflow uses the same central
 catalog and independently accepted records to retire only visible accepted
 snapshots that are no longer protected. It leaves unknown snapshots untouched,
 uses a separate explicit Restic credential profile, and runs no-repack prune
@@ -382,7 +412,7 @@ inspection requires operator-maintained quiescence and uses `--no-lock`, while
 mutations keep native locks and journal intent without automatic replay.
 Healthy reconciliation alone does not certify completed prune. Repacking,
 aged live deletion and the promised recovery window remain unqualified.
-See the [central maintenance workflow](../cloud-storage.md#central-snapshot-maintenance-unreleased).
+See the [central maintenance workflow](../cloud-storage.md#central-snapshot-maintenance-experimental).
 
 Local validation includes a real three-snapshot Restic repository: the exact
 obsolete accepted ID was forgotten, no-repack prune completed, and both the
@@ -396,7 +426,7 @@ backup returned false and supplies no Docker recovery qualification.
 
 #### Live B2 central-maintenance trial
 
-On 2026-10-21, unreleased maintenance code at `d33354a` passed a live B2
+On 2026-10-21, development code at `d33354a` passed a live B2
 workstation trial using the previously measured two-snapshot fixture. Both
 snapshots received genuine, separately signed central acceptance records.
 The reviewed immutable plan protected both snapshots and their ten dependency
@@ -438,7 +468,7 @@ catalog digest was unchanged. The eight-byte probe was deliberately retained.
 This qualifies only the small, zero-forget maintenance exercise. It does not
 demonstrate aged reclamation, an elapsed protection window, independently held
 off-host escrow, or final remote-server recovery. `protection_qualified` remains
-false, the feature remains unreleased, and #25 remains open.
+false, the feature ships experimentally in v2.0.4, and #25 remains open.
 
 #### Live B2 central-maintenance interruption trial
 
@@ -465,7 +495,7 @@ reclamation, the protection window, off-host recovery, or production recovery.
 
 #### Live Backblaze B2 source trial
 
-On 2026-10-20, the unreleased workstation checkout at commit
+On 2026-10-20, the workstation checkout at commit
 `4378e6efbb04de35ad41d377e461fe5d170fab1d` passed a small live B2 S3 source-path
 trial in a retained isolated Docker container without the whole checkout or
 central state mounted and without central or provisioner credentials.
@@ -574,7 +604,8 @@ it does not establish a thirty-day window or aged planner behavior.
 Thirty-day elapsed grace, overlapping lifecycle behavior, aged retention,
 off-host custody, clean replacement, final remote-server qualification, and all
 live AWS behavior remain unproven. Central acceptance still records
-`protection_qualified: false`. The selected stable v2.0.3 support scope is unchanged.
+`protection_qualified: false`. The v2.0.4 stable support scope remains the
+v2.0.3 tested core scope.
 
 #### Central B2 retention planning rehearsal
 
@@ -629,7 +660,7 @@ This establishes only the configured overlap guard and central-retention
 refusal. It does not test elapsed lifecycle expiry, physical reclamation, or
 any file-level lock/retention window; no actual file objects were created.
 Central acceptance remains `protection_qualified: false`, requests #23–#26
-remain open, and the selected stable v2.0.3 scope is unchanged.
+remain open, and the v2.0.4 stable scope remains the v2.0.3 tested core scope.
 
 On 2026-10-20 a workstation-only Garage S3 drill captured a 2,184,000-byte file
 fixture directly to the emulator using a 1,048,576-byte staging mount, ran an
@@ -648,7 +679,7 @@ used.
 
 #### Aggregate-capacity and active-pressure trial
 
-On 2026-10-21, unreleased code at `d33354a` captured a small, compressible
+On 2026-10-21, code at `d33354a` captured a small, compressible
 2,245,463-byte logical baseline to a local Garage S3 emulator. The isolated
 source had a read-only root filesystem and read-only fixture inputs. Its total
 writable filesystem capacity was 1,769,472 bytes: 1,048,576 for staging,
@@ -707,18 +738,19 @@ Generated catalogs/schemas, version, publishing, compilation, Markdown, Ruff and
 diff checks passed.
 
 An offline wheel/source build passed portable source-archive checks and an
-isolated installed-wheel smoke test. These are checks of the unreleased
-development checkout, still carrying package version 2.0.3; they are not new
-published release artifacts or a claim that the open live qualification work is
-complete. All tracked README entry points were reviewed, with current-state
-links and support boundaries aligned while preserving historical release records.
+isolated installed-wheel smoke test. These are historical checks of a
+development checkout still carrying package version 2.0.3; they are not the
+v2.0.4 release-candidate validation or published release artifacts, and they do
+not claim that the open live qualification work is complete. All tracked README
+entry points were reviewed, with current-state links and support boundaries
+aligned while preserving historical release records.
 The wheel and portable source archive built from the same `f349458` commit also
 passed source-content checks and an isolated installed-wheel smoke test. The
 private wheel SHA-256 is
 `ecef6617633a6547b460109dca7d9264aaa5d0a1607901331842856c9dc83a59`.
 
 A fresh Ubuntu 24.04.5 KVM guest passed all ten existing user-timer checks across
-three boots in 333.9 seconds. The tested unreleased wheel SHA-256 was
+three boots in 333.9 seconds. The tested development wheel SHA-256 was
 `e9ad97c9d9575bc1ca1ca0a0bb1efaf43f6512fc75aa8377d69f00e19df94bbc`.
 It exercised enrollment, capture/copy/byte-matched restore, missed-timer
 catch-up, disabled timers, overlap refusal, interrupted-operation uncertainty
@@ -745,8 +777,9 @@ checks; ordinary timer rendering remained unchanged.
 
 ### Native Docker capture and recovery
 
-This implemented path is not production-qualified and is outside the selected
-stable v2.0.3 release scope. Docker capture is opt-in and requires a local Docker Unix socket in the private
+This implemented path is not production-qualified and is outside the current
+stable support scope, which is unchanged from v2.0.3. Docker capture is opt-in
+and requires a local Docker Unix socket in the private
 host bindings. The portable source policy names one container and requires an
 explicit stop-and-restart window:
 
@@ -1004,7 +1037,7 @@ qualified provider lifecycle or pruning implementation.
 Experimental central cloud retention is a separate catalog/grant and reviewed
 plan/apply workflow for noncurrent object versions. It never runs Restic
 `forget`/`prune` or compacts current packs. See the
-[central retention guide](../cloud-storage.md#central-noncurrent-version-retention-unreleased).
+[central retention guide](../cloud-storage.md#central-noncurrent-version-retention-experimental).
 
 ```bash
 bbackup production --config config.json --bindings bindings.json retention plan --job daily

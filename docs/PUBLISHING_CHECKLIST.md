@@ -24,7 +24,8 @@ Use this checklist before changing public project metadata or publishing a relea
 
 ## Version 2 tested-scope claims
 
-- [ ] Describe v2.0.3 as qualified only for local file capture/restore, live PostgreSQL 17.11 / MySQL 8.4.12 / MariaDB 11.8.9 capture/restore, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages.
+- [ ] Describe v2.0.4 as qualified only for local file capture/restore, live PostgreSQL 17.11 / MySQL 8.4.12 / MariaDB 11.8.9 capture/restore, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages; this is the v2.0.3 tested core scope.
+- [ ] Describe new v2.0.4 cloud and Linux workflows as experimental and unqualified; keep requests #23–#26 open and do not claim a guaranteed thirty-day window, off-host custody, final remote-server qualification, or complete-machine recovery.
 - [ ] Keep B2/AWS, native Docker, ARM64 backup/restore, cross-application-version upgrades/rollback, root-owned systemd package templates, and cloud/off-host protection explicitly unqualified; describe the separate user-timer guest drills with their exact limits.
 - [ ] State that ARM64 packages may be built by the release matrix but are not functionally qualified by package-install smoke alone.
 - [ ] Keep native B2 capability inspection distinct from backup transfer; inspection is read-only and always reports `protection_qualified: false`.

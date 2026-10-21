@@ -1,6 +1,6 @@
 # Your first backup and verified restore
 
-This guide covers v2.0.3 and its schema-3 policy. For an older v2.0.2 installation, use its [versioned quick start](https://github.com/CruxExperts/BestBackup/blob/v2.0.2/QUICKSTART.md) until you migrate. Keep an independently retrievable copy of each repository password.
+This guide covers v2.0.4 and its schema-3 policy. For an older v2.0.2 installation, use its [versioned quick start](https://github.com/CruxExperts/BestBackup/blob/v2.0.2/QUICKSTART.md) until you migrate. Keep an independently retrievable copy of each repository password.
 
 ## Start with the guided dashboard
 
@@ -117,7 +117,7 @@ Units are installed under an absolute `$XDG_CONFIG_HOME/systemd/user`, or `~/.co
 
 Omit `--activate` to install disabled units. The command never enables lingering, installs a system-wide service, or elevates privileges. User timers require an available user systemd manager; boot operation may require administrator-managed lingering. A differing existing unit is preserved for review. [Installation](INSTALL.md#optional-systemd-scheduling) documents qualification limits.
 
-The unreleased [reviewed Linux coverage workflow](docs/development/version-2.md#reviewed-linux-coverage-unreleased)
+The experimental [reviewed Linux coverage workflow](docs/development/version-2.md#reviewed-linux-coverage-experimental)
 adds explicit private scope discovery, review and drift checks, plus an
 experimental manual PostgreSQL covered-capture path. PostgreSQL coverage
 requires an externally coordinated administrative window and a manual

@@ -315,6 +315,8 @@ class S3CloudAdapter:
         region_name: str | None = None,
         prefix: str = "",
         page_size: int = DEFAULT_PAGE_SIZE,
+        native_lock_reader: Any | None = None,
+        credential_pair: tuple[str, str] | None = None,
     ) -> None:
         if (
             not isinstance(bucket, str)
@@ -344,6 +346,13 @@ class S3CloudAdapter:
                 options["endpoint_url"] = configured_endpoint
             if region_name is not None:
                 options["region_name"] = region_name
+            if credential_pair is not None:
+                if (
+                    not isinstance(credential_pair, tuple) or len(credential_pair) != 2
+                    or any(not isinstance(value, str) or not value for value in credential_pair)
+                ):
+                    raise ValueError("credential_pair must be an explicit access-key pair")
+                options["aws_access_key_id"], options["aws_secret_access_key"] = credential_pair
             options["config"] = Config(
                 connect_timeout=10,
                 read_timeout=30,
@@ -362,6 +371,17 @@ class S3CloudAdapter:
             configured_endpoint = _normalize_endpoint_url(client_endpoint)
         self.endpoint_url = configured_endpoint
         self.client = client
+        if credential_pair is not None and (
+            not isinstance(credential_pair, tuple) or len(credential_pair) != 2
+            or any(not isinstance(value, str) or not value for value in credential_pair)
+        ):
+            raise ValueError("credential_pair must be an explicit access-key pair")
+        if native_lock_reader is not None and credential_pair is None:
+            raise ValueError("native lock reader requires the same explicit S3 credential pair")
+        if native_lock_reader is not None and not native_lock_reader.matches_credentials(credential_pair):
+            raise ValueError("native lock reader credentials differ from S3 credentials")
+        self.native_lock_reader = native_lock_reader
+        self._credential_pair = credential_pair
 
     def inspect_lifecycle(self) -> LifecycleInspection:
         """Read bucket versioning and applicable lifecycle expiration rules."""
@@ -1378,10 +1398,28 @@ def _write_immutable_plan(path: Path, value: Mapping[str, Any]) -> bytes:
 def _validate_retention_policy(
     policy: Mapping[str, Any], adapter: S3CloudAdapter
 ) -> tuple[dict[str, Any], Path]:
-    if set(policy) != _RETENTION_POLICY_FIELDS:
-        raise CloudError("Central retention policy schema is invalid")
-    if type(policy.get("schema_version")) is not int or policy["schema_version"] != 1:
+    version = policy.get("schema_version")
+    if type(version) is not int or version not in (1, 2):
         raise CloudError("Unsupported central retention policy version")
+    if set(policy) != (_RETENTION_POLICY_FIELDS | ({"lock_metadata"} if version == 2 else set())):
+        raise CloudError("Central retention policy schema is invalid")
+    from .b2 import B2VersionLockReader
+
+    reader = adapter.native_lock_reader
+    if version == 1 and reader is not None:
+        raise CloudError("Schema-1 retention cannot use a native lock reader")
+    if version == 2:
+        metadata = policy["lock_metadata"]
+        if (
+            not isinstance(metadata, dict) or set(metadata) != {"provider", "bucket_id"}
+            or metadata.get("provider") != "b2-native"
+            or not isinstance(metadata.get("bucket_id"), str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", metadata["bucket_id"])
+            or not isinstance(reader, B2VersionLockReader)
+            or reader.bucket != adapter.bucket or reader.bucket_id != metadata["bucket_id"]
+            or reader.prefix != adapter.prefix or reader.endpoint_url != adapter.endpoint_url
+        ):
+            raise CloudError("Native lock reader differs from schema-2 retention target")
     if not isinstance(policy.get("policy_id"), str) or not _SOURCE_NAME.fullmatch(policy["policy_id"]):
         raise CloudError("Central retention policy identity is invalid")
     if not isinstance(policy.get("catalog_id"), str) or not _FULL_ID.fullmatch(policy["catalog_id"]):
@@ -2051,6 +2089,11 @@ class _CentralRetention:
         }
 
     def _version_lock(self, key: str, version_id: str, *, lock_enabled: bool, now: datetime) -> tuple[dict[str, Any], bool]:
+        if self.adapter.native_lock_reader is not None:
+            try:
+                return self.adapter.native_lock_reader.read(key, version_id, now=now)
+            except Exception:
+                raise CloudError("B2 native per-version lock evidence is unknown") from None
         if not lock_enabled:
             return {"bucket_lock_enabled": False}, False
         client = self.adapter.client
@@ -2518,6 +2561,8 @@ class _CentralRetention:
         }
         if self.adapter.region_name is not None:
             options["region_name"] = self.adapter.region_name
+        if self.adapter._credential_pair is not None:
+            options["aws_access_key_id"], options["aws_secret_access_key"] = self.adapter._credential_pair
         try:
             return boto3.client("s3", **options)
         except Exception:

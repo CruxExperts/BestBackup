@@ -12,6 +12,7 @@ import pytest
 
 import bbackup.cloud as cloud
 from bbackup.cloud import CloudError, S3CloudAdapter
+from bbackup.b2 import B2VersionLockReader
 from bbackup.operations import OperationLedger, OperationPlan, OperationStatus, RepositoryConflictError, repository_key
 from bbackup.recovery import verify_checkpoint as real_verify_checkpoint, verify_recovery_acceptance as real_verify_acceptance
 
@@ -341,6 +342,119 @@ def _assert_repository_reacquirable(env):
     lease = env["ledger"].begin(plan)
     lease.finish(OperationStatus.SUCCEEDED, 0)
     lease.close()
+
+
+def _native_reader_for_retention(env):
+    """An exact metadata fake; raw SDK parsing is covered in test_b2."""
+    reader = object.__new__(B2VersionLockReader)
+    reader.bucket = BUCKET
+    reader.bucket_id = "bucket-id-1"
+    reader.prefix = PREFIX
+    reader.endpoint_url = ENDPOINT
+    reader._credential_pair = ("key", "secret")
+    reader.locks = {}
+
+    def read(key, file_id, *, now):
+        state = reader.locks.get((key, file_id), "none")
+        if state == "error":
+            raise RuntimeError("sensitive native provider detail")
+        evidence = {
+            "provider": "b2-native", "bucket": BUCKET, "bucket_id": reader.bucket_id,
+            "key": key, "file_id": file_id, "action": "upload", "legal_hold": "ON" if state == "hold" else "OFF",
+            "legal_hold_value": "on" if state == "hold" else None,
+            "mode": "governance" if state == "future" else None,
+            "retain_until_timestamp_ms": int((now + timedelta(minutes=10)).timestamp() * 1000) if state == "future" else None,
+        }
+        return evidence, state in {"hold", "future"}
+
+    reader.read = read
+    env["adapter"].native_lock_reader = reader
+    env["adapter"]._credential_pair = ("key", "secret")
+    env["policy"].update({"schema_version": 2, "lock_metadata": {"provider": "b2-native", "bucket_id": reader.bucket_id}})
+    _write_json(env["policy_path"], env["policy"])
+    _refresh_grant_for_policy(env)
+    return reader
+
+
+def test_native_schema2_null_can_age_and_lock_change_stops_predelete(retention_env):
+    env = retention_env
+    reader = _native_reader_for_retention(env)
+    plan = _seed_and_age(env)
+    assert plan["candidate_count"] == 1
+    candidate = ("repo/other/old.bin", "old-v1")
+    reader.locks[candidate] = "hold"
+    with pytest.raises(CloudError):
+        _apply(env, plan)
+    assert env["store"].deleted == []
+    reader.locks[candidate] = "error"
+    with pytest.raises(CloudError, match="native per-version lock evidence is unknown"):
+        cloud._CentralRetention(env["adapter"])._version_lock(
+            *candidate, lock_enabled=False, now=FrozenDateTime.current,
+        )
+    assert env["store"].deleted == []
+
+
+@pytest.mark.parametrize("state", ["hold", "future"])
+def test_native_schema2_protected_versions_are_not_candidates(retention_env, state):
+    env = retention_env
+    reader = _native_reader_for_retention(env)
+    _plan(env)
+    FrozenDateTime.current += timedelta(days=31)
+    reader.locks[("repo/other/old.bin", "old-v1")] = state
+    assert _plan(env)["candidate_count"] == 0
+
+
+def test_native_schema2_strict_policy_binding_and_schema1_compatibility(retention_env):
+    env = retention_env
+    assert cloud._validate_retention_policy(env["policy"], env["adapter"])[0]["schema_version"] == 1
+    reader = _native_reader_for_retention(env)
+    assert cloud._validate_retention_policy(env["policy"], env["adapter"])[0]["schema_version"] == 2
+    for metadata in (
+        {"provider": "b2-native", "bucket_id": "wrong"},
+        {"provider": "s3", "bucket_id": reader.bucket_id},
+        {"provider": "b2-native", "bucket_id": reader.bucket_id, "extra": True},
+    ):
+        with pytest.raises(CloudError, match="Native lock reader"):
+            cloud._validate_retention_policy({**env["policy"], "lock_metadata": metadata}, env["adapter"])
+    with pytest.raises(CloudError, match="Schema-1"):
+        cloud._validate_retention_policy({key: value for key, value in env["policy"].items() if key != "lock_metadata"} | {"schema_version": 1}, env["adapter"])
+    with pytest.raises(ValueError, match="credentials differ"):
+        S3CloudAdapter(
+            BUCKET, client=env["store"], endpoint_url=ENDPOINT, prefix="repo",
+            native_lock_reader=reader, credential_pair=("other", "secret"),
+        )
+
+
+def test_schema1_generic_s3_lock_404_is_still_unknown(retention_env):
+    env = retention_env
+    class Ambiguous404(Exception):
+        response = {"Error": {"Code": "404"}}
+
+    def unknown(**_kwargs):
+        raise Ambiguous404()
+
+    env["store"].get_object_legal_hold = unknown
+    with pytest.raises(CloudError, match="lock evidence is unknown"):
+        cloud._CentralRetention(env["adapter"])._version_lock(
+            "repo/other/old.bin", "old-v1", lock_enabled=True,
+            now=FrozenDateTime.current,
+        )
+
+
+def test_schema2_single_attempt_delete_client_uses_frozen_pair(retention_env, monkeypatch):
+    import boto3
+
+    env = retention_env
+    _native_reader_for_retention(env)
+    calls = []
+    expected = object()
+    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: calls.append((args, kwargs)) or expected)
+    assert cloud._CentralRetention(env["adapter"])._single_attempt_mutation_client() is expected
+    assert calls[0][0] == ("s3",)
+    options = calls[0][1]
+    assert options["aws_access_key_id"] == "key"
+    assert options["aws_secret_access_key"] == "secret"
+    assert options["config"].retries["total_max_attempts"] == 1
 
 
 def test_plan_protects_historical_restore_latest_versions_and_delete_markers(retention_env):

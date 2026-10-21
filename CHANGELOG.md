@@ -22,7 +22,9 @@ current uv-based install, development, and release instructions.
 - Experimental central noncurrent-version retention with signed checkpoint
   dependencies, explicit catalog and grants, shared repository leases, lock and
   expiry checks, and journaled exact-version deletion without automatic replay.
-  Current-pack compaction and live provider qualification remain outstanding.
+  Schema-2 B2 policies can select a native lock-metadata reader; schema-1
+  generic S3 policies remain unchanged. Current-pack compaction and live provider
+  protection remain outstanding.
 - Opt-in reviewed Linux file coverage with private inventory, exact scope and
   exclusions, drift checks, bounded reconstruction evidence, and root system
   unit rendering. Complete-machine recovery remains unqualified.
@@ -40,6 +42,12 @@ current uv-based install, development, and release instructions.
   [version 2 development](docs/development/version-2.md#live-backblaze-b2-source-trial).
   This unreleased result does not qualify B2 protection or production recovery;
   AWS has no live result and the v2.0.3 support scope is unchanged.
+- A live central-retention rehearsal planned with a fresh thirty-day grace
+  period, ran a guarded zero-apply, and reconciled an empty plan. It identified
+  10 protected versions in a 31-version inventory, which remained unchanged;
+  no S3 delete was sent. Empty reconciliation made no provider reads. The
+  schema-2 native B2 metadata integration and protected or aged deletion remain
+  untested.
 
 ### Fixed
 

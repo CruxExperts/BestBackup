@@ -154,14 +154,51 @@ shared repository operation ledger serializes deletion with local backup and
 restore operations. Arrange a quiescent window across other hosts as well;
 the local lease cannot exclude a writer on another machine.
 
-The mode-0600 policy is schema 1. It contains `policy_id`, a 64-character random
-hex `catalog_id`, positive `revision`, exact `endpoint_url`, `bucket`, nonempty
-`prefix`, full `repository_id`, trusted central verifier primary fingerprint,
-`retention_counts` (`daily`, `weekly`, `monthly`), `grace_seconds` (at least
-2592000), `plan_max_age_seconds`, `max_apply_objects`, `max_apply_bytes`, private
-absolute `state_dir`, nonempty `known_good_manifest_digests`, and
-`pending_manifest_digests`. Keep central state independently backed up. Losing an
-established catalog stops planning; enrollment cannot silently recreate it.
+The mode-0600 policy remains schema 1 for generic S3. It contains `policy_id`, a
+64-character random hex `catalog_id`, positive `revision`, exact `endpoint_url`,
+`bucket`, nonempty `prefix`, full `repository_id`, trusted central verifier
+primary fingerprint, `retention_counts` (`daily`, `weekly`, `monthly`),
+`grace_seconds` (at least 2592000), `plan_max_age_seconds`,
+`max_apply_objects`, `max_apply_bytes`, private absolute `state_dir`, nonempty
+`known_good_manifest_digests`, and `pending_manifest_digests`. Keep central state
+independently backed up. Losing an established catalog stops planning;
+enrollment cannot silently recreate it.
+
+For Backblaze B2, schema 2 adds one exact native lock-metadata selector; every
+other policy field remains required:
+
+```json
+{
+  "schema_version": 2,
+  "lock_metadata": {
+    "provider": "b2-native",
+    "bucket_id": "EXACT_BUCKET_ID"
+  }
+}
+```
+
+This is only the B2-specific policy fragment. The bucket ID must match the
+selected bucket and the policy's canonical HTTPS Backblaze S3 endpoint. Planning
+rejects target or reader mismatches; versions evaluated for deletion require
+exact identity and authorized protection metadata. Changed evidence stops apply,
+and extra lock-metadata policy fields are rejected. Existing policy CLI arguments select the
+schema; there are no new flags. A schema change requires an incremented policy
+revision, new policy digest, matching grant, and new plan. Preserve the enrolled
+catalog and original first-seen times; do not re-enroll to reset grace.
+
+The native metadata reader uses the same centrally configured standard B2
+application-key ID and secret as S3 requests. It does not accept a session
+token. A broader central key is not required. Keep central retention and
+provisioner/master credentials off source machines; never put them in the S3
+source process. The source key remains unchanged and restricted to source work.
+Backblaze's [native `b2_get_file_info` response](https://www.backblaze.com/apidocs/b2-get-file-info)
+exposes per-file retention and legal-hold authorization and values. The reader
+accepts only authorized, explicit metadata: an authorized null retention mode
+and null retain-until timestamp mean no retention, and the SDK maps an authorized
+null legal-hold value to off. Missing or unauthorized metadata remains unknown.
+The S3 `ObjectLockConfigurationNotFoundError` response is ambiguous for this B2
+binding and is not treated as proof that lock is absent. See Backblaze's
+[native Object Lock API guide](https://www.backblaze.com/docs/cloud-storage-enable-object-lock-with-the-native-api).
 
 The separate mode-0600 recurring grant binds `schema_version: 1`, `policy_id`,
 `catalog_id`, `policy_revision`, the exact file's `policy_sha256`, matching
@@ -201,6 +238,18 @@ rules applied. No lifecycle-write capability was added. Separate canaries
 confirmed denial of source retention/hold administration and exact deletion of
 one unprotected version by the central retention identity. These authority
 checks do not qualify locked/held-object protection or aged-version reclamation.
+
+A live central-retention rehearsal enrolled a catalog, planned with
+a fresh thirty-day first-seen grace period, ran a guarded zero-apply, and
+reconciled an empty plan. The plan identified 10 protected versions among 31
+inventory versions. Before/after inventory matched and no S3 delete request was
+sent. Empty reconciliation made zero provider reads, so it does not demonstrate
+recovery from an uncertain deletion. The S3 lock-configuration response was an
+ambiguous `ObjectLockConfigurationNotFoundError`. The native reader separately
+verified the exact original configuration and data versions, including authorized
+null lock settings, while the S3 lock flag was false. Full schema-2 production
+CLI and protected-object qualification remain pending. No aged deletion was
+attempted, and no cost or savings were measured.
 
 ```bash
 bbackup production --config config.v3.json --bindings bindings.v3.json \

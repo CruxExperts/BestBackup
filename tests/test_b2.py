@@ -4,8 +4,91 @@ from threading import Event
 
 import pytest
 
-from bbackup.b2 import B2Error, inspect_b2, inspect_sdk
+from bbackup.b2 import B2Error, B2VersionLockReader, inspect_b2, inspect_sdk
 from bbackup.operations import OperationRunner
+
+
+def _native_lock_api(info=None, *, allowed=None, endpoint="https://s3.us-west-004.backblazeb2.com", bucket_id="bucket-id-1"):
+    auth = {
+        "capabilities": ["listBuckets", "readFiles", "readFileRetentions", "readFileLegalHolds"],
+        "buckets": [{"id": "bucket-id-1", "name": "backup-bucket"}],
+        "namePrefix": "restic/",
+    }
+    if allowed:
+        auth.update(allowed)
+    if info is None:
+        info = {
+            "bucketId": "bucket-id-1", "fileId": "file-v1", "fileName": "restic/data", "action": "upload",
+            "fileRetention": {"isClientAuthorizedToRead": True, "value": {"mode": None, "retainUntilTimestamp": None}},
+            "legalHold": {"isClientAuthorizedToRead": True, "value": None},
+        }
+    bucket = SimpleNamespace(name="backup-bucket", id_=bucket_id)
+    return SimpleNamespace(
+        account_info=SimpleNamespace(
+            get_allowed=lambda: auth,
+            get_s3_api_url=lambda: endpoint,
+            get_api_url=lambda: "https://api001.backblazeb2.com",
+        ),
+        list_buckets=lambda **kwargs: [bucket],
+        session=SimpleNamespace(get_file_info_by_id=lambda file_id: info),
+    )
+
+
+def test_native_lock_reader_exact_authorized_null_and_future_protection():
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 10, 20, tzinfo=timezone.utc)
+    api_value = _native_lock_api()
+    reader = B2VersionLockReader(
+        "backup-bucket", "bucket-id-1", "restic/", "https://s3.us-west-004.backblazeb2.com",
+        api=api_value, access_key_id="key", secret_access_key="secret",
+    )
+    evidence, held = reader.read("restic/data", "file-v1", now=now)
+    assert evidence["provider"] == "b2-native" and evidence["legal_hold"] == "OFF"
+    assert evidence["legal_hold_value"] is None
+    assert evidence["mode"] is None and evidence["retain_until_timestamp_ms"] is None
+    assert held is False
+    api_value.session.get_file_info_by_id = lambda _id: {
+        **_native_lock_api().session.get_file_info_by_id("file-v1"),
+        "fileRetention": {"isClientAuthorizedToRead": True, "value": {
+            "mode": "governance", "retainUntilTimestamp": int(now.timestamp() * 1000) + 600000,
+        }},
+    }
+    assert reader.read("restic/data", "file-v1", now=now)[1] is True
+
+
+@pytest.mark.parametrize("damage", [
+    {"bucketId": "wrong"}, {"fileId": "wrong"}, {"fileName": "restic/other"}, {"action": "hide"},
+    {"fileRetention": {"isClientAuthorizedToRead": False, "value": {"mode": None, "retainUntilTimestamp": None}}},
+    {"legalHold": {"isClientAuthorizedToRead": False, "value": "off"}},
+    {"fileRetention": {"isClientAuthorizedToRead": True, "value": {"mode": None, "retainUntilTimestamp": 0}}},
+    {"legalHold": {"isClientAuthorizedToRead": True, "value": "unknown"}},
+])
+def test_native_lock_reader_rejects_ambiguous_exact_version(damage):
+    from datetime import datetime, timezone
+
+    info = dict(_native_lock_api().session.get_file_info_by_id("file-v1"))
+    info.update(damage)
+    reader = B2VersionLockReader(
+        "backup-bucket", "bucket-id-1", "restic/", "https://s3.us-west-004.backblazeb2.com",
+        api=_native_lock_api(info), access_key_id="key", secret_access_key="secret",
+    )
+    with pytest.raises(B2Error, match="unknown"):
+        reader.read("restic/data", "file-v1", now=datetime.now(timezone.utc))
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"bucket_id": "wrong"},
+    {"endpoint": "https://s3.us-east-005.backblazeb2.com"},
+    {"allowed": {"namePrefix": "restic/other/"}},
+    {"allowed": {"capabilities": ["listBuckets", "readFiles"]}},
+])
+def test_native_lock_reader_rejects_scope_or_endpoint_mismatch(kwargs):
+    with pytest.raises(B2Error, match="differs"):
+        B2VersionLockReader(
+            "backup-bucket", "bucket-id-1", "restic/", "https://s3.us-west-004.backblazeb2.com",
+            api=_native_lock_api(**kwargs), access_key_id="key", secret_access_key="secret",
+        )
 
 
 class FakeBucket:

@@ -4,10 +4,12 @@ from __future__ import annotations
 from dataclasses import asdict
 from contextlib import contextmanager
 from pathlib import Path
+import re
 import shutil
 from typing import Any
+from urllib.parse import urlsplit
 
-from .b2 import inspect_b2
+from .b2 import B2VersionLockReader, inspect_b2
 from .cli_metadata import PRODUCTION_COMMANDS, production_schema
 from .cloud import S3CloudAdapter, _normalize_endpoint_url
 from .configuration_workspace import ConfigurationWorkspace, read_document
@@ -278,7 +280,47 @@ def _cloud_retention_operation(service, command, values, cancel):
     expected = f"s3:{endpoint}/{bucket}/{prefix.rstrip('/')}"
     if identity.rstrip("/") != expected:
         raise ConfigurationError("Central retention target differs from enrolled repository")
-    adapter = S3CloudAdapter(bucket, endpoint_url=endpoint, prefix=prefix)
+    if policy.get("schema_version") == 2:
+        parsed = urlsplit(endpoint)
+        match = re.fullmatch(r"s3\.([a-z0-9-]+)\.backblazeb2\.com", parsed.netloc)
+        if parsed.scheme != "https" or match is None or parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+            raise ConfigurationError("Schema-2 retention requires a canonical B2 S3 endpoint")
+        lock_metadata = policy.get("lock_metadata")
+        if (
+            not isinstance(lock_metadata, dict) or set(lock_metadata) != {"provider", "bucket_id"}
+            or lock_metadata.get("provider") != "b2-native"
+            or not isinstance(lock_metadata.get("bucket_id"), str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", lock_metadata["bucket_id"])
+        ):
+            raise ConfigurationError("Schema-2 native lock target is invalid")
+        try:
+            import boto3
+            from botocore.config import Config
+
+            credentials = boto3.Session().get_credentials()
+            frozen = credentials.get_frozen_credentials() if credentials is not None else None
+            if frozen is None or not frozen.access_key or not frozen.secret_key or frozen.token:
+                raise ValueError()
+            pair = (frozen.access_key, frozen.secret_key)
+            reader = B2VersionLockReader(
+                bucket, lock_metadata["bucket_id"], prefix, endpoint,
+                access_key_id=pair[0], secret_access_key=pair[1],
+            )
+            client = boto3.client(
+                "s3", endpoint_url=endpoint, region_name=match.group(1),
+                aws_access_key_id=pair[0], aws_secret_access_key=pair[1],
+                config=Config(connect_timeout=10, read_timeout=30,
+                              retries={"total_max_attempts": 5, "mode": "standard"},
+                              signature_version="s3v4"),
+            )
+        except Exception:
+            raise ConfigurationError("Could not bind schema-2 B2 retention authority") from None
+        adapter = S3CloudAdapter(
+            bucket, client=client, endpoint_url=endpoint, region_name=match.group(1),
+            prefix=prefix, native_lock_reader=reader, credential_pair=pair,
+        )
+    else:
+        adapter = S3CloudAdapter(bucket, endpoint_url=endpoint, prefix=prefix)
     lease_id = repository_key(identity)
     if command == "cloud-retention catalog-enroll":
         return adapter.initialize_central_retention_catalog(values["policy_file"], values["grant_file"])

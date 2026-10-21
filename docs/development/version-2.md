@@ -45,12 +45,13 @@ It does not establish independently controlled key custody by itself.
 
 A small live B2 source-path trial and seven denied-operation checks passed on
 2026-10-20; details and limits are recorded below. Historical-version recovery
-after simulated source compromise also passed on this workstation. The
-thirty-day grace period, provider lock/hold behavior, lifecycle interactions,
-measured transfer costs, and independently controlled off-host escrow remain
-outstanding. No live AWS result is recorded. Complete privileged Linux capture
-and replacement-machine recovery also remain unqualified. Do not close these
-issues or expand the supported release scope from fixture tests.
+after simulated source compromise also passed on this workstation. The elapsed
+thirty-day grace period, live native metadata integration, protected lock/hold
+behavior, lifecycle enforcement, measured transfer costs, and independently
+controlled off-host escrow remain outstanding. No live AWS result is recorded.
+Complete privileged Linux capture and replacement-machine recovery also remain
+unqualified. Do not close these issues or expand the supported release scope
+from fixture tests.
 
 ### Reviewed Linux coverage (unreleased)
 
@@ -155,10 +156,11 @@ private recurring grants, signed central acceptance selection, exact manifest
 dependency preservation, central observation-based noncurrent grace, conservative
 lock/lifecycle checks, and single-request journaled deletion with read-only
 reconciliation. It uses the enrolled repository's shared lease. Missing protected
-versions or catalog records stop deletion. This reclaims only noncurrent object
-versions; current-pack compaction, live B2/AWS behavior and production savings
-remain outstanding for #25. Focused tests include actual GPG-signed acceptance
-records and uncertainty before/after deletion.
+versions or catalog records stop deletion. A schema-2 B2 policy can select a
+native lock-metadata reader; schema-1 generic S3 policy behavior is unchanged.
+This reclaims only noncurrent object versions; current-pack compaction, live
+B2/AWS behavior and production savings remain outstanding for #25. Focused tests
+include actual GPG-signed acceptance records and uncertainty before/after deletion.
 
 #### Live Backblaze B2 source trial
 
@@ -229,6 +231,20 @@ off-host custody, clean replacement, final remote-server qualification, and all
 live AWS behavior remain unproven. Central acceptance still records
 `protection_qualified: false`. The selected stable v2.0.3 support scope is unchanged.
 
+#### Central B2 retention planning rehearsal
+
+A live rehearsal enrolled a catalog, generated a plan with a fresh
+thirty-day first-seen grace period, ran a guarded zero-apply, and reconciled an
+empty plan. It counted 10 protected versions in a 31-version inventory; the
+before/after inventory matched and no S3 delete was sent. Empty reconciliation
+made zero provider reads and does not test uncertain-delete recovery. The S3
+Object Lock configuration read returned ambiguous
+`ObjectLockConfigurationNotFoundError`. The new native reader separately passed
+live reads of both exact original configuration/data versions, normalizing only
+authorized null settings and running even when the S3 lock flag was false.
+Full schema-2 CLI and locked/held-object qualification remain pending. No aged
+deletion, cost/savings, off-host, or remote-server qualification is established.
+
 On 2026-10-20 a workstation-only Garage S3 drill captured a 2,184,000-byte file
 fixture directly to the emulator using a 1,048,576-byte staging mount, ran an
 incremental capture and full repository check, and restored the older snapshot
@@ -246,8 +262,12 @@ used.
 
 ### Workstation implementation checks - 2026-10-20
 
-The full repository suite passed **1,057 tests with one skip**, using eight
-workers under the shared CPU budget. Focused regressions and independent source
+The initial implementation suite passed **1,057 tests with one skip**, using
+eight workers under the shared CPU budget. The subsequent nullable-receipt fix
+passed **1,067 tests with one skip**; the native B2 metadata follow-up passed
+**1,087 tests with one skip**. Focused schema-2 tests cover authorized-null and
+held/retained versions, target and credential binding, generic S3 compatibility,
+and changed or unknown native evidence before deletion. Focused regressions and independent source
 review covered restricted-key assessment, separately signed central acceptance,
 retention dependency loss and uncertain deletion, remote-primary resource
 failure, enforced Linux exclusions and mount-namespace drift. Generated CLI

@@ -91,6 +91,11 @@ is that exact database path and whose reconstruction procedure has verified
 private evidence. PostgreSQL, MySQL/MariaDB and Docker remain unsupported for
 covered jobs; ordinary jobs retain their existing adapters.
 
+Application declarations use service-unit stems without the `.service` suffix.
+Ordinary names, templates and instances such as `serial-getty@ttyS0`, including
+valid systemd hex escapes, are supported. Names remain literal inventory keys;
+malformed escapes, path separators and overlength names fail discovery.
+
 SQLite review binds the database's device/inode, numeric owner, mode, link count
 and bounded extended attributes, including filesystem ACL attributes when
 present. The database must be a readable regular file without symlink ancestors

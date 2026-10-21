@@ -26,9 +26,11 @@ from .models import ConfigurationError, strict_json
 
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 _ACCOUNT = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}\$?\Z")
+_SYSTEMD_UNIT_PART = re.compile(r"(?:[A-Za-z0-9:_.-]|\\x[0-9A-Fa-f]{2})+\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _METADATA = {"numeric_owner", "mode", "acl", "xattr", "links"}
 _MAX_INVENTORY = 16 * 1024 * 1024
+_MAX_SYSTEMD_UNIT_NAME = 255
 _MAX_ENTRIES = 100_000
 _MAX_SQLITE_XATTRS = 256
 _MAX_SQLITE_XATTR_BYTES = 1024 * 1024
@@ -90,6 +92,22 @@ def _digest(value: Any) -> str:
 def _identifier(value: Any, description: str) -> str:
     if not isinstance(value, str) or not _NAME.fullmatch(value):
         raise CoverageError(f"Invalid {description} identifier")
+    return value
+
+
+def _systemd_service_stem(value: Any) -> str:
+    """Validate a service unit name without its required .service suffix."""
+    if (not isinstance(value, str) or not value
+            or len(value) + len(".service") > _MAX_SYSTEMD_UNIT_NAME
+            or "/" in value
+            or any(ord(char) < 0x20 or ord(char) == 0x7f for char in value)
+            or r"\x00" in value
+            or value.count("@") > 1):
+        raise CoverageError("Invalid application unit identifier")
+    prefix, has_instance, instance = value.partition("@")
+    if (not _SYSTEMD_UNIT_PART.fullmatch(prefix)
+            or (has_instance and instance and not _SYSTEMD_UNIT_PART.fullmatch(instance))):
+        raise CoverageError("Invalid application unit identifier")
     return value
 
 
@@ -239,7 +257,7 @@ def _declaration(raw: Any, scope: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(item["state_roots"], list) or len(item["state_roots"]) > 64:
             raise CoverageError("Invalid application state roots")
         applications.append({"id": _identifier(item["id"], "application"),
-                             "unit": _identifier(item["unit"], "application unit") + ".service",
+                             "unit": _systemd_service_stem(item["unit"]) + ".service",
                              "source_id": _identifier(item["source_id"], "source"),
                              "state_roots": [str(_absolute(path, "application state")) for path in item["state_roots"]],
                              "startup_recipe": _recipe(item["startup_recipe"])})

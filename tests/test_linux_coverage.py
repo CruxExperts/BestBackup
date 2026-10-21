@@ -290,6 +290,47 @@ def test_structural_inventory_drift(coverage_fixture, change):
     assert "structural_inventory_changed" in checked.reasons
 
 
+def test_instantiated_systemd_services_remain_reviewable(coverage_fixture, tmp_path):
+    unit_stems = ["serial-getty@ttyS0", "worker@", r"worker@tty\x2dS0", "a" * 247]
+    inventory = coverage_fixture["inventory"].application_units
+    declaration = json.loads(coverage_fixture["declaration"].read_text())
+    applications = []
+    for index, stem in enumerate(unit_stems):
+        (inventory / f"{stem}.service").write_text("[Service]\n")
+        recipe, evidence = _recipe(tmp_path, f"startup_{index}")
+        declaration["reconstruction_evidence"].append(evidence)
+        applications.append({"id": f"unit_{index}", "unit": stem,
+            "source_id": "files", "state_roots": [str(coverage_fixture["root"])],
+            "startup_recipe": recipe})
+    declaration["applications"] = applications
+    _private_json(coverage_fixture["declaration"], declaration)
+
+    candidate, reviewed = _review(coverage_fixture)
+    checked = _call(check_coverage, coverage_fixture)
+
+    assert candidate["counts"]["applications"] == len(unit_stems)
+    assert checked.capture_ready
+    assert checked.baseline_digest == reviewed["baseline_digest"]
+
+
+@pytest.mark.parametrize("unit_stem", [
+    "", "@ttyS0", "worker/ttyS0", "worker@ttyS0/extra", "../escape", "worker\nservice",
+    "worker@ttyS0@ttyS1", r"worker@tty\x2", r"worker@tty\xG0",
+    r"worker@tty\x00", "a" * 248,
+])
+def test_invalid_systemd_service_stems_are_rejected(coverage_fixture, unit_stem):
+    declaration = json.loads(coverage_fixture["declaration"].read_text())
+    recipe, evidence = _recipe(coverage_fixture["declaration"].parent, "invalid_unit")
+    declaration["applications"] = [{"id": "invalid_unit", "unit": unit_stem,
+        "source_id": "files", "state_roots": [str(coverage_fixture["root"])],
+        "startup_recipe": recipe}]
+    declaration["reconstruction_evidence"].append(evidence)
+    _private_json(coverage_fixture["declaration"], declaration)
+
+    with pytest.raises(CoverageError, match="application unit"):
+        _call(discover_coverage, coverage_fixture)
+
+
 def test_private_tmp_namespace_mount_ids_do_not_invalidate_reviewed_scope(coverage_fixture):
     root = coverage_fixture["root"]
     ancestor = root.parent

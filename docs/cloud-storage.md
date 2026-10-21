@@ -236,8 +236,12 @@ The live verifier read succeeded after the separate central identity received
 `readBucketLifecycleRules`; versioning was enabled and no lifecycle expiration
 rules applied. No lifecycle-write capability was added. Separate canaries
 confirmed denial of source retention/hold administration and exact deletion of
-one unprotected version by the central retention identity. These authority
-checks do not qualify locked/held-object protection or aged-version reclamation.
+one unprotected version by the central retention identity. Separate fresh
+governance-locked and legally held canaries each refused permanent deletion by
+that identity without bypass capability. Independent readback confirmed survival,
+and the native reader observed both protections. The provisioning identity
+subsequently removed protection and deleted only those canaries. These checks do
+not qualify aged-version reclamation or the promised historical recovery window.
 
 A live central-retention rehearsal enrolled a catalog, planned with
 a fresh thirty-day first-seen grace period, ran a guarded zero-apply, and
@@ -247,9 +251,13 @@ sent. Empty reconciliation made zero provider reads, so it does not demonstrate
 recovery from an uncertain deletion. The S3 lock-configuration response was an
 ambiguous `ObjectLockConfigurationNotFoundError`. The native reader separately
 verified the exact original configuration and data versions, including authorized
-null lock settings, while the S3 lock flag was false. Full schema-2 production
-CLI and protected-object qualification remain pending. No aged deletion was
-attempted, and no cost or savings were measured.
+null lock settings, while the S3 lock flag was false. A subsequent production CLI
+run completed setup, deliberate schema-3 enrollment, schema-2 planning,
+zero-candidate apply and empty reconciliation using the existing catalog and
+repository lease. It preserved established first-seen times, the original
+policy/grant files and all 31 versions, including 10 protected versions. No aged
+deletion or uncertain mutation was exercised, and no cost or savings were
+measured.
 
 ```bash
 bbackup production --config config.v3.json --bindings bindings.v3.json \

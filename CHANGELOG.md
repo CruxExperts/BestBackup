@@ -23,8 +23,8 @@ current uv-based install, development, and release instructions.
   dependencies, explicit catalog and grants, shared repository leases, lock and
   expiry checks, and journaled exact-version deletion without automatic replay.
   Schema-2 B2 policies can select a native lock-metadata reader; schema-1
-  generic S3 policies remain unchanged. Current-pack compaction and live provider
-  protection remain outstanding.
+  generic S3 policies remain unchanged. Current-pack compaction and complete
+  provider protection qualification remain outstanding.
 - Opt-in reviewed Linux file coverage with private inventory, exact scope and
   exclusions, drift checks, bounded reconstruction evidence, and root system
   unit rendering. Complete-machine recovery remains unqualified.
@@ -46,8 +46,13 @@ current uv-based install, development, and release instructions.
   period, ran a guarded zero-apply, and reconciled an empty plan. It identified
   10 protected versions in a 31-version inventory, which remained unchanged;
   no S3 delete was sent. Empty reconciliation made no provider reads. The
-  schema-2 native B2 metadata integration and protected or aged deletion remain
-  untested.
+  native B2 metadata reader separately verified exact historical versions and
+  fresh governance-locked and legally held canaries. The routine retention key
+  was refused permanent deletion of both protected canaries, with survival
+  confirmed independently; both canaries were subsequently cleaned up. The
+  production CLI also passed schema-3 enrollment and schema-2 plan, zero-apply
+  and empty reconciliation against the existing catalog with its first-seen
+  times preserved. Aged deletion and uncertain live mutations remain unqualified.
 
 ### Fixed
 

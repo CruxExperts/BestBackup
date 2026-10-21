@@ -46,8 +46,7 @@ It does not establish independently controlled key custody by itself.
 A small live B2 source-path trial and seven denied-operation checks passed on
 2026-10-20; details and limits are recorded below. Historical-version recovery
 after simulated source compromise also passed on this workstation. The elapsed
-thirty-day grace period, live native metadata integration, protected lock/hold
-behavior, lifecycle enforcement, measured transfer costs, and independently
+thirty-day grace period, lifecycle enforcement, measured transfer costs, and independently
 controlled off-host escrow remain outstanding. No live AWS result is recorded.
 Complete privileged Linux capture and replacement-machine recovery also remain
 unqualified. Do not close these issues or expand the supported release scope
@@ -158,8 +157,8 @@ lock/lifecycle checks, and single-request journaled deletion with read-only
 reconciliation. It uses the enrolled repository's shared lease. Missing protected
 versions or catalog records stop deletion. A schema-2 B2 policy can select a
 native lock-metadata reader; schema-1 generic S3 policy behavior is unchanged.
-This reclaims only noncurrent object versions; current-pack compaction, live
-B2/AWS behavior and production savings remain outstanding for #25. Focused tests
+This reclaims only noncurrent object versions; current-pack compaction, aged
+B2 reclamation, AWS behavior and production savings remain outstanding for #25. Focused tests
 include actual GPG-signed acceptance records and uncertainty before/after deletion.
 
 #### Live Backblaze B2 source trial
@@ -185,8 +184,8 @@ administration, file-retention administration, and legal-hold administration.
 The last two used a fresh, explicitly unprotected disposable canary. The central
 retention key then deleted that exact 37-byte version, and independent readback
 confirmed its absence. This tests authority on an unprotected object; it does
-not test protected-object deletion refusal or the retention planner's aged
-candidates.
+not test the retention planner's aged candidates. Separate protected-object
+checks are recorded below.
 
 This is narrow workstation evidence, not production qualification. No large
 backup set was measured. Read-only Restic raw-data statistics reported 197,784
@@ -226,7 +225,16 @@ remains recorded, and its authenticated kit was accepted separately without
 resealing or replaying the failed operation. No expiry date is invented, and
 absence of an expiry does not qualify a guaranteed protection window.
 
-Thirty-day elapsed grace, provider lock/hold behavior, protected retention,
+Separate fresh disposable versions tested governance retention and legal hold.
+The routine central retention identity, which has no governance-bypass
+capability, was denied permanent deletion of each exact version. Independent
+readback confirmed both survived, and the native metadata reader observed the
+future governance expiry and active legal hold. The provisioning identity then
+removed protection and deleted only those test canaries. Earlier inconclusive
+attempts remain separate and are not counted as successful denial checks. These
+checks do not demonstrate aged candidate deletion or a thirty-day recovery window.
+
+Thirty-day elapsed grace, overlapping lifecycle behavior, aged retention,
 off-host custody, clean replacement, final remote-server qualification, and all
 live AWS behavior remain unproven. Central acceptance still records
 `protection_qualified: false`. The selected stable v2.0.3 support scope is unchanged.
@@ -242,8 +250,14 @@ Object Lock configuration read returned ambiguous
 `ObjectLockConfigurationNotFoundError`. The new native reader separately passed
 live reads of both exact original configuration/data versions, normalizing only
 authorized null settings and running even when the S3 lock flag was false.
-Full schema-2 CLI and locked/held-object qualification remain pending. No aged
-deletion, cost/savings, off-host, or remote-server qualification is established.
+The production CLI then completed setup and deliberate local schema-3
+enrollment, followed by schema-2 native-metadata planning, zero-candidate apply,
+and empty reconciliation against the same existing catalog and repository
+lease. It again protected 10 versions among 31, preserved established first-seen
+times and the original policy/grant files, and left the version inventory
+unchanged. This verifies the production integration with fresh grace; it does
+not exercise an aged deletion or an uncertain mutation. No cost/savings,
+off-host, or remote-server qualification is established.
 
 On 2026-10-20 a workstation-only Garage S3 drill captured a 2,184,000-byte file
 fixture directly to the emulator using a 1,048,576-byte staging mount, ran an

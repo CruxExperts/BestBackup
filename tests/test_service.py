@@ -480,6 +480,75 @@ def test_receipt_upgrade_refuses_nonprivate_backup_without_migrating(service, tm
         ]
 
 
+def test_indefinite_checkpoint_receipt_and_legacy_expiry_migration(service, tmp_path):
+    columns = ("repository", "repository_identity", "snapshot", "operation",
+               "manifest_sha256", "captured_at", "expires_at")
+    prior = ("local", "identity", "a" * 64, "old-checkpoint", "b" * 64,
+             "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z")
+    with service._receipts() as db:
+        db.execute("DROP TABLE checkpoints")
+        db.execute(
+            """CREATE TABLE checkpoints (
+                repository TEXT NOT NULL, repository_identity TEXT NOT NULL,
+                snapshot TEXT NOT NULL, operation TEXT PRIMARY KEY,
+                manifest_sha256 TEXT NOT NULL, captured_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )"""
+        )
+        db.execute("INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?, ?, ?)", prior)
+    migrated = BackupService(service.config, service.bindings)
+    with migrated._receipts() as db:
+        assert db.execute("SELECT * FROM checkpoints").fetchall() == [prior]
+        assert db.execute("PRAGMA table_info(checkpoints)").fetchall()[-1][3] == 0
+        indefinite = ("local", "identity", "c" * 64, "indefinite-checkpoint",
+                      "d" * 64, "2026-10-02T00:00:00Z", None)
+        db.execute("INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?, ?, ?)", indefinite)
+    archive, = (service.state / "state-backups").glob("receipts-*.sqlite3.gz")
+    recovered = tmp_path / "checkpoint-pre-migration.sqlite3"
+    with gzip.GzipFile(filename=archive, mode="rb") as incoming, recovered.open("xb") as output:
+        shutil.copyfileobj(incoming, output)
+    with sqlite3.connect(recovered) as db:
+        assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert tuple(row[1] for row in db.execute("PRAGMA table_info(checkpoints)")) == columns
+        assert db.execute("PRAGMA table_info(checkpoints)").fetchall()[-1][3] == 1
+        assert db.execute("SELECT * FROM checkpoints").fetchall() == [prior]
+    again = BackupService(service.config, service.bindings)
+    with again._receipts() as db:
+        assert db.execute("SELECT * FROM checkpoints ORDER BY operation").fetchall() == [indefinite, prior]
+    assert len(list((service.state / "state-backups").glob("receipts-*.sqlite3.gz"))) == 1
+
+
+@pytest.mark.parametrize("extra", [
+    "repository TEXT NOT NULL COLLATE NOCASE",
+    "repository TEXT NOT NULL CHECK(length(repository) > 0)",
+    "repository TEXT NOT NULL DEFAULT 'local'",
+    "repository TEXT NOT NULL UNIQUE",
+])
+def test_checkpoint_expiry_migration_refuses_extra_constraints(service, extra):
+    ddl = f"""CREATE TABLE checkpoints (
+        {extra}, repository_identity TEXT NOT NULL,
+        snapshot TEXT NOT NULL, operation TEXT PRIMARY KEY,
+        manifest_sha256 TEXT NOT NULL, captured_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+    )"""
+    prior = ("local", "identity", "a" * 64, "original-operation",
+             "b" * 64, "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z")
+    with service._receipts() as db:
+        db.execute("DROP TABLE checkpoints")
+        db.execute(ddl)
+        db.execute("INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?, ?, ?)", prior)
+        original_sql = db.execute(
+            "SELECT sql FROM sqlite_master WHERE name='checkpoints'"
+        ).fetchone()[0]
+    with pytest.raises(ServiceError, match="unsupported constraints"):
+        BackupService(service.config, service.bindings)
+    with service._receipts() as db:
+        assert db.execute("SELECT sql FROM sqlite_master WHERE name='checkpoints'").fetchone()[0] == original_sql
+        assert db.execute("SELECT * FROM checkpoints").fetchall() == [prior]
+        assert db.execute("PRAGMA table_info(checkpoints)").fetchall()[-1][3] == 1
+    assert not (service.state / "state-backups").exists()
+
+
 def test_capture_receipt_is_committed_before_ledger_success(service, monkeypatch):
     snapshot_id = "a" * 64
     plans = []

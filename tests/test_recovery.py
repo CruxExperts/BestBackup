@@ -67,6 +67,64 @@ def test_nonregular_and_precancelled_inputs_fail_before_gpg(tmp_path):
         verify_checkpoint(tmp_path / "missing", tmp_path / "sig", "A" * 40, cancel=cancel)
 
 
+def test_checked_kit_records_indefinite_checkpoint_receipt(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    from bbackup.cloud import CheckpointRecord
+    from bbackup.models import Configuration, HostBindings, RepositoryBinding
+    from bbackup.operations import OperationStatus
+    from bbackup.recovery import create_checked_kit
+    from bbackup.service import BackupService
+
+    endpoint, bucket, prefix = "https://s3.example.test", "test-bucket", "repo"
+    password = tmp_path / "password"
+    password.write_text("disposable password")
+    password.chmod(0o600)
+    repository = f"s3:{endpoint}/{bucket}/{prefix}"
+    config = Configuration.parse({"schema_version": 2,
+                                  "repositories": [{"name": "source", "role": "replica"}],
+                                  "sources": [], "jobs": []})
+    service = BackupService(config, HostBindings(tmp_path / "state", {
+        "source": RepositoryBinding(repository, password)}))
+    snapshot, repository_id = "a" * 64, "b" * 64
+    service._engine = lambda _name: SimpleNamespace(
+        base_args=lambda: ["restic", "-r", repository],
+        check_args=lambda: ["restic", "-r", repository, "check"])
+    service.runner.run = lambda plan, **_kwargs: SimpleNamespace(
+        status=OperationStatus.SUCCEEDED,
+        stdout_tail=json.dumps({"id": repository_id} if "config" in plan.argv else
+                               {"id": snapshot}).encode())
+    operation = SimpleNamespace(operation_id="synthetic-checkpoint", env={})
+    def execute(_repository, _argv, *, finalize, **_kwargs):
+        finalize(operation, None)
+        return operation, None
+    service._execute = execute
+
+    class Adapter:
+        def __init__(self):
+            self.endpoint_url = endpoint
+            self.bucket = bucket
+            self.prefix = prefix
+        def create_checkpoint(self, path, **_kwargs):
+            Path(path).write_text("synthetic checkpoint")
+            return CheckpointRecord(Path(path), "c" * 64, 0, 0, 0,
+                "2026-10-20T00:00:00Z", None, "source", repository_id, snapshot,
+                endpoint, bucket, prefix, True)
+    def seal(_manifest, _password, destination, **_kwargs):
+        destination.write_bytes(b"synthetic sealed kit")
+        return {"manifest_sha256": "c" * 64}
+    monkeypatch.setattr("bbackup.recovery.seal_kit", seal)
+    result = create_checked_kit(service, Adapter(), "source", snapshot,
+        tmp_path / "kit.gpg", signer="D" * 40, recipient="E" * 40,
+        quiescent_window_confirmed=True)
+    assert result["expires_at"] is None
+    assert result["repository_id"] == repository_id
+    with service._receipts() as db:
+        assert db.execute("SELECT manifest_sha256, expires_at FROM checkpoints").fetchall() == [
+            ("c" * 64, None)]
+
+
 def test_validsig_does_not_override_revoked_or_expired_status():
     from types import SimpleNamespace
     from bbackup.recovery import _verify_status

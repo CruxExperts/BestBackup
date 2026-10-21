@@ -137,8 +137,49 @@ class BackupService:
                 table: {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
                 for table in expected
             }
+            checkpoint_info = list(db.execute("PRAGMA table_info(checkpoints)"))
+            legacy_checkpoint_expiry = any(
+                row[1] == "expires_at" and row[3] == 1 for row in checkpoint_info
+            )
+            if legacy_checkpoint_expiry:
+                # Rebuild only the exact owning legacy definition. PRAGMA
+                # table_info omits CHECK, DEFAULT, COLLATE, and inline UNIQUE;
+                # recreating such a table would silently discard constraints.
+                legacy_sql = """CREATE TABLE checkpoints (
+                    repository TEXT NOT NULL, repository_identity TEXT NOT NULL,
+                    snapshot TEXT NOT NULL, operation TEXT PRIMARY KEY,
+                    manifest_sha256 TEXT NOT NULL, captured_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                )"""
+                stored_sql = db.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='checkpoints'"
+                ).fetchone()
+                normalized = re.sub(r"\s+", "", stored_sql[0]).upper() if stored_sql and stored_sql[0] else ""
+                expected_sql = re.sub(r"\s+", "", legacy_sql).upper()
+                known_definitions = {expected_sql,
+                                     expected_sql.replace("CREATETABLE", "CREATETABLEIFNOTEXISTS", 1)}
+                expected_layout = (
+                    ("repository", "TEXT", 1, 0),
+                    ("repository_identity", "TEXT", 1, 0),
+                    ("snapshot", "TEXT", 1, 0),
+                    ("operation", "TEXT", 0, 1),
+                    ("manifest_sha256", "TEXT", 1, 0),
+                    ("captured_at", "TEXT", 1, 0),
+                    ("expires_at", "TEXT", 1, 0),
+                )
+                layout = tuple((row[1], row[2].upper(), row[3], row[5])
+                               for row in checkpoint_info)
+                additions = db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE tbl_name='checkpoints' "
+                    "AND type IN ('index', 'trigger') AND sql IS NOT NULL"
+                ).fetchone()
+                if (normalized not in known_definitions or layout != expected_layout
+                        or additions is not None
+                        or list(db.execute("PRAGMA foreign_key_list(checkpoints)"))):
+                    raise ServiceError("Checkpoint receipt schema has unsupported constraints")
             if any(existing.values()) and (
                 any(not columns.issubset(existing[table]) for table, columns in expected.items())
+                or legacy_checkpoint_expiry
                 or db.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='trigger' "
                     "AND name='snapshots_required_replicas_immutable'"
@@ -188,9 +229,33 @@ class BackupService:
                     repository TEXT NOT NULL, repository_identity TEXT NOT NULL,
                     snapshot TEXT NOT NULL, operation TEXT PRIMARY KEY,
                     manifest_sha256 TEXT NOT NULL, captured_at TEXT NOT NULL,
-                    expires_at TEXT NOT NULL
+                    expires_at TEXT
                 )"""
             )
+            if legacy_checkpoint_expiry:
+                replacement = "checkpoints_nullable_upgrade"
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (replacement,)).fetchone():
+                    raise ServiceError("Checkpoint receipt migration name is occupied")
+                prior_count = db.execute("SELECT count(*) FROM checkpoints").fetchone()[0]
+                db.execute(
+                    """CREATE TABLE checkpoints_nullable_upgrade (
+                        repository TEXT NOT NULL, repository_identity TEXT NOT NULL,
+                        snapshot TEXT NOT NULL, operation TEXT PRIMARY KEY,
+                        manifest_sha256 TEXT NOT NULL, captured_at TEXT NOT NULL,
+                        expires_at TEXT
+                    )"""
+                )
+                db.execute(
+                    """INSERT INTO checkpoints_nullable_upgrade
+                       (repository, repository_identity, snapshot, operation,
+                        manifest_sha256, captured_at, expires_at)
+                       SELECT repository, repository_identity, snapshot, operation,
+                              manifest_sha256, captured_at, expires_at FROM checkpoints"""
+                )
+                if db.execute("SELECT count(*) FROM checkpoints_nullable_upgrade").fetchone()[0] != prior_count:
+                    raise ServiceError("Checkpoint receipt migration did not preserve rows")
+                db.execute("DROP TABLE checkpoints")
+                db.execute("ALTER TABLE checkpoints_nullable_upgrade RENAME TO checkpoints")
             db.execute(
                 """CREATE TRIGGER IF NOT EXISTS snapshots_required_replicas_immutable
                    BEFORE UPDATE OF required_replicas ON snapshots

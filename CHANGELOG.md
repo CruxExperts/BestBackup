@@ -17,7 +17,8 @@ current uv-based install, development, and release instructions.
   and complete-machine recovery remain unqualified.
 - Experimental HTTPS S3 remote-primary capture with a dedicated bounded staging
   filesystem, disabled cache, shared staging lease, pressure checks and
-  structured resource failures. Final remote-server qualification is deferred.
+  structured resource failures. A small live B2 workstation source trial is
+  recorded below; final remote-server qualification is deferred.
 - Experimental central noncurrent-version retention with signed checkpoint
   dependencies, explicit catalog and grants, shared repository leases, lock and
   expiry checks, and journaled exact-version deletion without automatic replay.
@@ -27,8 +28,24 @@ current uv-based install, development, and release instructions.
   unit rendering. Complete-machine recovery remains unqualified.
 - Refreshed matching 1280×640 GitHub social preview artwork, embedded ownership metadata, checked provenance, and explicit repository-settings upload instructions.
 
+### Qualification evidence
+
+- On 2026-10-20, a small live B2 S3 remote-primary source trial passed two
+  captures, a repository check, restores of both snapshots, and seven denied
+  forbidden-operation checks using a bucket- and machine-prefix-restricted
+  source key. A separate verifier also reconstructed and checked historical
+  versions after simulated source compromise and restored the older snapshot.
+  The fixture, limits, and open qualification gaps are
+  documented in
+  [version 2 development](docs/development/version-2.md#live-backblaze-b2-source-trial).
+  This unreleased result does not qualify B2 protection or production recovery;
+  AWS has no live result and the v2.0.3 support scope is unchanged.
+
 ### Fixed
 
+- Checkpoint receipts accept an absent expiry date instead of failing after the
+  encrypted kit is written. Known legacy receipt schemas migrate with a private
+  backup and preserved rows; additional schema constraints fail closed.
 - Covered user/root timers preserve the reviewed temporary-directory source
   view instead of substituting systemd private mounts; ordinary jobs retain
   their private temporary directories.

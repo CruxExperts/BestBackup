@@ -43,11 +43,14 @@ reconstructs signed exact versions using the escrow kit, checks the repository
 and snapshot, and signs a central record with a separate verifier fingerprint.
 It does not establish independently controlled key custody by itself.
 
-Live B2 restricted-key capture/check/restore, denied forbidden operations,
-historical recovery after source compromise, lock/lifecycle interactions,
-measured costs, and independent escrow remain outstanding. Complete privileged
-Linux capture and replacement-machine recovery also remain unqualified. Do not
-close these issues or expand the supported release scope from fixture tests.
+A small live B2 source-path trial and seven denied-operation checks passed on
+2026-10-20; details and limits are recorded below. Historical-version recovery
+after simulated source compromise also passed on this workstation. The
+thirty-day grace period, provider lock/hold behavior, lifecycle interactions,
+measured transfer costs, and independently controlled off-host escrow remain
+outstanding. No live AWS result is recorded. Complete privileged Linux capture
+and replacement-machine recovery also remain unqualified. Do not close these
+issues or expand the supported release scope from fixture tests.
 
 ### Reviewed Linux coverage (unreleased)
 
@@ -144,8 +147,8 @@ pressure checks. Completion results distinguish local and remote captures;
 status exposes remote-primary capture separately from local capture. Free-space
 reserves remain observed thresholds, and unsupported Docker/replica combinations
 are refused. These implementation checks do not qualify B2 or whole-machine
-recovery. Current debugging uses small workstation fixtures; the final
-remote-server drill is deliberately deferred.
+recovery. A small live B2 workstation source trial is recorded below; the final
+remote-server drill and production recovery qualification remain deferred.
 
 The unreleased central retention slice adds explicit catalog enrollment and
 private recurring grants, signed central acceptance selection, exact manifest
@@ -156,6 +159,75 @@ versions or catalog records stop deletion. This reclaims only noncurrent object
 versions; current-pack compaction, live B2/AWS behavior and production savings
 remain outstanding for #25. Focused tests include actual GPG-signed acceptance
 records and uncertainty before/after deletion.
+
+#### Live Backblaze B2 source trial
+
+On 2026-10-20, the unreleased workstation checkout at commit
+`4378e6efbb04de35ad41d377e461fe5d170fab1d` passed a small live B2 S3 source-path
+trial in a retained isolated Docker container without the whole checkout or
+central state mounted and without central or provisioner credentials.
+The 196,682-byte source fixture contained a 192 KiB deterministic payload, a
+small hidden synthetic credential file, a symlink, and an incremental file.
+The drill used a 1 MiB tmpfs staging mount and a zero-byte Restic cache budget.
+
+The source key was restricted to one exact bucket and machine prefix. The SDK
+profile reported exactly `listBuckets`, `listFiles`, `readFiles`, and
+`writeFiles`. Repository initialization, two captures, a repository check, and
+restores of both snapshots passed. The older restore omitted the incremental
+file; the newer restore contained it. Both restores preserved the hidden file
+and symlink. Separate live canaries uploaded, read, and listed an object, then
+replaced and hid it while confirming old versions remained available. Seven
+forbidden-operation checks were denied and read back: permanent-version delete,
+cross-prefix read, cross-prefix write, key administration, bucket
+administration, file-retention administration, and legal-hold administration.
+The last two used a fresh, explicitly unprotected disposable canary. The central
+retention key then deleted that exact 37-byte version, and independent readback
+confirmed its absence. This tests authority on an unprotected object; it does
+not test protected-object deletion refusal or the retention planner's aged
+candidates.
+
+This is narrow workstation evidence, not production qualification. No large
+backup set was measured. Read-only Restic raw-data statistics reported 197,784
+bytes for the initial snapshot, 197,943 bytes for the incremental snapshot, and
+198,997 bytes for their union. The union is smaller than the two per-snapshot
+totals combined, demonstrating shared repository data across these snapshots.
+These raw-data figures do not measure network transfer bytes, bandwidth, or cost
+savings.
+Initial SDK-wrapped retention errors and rejected canary setup attempts remain
+preserved separately; they were not counted as passes or replayed. The successful
+fresh canary required observed retention `NONE` and legal hold `OFF` before its
+authority checks. A verifier lifecycle request initially received HTTP 403;
+after adding only `readBucketLifecycleRules` to the separate central identities,
+readback confirmed enabled versioning and no applicable lifecycle expiration
+rules. The source key stayed unchanged. Backblaze's
+[S3-compatible app-key capability guide](https://www.backblaze.com/docs/cloud-storage-s3-compatible-app-keys)
+maps that capability to `Get Lifecycle Configuration`; no
+`writeBucketLifecycleRules` capability was added.
+
+A separate central verifier authenticated the source-signed encrypted kit,
+reconstructed the exact historical repository versions, checked all data, and
+signed an acceptance with a distinct key. The source identity then hid the
+configuration object and replaced one data object with invalid bytes. Using the
+kit and read-only historical-version access, the central verifier reconstructed
+and fully checked the repository again, verified repository/snapshot identity,
+and restored the older snapshot with matching payload, hidden file, symlink,
+and no later incremental file. Ten repository objects totaling 201,853 bytes
+were reconstructed. The named temporary source-password copy was removed only
+after baseline acceptance; recovery read its password from the encrypted kit.
+
+The drill exposed a receipt bug after the kit was written: a checkpoint without
+an expiry date could not be inserted into the legacy non-null expiry field.
+Checkpoint receipts now permit absent expiry, and an existing owning schema is
+migrated transactionally after a private compressed backup. Existing rows are
+preserved; schemas with additional constraints are refused. The failed attempt
+remains recorded, and its authenticated kit was accepted separately without
+resealing or replaying the failed operation. No expiry date is invented, and
+absence of an expiry does not qualify a guaranteed protection window.
+
+Thirty-day elapsed grace, provider lock/hold behavior, protected retention,
+off-host custody, clean replacement, final remote-server qualification, and all
+live AWS behavior remain unproven. Central acceptance still records
+`protection_qualified: false`. The selected stable v2.0.3 support scope is unchanged.
 
 On 2026-10-20 a workstation-only Garage S3 drill captured a 2,184,000-byte file
 fixture directly to the emulator using a 1,048,576-byte staging mount, ran an
@@ -724,11 +796,11 @@ A disposable real-restic capture, independent-password replication, full-data
 check, and restore preserved exact file bytes, mode 0640, and a symbolic link.
 These local checks do not qualify a cloud provider or application recovery.
 
-No live B2/AWS provider qualification is recorded. A local Garage S3-compatible
-test does not qualify those providers. Provider checks require disposable
-authorized resources; without such evidence, B2/AWS remain outside the stable
-support scope. Do not replay uncertain backup mutations or change live provider
-policy during a recovery.
+No B2/AWS production qualification is recorded. The small live B2 source trial
+above does not qualify provider protection, and a local Garage S3-compatible
+test does not qualify either provider. B2/AWS remain outside the stable support
+scope. Do not replay uncertain backup mutations or change live provider policy
+during a recovery.
 
 The signed [2.0.0-alpha.1 prerelease](https://github.com/CruxExperts/BestBackup/releases/tag/v2.0.0-alpha.1) was published on October 3, 2026 from commit `b10ed84`. GitHub CI passed on Python 3.12, 3.13, and 3.14, and the release workflow built and smoke-tested its wheel and source archive. `SHA256SUMS` and its OpenPGP signature cover the exact downloadable artifacts. The release remains explicitly marked as a prerelease; it does not establish production qualification.
 
@@ -837,9 +909,11 @@ recorded passing evidence. The following paths are not production-qualified or
 remain deferred; their implementation does not expand the selected support
 boundary:
 
-- **B2/AWS:** No live provider capture/check/restore result is recorded. These
-  implemented paths are not production-qualified and remain outside the selected
-  stable support boundary. Garage S3 testing is not provider qualification.
+- **B2/AWS:** A small live B2 source capture/check/restore trial and denied
+  forbidden-operation checks are recorded above. Provider protection and
+  production recovery remain unqualified; AWS has no live result. These paths
+  remain outside the selected stable support boundary. Garage S3 testing is not
+  provider qualification.
 - **Native Docker:** Implemented, but no qualifying capture/restore happy path is
   recorded. It is not production-qualified and remains outside the selected
   stable support boundary.

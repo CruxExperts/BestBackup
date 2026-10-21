@@ -4,12 +4,13 @@ Keep your first recovery point on local storage. The v2.0.3 tested stable-releas
 scope includes local/file capture and restore, selected live database drills,
 headless dashboard happy paths, and AMD64 Ubuntu packages.
 
-**Backblaze B2 and Amazon S3 are implemented but not production-qualified.**
-No live B2 or AWS capture/check/restore result is recorded. The local Garage S3
-test passed capture, copy, full-data checking, and restore, but does not qualify
-B2 or Amazon S3.
-Treat the provider setup below as experimental; do not use B2/AWS as a
-production recovery path until live provider capture/check/restore drills pass.
+**Backblaze B2 and Amazon S3 are implemented but not production-qualified.** A
+small live B2 source-path drill passed on 2026-10-20; it does not qualify B2
+protection or production recovery. No live AWS capture/check/restore result is
+recorded. The local Garage S3 test also passed capture, copy, full-data checking,
+and restore, but does not qualify B2 or Amazon S3. Treat the provider setup below
+as experimental; keep B2/AWS outside production recovery until the remaining
+provider and independent-recovery evidence is complete.
 
 ## Choose a connection
 
@@ -61,6 +62,13 @@ the standard AWS credential variable names in the private process environment.
 For the native restic route, use the native variable names in the table above.
 The native SDK check does not change bucket policies or persist authorization.
 
+For central lifecycle inspection, Backblaze documents the separate
+`readBucketLifecycleRules` capability for `Get Lifecycle Configuration`. Add
+that read capability only to the centrally controlled verifier/retention
+identity; the source key does not need it. Do not add
+`writeBucketLifecycleRules` for a read-only inspection. See
+[Backblaze's S3-compatible app-key capabilities](https://www.backblaze.com/docs/cloud-storage-s3-compatible-app-keys).
+
 ### Restricted source profile (unreleased)
 
 The `restricted_source_profile` result is a versioned assessment of the SDK's
@@ -68,8 +76,9 @@ authorization metadata. It requires one exact bucket and a nonempty,
 directory-scoped machine prefix, repository read/list/write capabilities, and
 no permanent-version deletion, administration, or unknown capabilities. A broad
 key can still be inspected, but does not satisfy this profile. An eligible
-metadata result does not prove that an attempted forbidden operation was denied:
-live negative tests and recovery qualification remain required by
+metadata result alone does not prove that a forbidden operation is denied. The
+small live trial below passed seven denial checks, but full recovery
+qualification remains required by
 [issue #23](https://github.com/CruxExperts/BestBackup/issues/23).
 
 Use a distinct prefix per machine, such as `machines/MACHINE_ID/`. Keep the
@@ -81,6 +90,17 @@ attacks. Recovery depends on exact historical version identities, adequate
 noncurrent retention, independent escrow, and successful restoration. See
 [Backblaze's S3 app-key capabilities](https://www.backblaze.com/docs/cloud-storage-s3-compatible-app-keys)
 and [Object Lock behavior](https://www.backblaze.com/docs/cloud-storage-object-lock).
+
+A small live B2 source-path trial passed on 2026-10-20 using an exact-bucket,
+machine-prefix source key. The trial completed two captures, a repository check,
+and restores of the older and newer snapshots; the incremental file was absent
+from the older restore and present in the newer one, and both restores preserved
+the hidden fixture file and symlink. It also checked the source key's four
+reported capabilities and seven denied operations. The detailed evidence and
+limits are recorded in the
+[version 2 development qualification record](development/version-2.md#live-backblaze-b2-source-trial).
+This narrow result does not establish the thirty-day historical grace period,
+provider lock/hold behavior, off-host escrow, or production recovery.
 
 ### Central recovery acceptance (unreleased)
 
@@ -109,6 +129,14 @@ comes from the verifier, not the source snapshot timestamp. A signed acceptance
 proves only the recorded repository check. It does not prove clean-machine
 recovery, application startup, B2 negative permission tests, or a guaranteed
 historical retention window. `protection_qualified` remains false.
+
+The small live workstation drill reconstructed and checked historical versions
+both before and after the source key hid configuration and replaced a data
+object. It restored the older snapshot with matching payload, hidden file and
+symlink, using the encrypted kit for its password and a separate read-only
+verifier identity. This is a simulated compromise on one workstation; it does
+not establish off-host custody or replacement-machine recovery. See the
+[qualification record](development/version-2.md#live-backblaze-b2-source-trial).
 
 ### Central noncurrent-version retention (unreleased)
 
@@ -167,6 +195,12 @@ and digests and private immutable file before applying its exact ID and SHA-256.
 The noncurrent grace clock starts at central first observation, rather than the
 upload timestamp. Enabled lifecycle expiration rules are refused. Versioning,
 bucket locking, per-version retention and legal holds are checked conservatively.
+The live verifier read succeeded after the separate central identity received
+`readBucketLifecycleRules`; versioning was enabled and no lifecycle expiration
+rules applied. No lifecycle-write capability was added. Separate canaries
+confirmed denial of source retention/hold administration and exact deletion of
+one unprotected version by the central retention identity. These authority
+checks do not qualify locked/held-object protection or aged-version reclamation.
 
 ```bash
 bbackup production --config config.v3.json --bindings bindings.v3.json \
@@ -246,8 +280,10 @@ succeeded; reconcile uncertain operations before retrying.
 An experimental `remote-primary` repository can capture ordinary files directly
 through Restic into an HTTPS S3 endpoint. It does not create a second local
 repository or archive. Local-first capture and replication remain available.
-This implementation has local regression evidence; live B2 qualification and
-the final remote-server drill are deferred.
+This implementation has local regression evidence and a small live B2
+workstation source trial, recorded in the [version 2 development qualification
+record](development/version-2.md#live-backblaze-b2-source-trial). Final
+remote-server and provider-protection qualification remain deferred.
 
 For example, the portable repository and job declarations are:
 
@@ -339,11 +375,13 @@ operation. Follow the [operation reconciliation guide](development/version-2.md#
 ## Storage support and recovery protection
 
 A working destination establishes where a backup can be stored, not production
-qualification. B2 and AWS remain outside the selected stable-release support
-boundary until live provider capture/check/restore drills are recorded. Thirty-day
-recovery after host compromise additionally depends on credentials, version
-retention, lifecycle overlaps, an independent signed checkpoint, and an actual
-historical-version restore drill; each remains deferred.
+qualification. The limited B2 source-path drill is recorded, but B2 and AWS
+remain outside the selected stable-release support boundary. AWS still has no
+live capture/check/restore result. Thirty-day recovery after host compromise
+additionally depends on credentials, version retention, lifecycle overlaps, an
+independent signed checkpoint, and an actual historical-version restore drill.
+The workstation historical-version restore passed, while a guaranteed thirty-day
+window, independent custody and replacement-machine recovery remain unqualified.
 
 Keep current repository objects indefinitely: old deduplicated packs can still
 be required by recent snapshots. Retain hidden or overwritten versions for at

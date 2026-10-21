@@ -110,6 +110,89 @@ proves only the recorded repository check. It does not prove clean-machine
 recovery, application startup, B2 negative permission tests, or a guaranteed
 historical retention window. `protection_qualified` remains false.
 
+### Central noncurrent-version retention (unreleased)
+
+The experimental `cloud-retention` commands reclaim **noncurrent object
+versions only**. They do not run Restic `forget` or `prune`, compact packs, or
+delete current objects and delete markers. Keeping all current packs avoids
+breaking deduplicated snapshots. Full repository compaction and live provider
+qualification remain outside this implementation slice of
+[issue #25](https://github.com/CruxExperts/BestBackup/issues/25).
+
+Run retention on the independently controlled management host with its own
+deletion-capable credentials. Use an enrolled schema-3 repository binding whose
+endpoint, bucket and prefix exactly match the private retention policy. The
+shared repository operation ledger serializes deletion with local backup and
+restore operations. Arrange a quiescent window across other hosts as well;
+the local lease cannot exclude a writer on another machine.
+
+The mode-0600 policy is schema 1. It contains `policy_id`, a 64-character random
+hex `catalog_id`, positive `revision`, exact `endpoint_url`, `bucket`, nonempty
+`prefix`, full `repository_id`, trusted central verifier primary fingerprint,
+`retention_counts` (`daily`, `weekly`, `monthly`), `grace_seconds` (at least
+2592000), `plan_max_age_seconds`, `max_apply_objects`, `max_apply_bytes`, private
+absolute `state_dir`, nonempty `known_good_manifest_digests`, and
+`pending_manifest_digests`. Keep central state independently backed up. Losing an
+established catalog stops planning; enrollment cannot silently recreate it.
+
+The separate mode-0600 recurring grant binds `schema_version: 1`, `policy_id`,
+`catalog_id`, `policy_revision`, the exact file's `policy_sha256`, matching
+target and repository fields, `action: "delete_noncurrent_versions"`, an
+`expires_at` timestamp, and positive `max_apply_objects`/`max_apply_bytes` limits.
+Its `stop_conditions` must be exactly `cancelled`, `input_drift`,
+`lock_unknown_or_changed`, `mutation_outcome_uncertain`, and
+`policy_or_grant_expired`. A broad management key does not expand this grant.
+
+Keep `records.json` private; its JSON array lists the absolute directories of
+all central acceptance records for this catalog. Each directory contains the
+signed acceptance **and** original signed `checkpoint.jsonl`/`checkpoint.sig`.
+Signatures and exact dependencies are verified. Daily/weekly/monthly selection
+uses central verification time; previously known records cannot be omitted.
+Selected checkpoints, known-good and pending pins, and newly accepted checkpoints
+within the grace period remain protected. Missing or wrong-size protected object
+versions stop planning and application.
+
+```bash
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  cloud-retention catalog-enroll --repository cloud \
+  --policy-file /secure/retention/policy.json --grant-file /secure/retention/grant.json
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  cloud-retention plan --repository cloud \
+  --policy-file /secure/retention/policy.json --grant-file /secure/retention/grant.json \
+  --records-file /secure/retention/records.json --quiescent-window-confirmed
+```
+
+Catalog enrollment is a one-time action. Inspect the plan's sanitized counts
+and digests and private immutable file before applying its exact ID and SHA-256.
+The noncurrent grace clock starts at central first observation, rather than the
+upload timestamp. Enabled lifecycle expiration rules are refused. Versioning,
+bucket locking, per-version retention and legal holds are checked conservatively.
+
+```bash
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  cloud-retention apply --repository cloud \
+  --policy-file /secure/retention/policy.json --grant-file /secure/retention/grant.json \
+  --records-file /secure/retention/records.json --plan-id EXACT_PLAN_ID \
+  --plan-sha256 EXACT_PLAN_SHA256 --quiescent-window-confirmed
+```
+
+Application revalidates authority, expiry, dependencies, inventory and locks,
+then journals intent before each exact-version delete. Mutation retries are
+disabled. Cancellation stops new dispatch; an uncertain response blocks replay.
+Inspect the target and reconcile the original journal using read-only requests:
+
+```bash
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  cloud-retention reconcile --repository cloud \
+  --policy-file /secure/retention/policy.json \
+  --plan-file /secure/retention/state/retention-plans/EXACT_PLAN_ID.json
+```
+
+Fixture tests include real signed recovery records, dependency loss, lock and
+lifecycle changes, cancellation, contention, expiry, and lost responses before
+and after deletion. They do not establish B2/AWS semantics or production savings.
+`protection_qualified` remains false.
+
 ## Bind the cloud repository
 
 Follow [the quick start](../QUICKSTART.md) to create your local repository, source,

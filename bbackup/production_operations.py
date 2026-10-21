@@ -9,10 +9,10 @@ from typing import Any
 
 from .b2 import inspect_b2
 from .cli_metadata import PRODUCTION_COMMANDS, production_schema
-from .cloud import S3CloudAdapter
+from .cloud import S3CloudAdapter, _normalize_endpoint_url
 from .configuration_workspace import ConfigurationWorkspace, read_document
-from .enrollment import parse_pair, policy_lease, read_pair, verify_bytes
-from .models import ConfigurationError
+from .enrollment import _read_regular, parse_pair, policy_lease, read_pair, verify_bytes
+from .models import ConfigurationError, strict_json
 from .operations import ReconciliationOutcome, repository_key
 from .recovery import (accept_recovery_checkpoint, create_checked_kit, open_kit, verify_checkpoint,
                        verify_reconstructed_repository)
@@ -130,6 +130,8 @@ def execute_operation(command: str, values: dict[str, Any], *, service: BackupSe
 
 
 def _service_operation(service, command, values, config_path, bindings_path, cancel):
+    if command.startswith("cloud-retention "):
+        return _cloud_retention_operation(service, command, values, cancel)
     if command == "doctor":
         return {"restic_available": shutil.which("restic") is not None,
                 "jobs": len(service.config.jobs), "production_qualified": False,
@@ -212,6 +214,51 @@ def _service_operation(service, command, values, config_path, bindings_path, can
                           config=config_path.absolute(), bindings=bindings_path.absolute())
         return install_user_units(units, activate=values["activate"])
     raise ServiceError("Unsupported command")
+
+
+def _private_json(path):
+    try:
+        return strict_json(_read_regular(Path(path), private=True).decode("utf-8"))
+    except UnicodeError:
+        raise ConfigurationError("Invalid private JSON input") from None
+
+
+def _cloud_retention_operation(service, command, values, cancel):
+    """Bind central cloud authority to the enrolled repository and its ledger."""
+    policy = _private_json(values["policy_file"])
+    if not isinstance(policy, dict):
+        raise ConfigurationError("Invalid central retention policy")
+    endpoint = _normalize_endpoint_url(policy.get("endpoint_url"))
+    bucket, prefix = policy.get("bucket"), policy.get("prefix")
+    if (not isinstance(bucket, str) or not bucket or "/" in bucket
+            or not isinstance(prefix, str) or not prefix or prefix.startswith("/")):
+        raise ConfigurationError("Invalid central retention target")
+    identity = service._identity(values["repository"])
+    expected = f"s3:{endpoint}/{bucket}/{prefix.rstrip('/')}"
+    if identity.rstrip("/") != expected:
+        raise ConfigurationError("Central retention target differs from enrolled repository")
+    adapter = S3CloudAdapter(bucket, endpoint_url=endpoint, prefix=prefix)
+    lease_id = repository_key(identity)
+    if command == "cloud-retention catalog-enroll":
+        return adapter.initialize_central_retention_catalog(values["policy_file"], values["grant_file"])
+    if command == "cloud-retention reconcile":
+        return adapter.reconcile_central_retention(
+            values["plan_file"], ledger=service.ledger, expected_repository_lease_id=lease_id)
+    directories = _private_json(values["records_file"])
+    if (not isinstance(directories, list) or not directories or len(directories) > 10000
+            or any(not isinstance(path, str) or not Path(path).is_absolute()
+                   or any(char in path for char in "\0\r\n") for path in directories)
+            or len(set(directories)) != len(directories)):
+        raise ConfigurationError("Expected unique absolute central acceptance directories")
+    if command == "cloud-retention plan":
+        return adapter.plan_central_retention(
+            values["policy_file"], values["grant_file"], directories,
+            quiescent_window_confirmed=values["quiescent_window_confirmed"],
+            repository_lease_id=lease_id)
+    return adapter.apply_central_retention(
+        values["plan_id"], values["plan_sha256"], values["policy_file"], values["grant_file"],
+        directories, quiescent_window_confirmed=values["quiescent_window_confirmed"],
+        ledger=service.ledger, cancel_event=cancel, expected_repository_lease_id=lease_id)
 
 
 def _recovery_dispatch(service, command, values, cancel):

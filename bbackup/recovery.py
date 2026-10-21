@@ -470,11 +470,18 @@ def accept_recovery_checkpoint(adapter, kit: Path, record_dir: Path, *, source_s
         signature = root / "acceptance.sig"
         _gpg(["--local-user", verifier, "--output", str(signature), "--detach-sign", str(unsigned)], home=home, cancel=cancel)
         verify_recovery_acceptance(root, trusted_verifier=verifier, repository_id=repository_id, snapshot=snapshot, home=home, cancel=cancel)
-        # The staged pair is complete and durable before its single exclusive publish.
+        # Retention needs the exact version dependencies authenticated by this
+        # acceptance. Preserve the original signed manifest in private custody.
         staging = root / "publish"
         staging.mkdir(mode=0o700)
-        for name in ("acceptance.json", "acceptance.sig"):
-            _copy(root / name, staging / name, limit=16384 if name.endswith(".json") else 1024**2, cancel=cancel)
+        members = (
+            (unsigned, "acceptance.json", 16384),
+            (signature, "acceptance.sig", 1024**2),
+            (opened / "checkpoint.jsonl", "checkpoint.jsonl", _MAX_ARTIFACT),
+            (opened / "checkpoint.sig", "checkpoint.sig", 1024**2),
+        )
+        for source_path, name, limit in members:
+            _copy(source_path, staging / name, limit=limit, cancel=cancel)
             with (staging / name).open("rb") as stream:
                 os.fsync(stream.fileno())
         verify_recovery_acceptance(staging, trusted_verifier=verifier,

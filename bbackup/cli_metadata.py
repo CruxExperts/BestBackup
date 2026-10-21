@@ -1961,6 +1961,22 @@ PRODUCTION_COMMANDS: dict[str, ProductionCommand] = {
     "snapshots copy": {"summary": "Copy a successful snapshot into an independent repository.", "fields": {"source": "string", "destination": "string", "snapshot": "string"}},
     "retention plan": {"summary": "Review a read-only local retention plan bound to current snapshot and replica evidence.", "fields": {"job": "string"}},
     "retention apply": {"summary": "Apply only a reviewed local retention plan after explicit approval; never prunes repository data.", "fields": {"job": "string", "plan_token": "string", "approved": "boolean"}},
+    "cloud-retention catalog-enroll": {
+        "summary": "Explicitly enroll a new central exact-version retention catalog; never replace a missing established catalog.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path"},
+    },
+    "cloud-retention plan": {
+        "summary": "Plan noncurrent object-version deletion from independently accepted checkpoints and private authority.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path", "records_file": "path", "quiescent_window_confirmed": "boolean"},
+    },
+    "cloud-retention apply": {
+        "summary": "Apply one reviewed exact-version plan under the shared repository lease; never replay uncertain deletes.",
+        "fields": {"repository": "string", "policy_file": "path", "grant_file": "path", "records_file": "path", "plan_id": "string", "plan_sha256": "string", "quiescent_window_confirmed": "boolean"},
+    },
+    "cloud-retention reconcile": {
+        "summary": "Reconcile a cloud-version deletion journal using read-only observations without replaying it.",
+        "fields": {"repository": "string", "policy_file": "path", "plan_file": "path"},
+    },
     "restore": {"summary": "Restore and verify files in a new isolated directory.", "fields": {"repository": "string", "snapshot": "string", "target": "path"}},
     "runs list": {"summary": "Read sanitized operation events.", "fields": {"limit": "limit", "offset": "offset"}},
     "service render": {"summary": "Render disabled systemd service and persistent timer units.", "fields": {"name": "string", "executable": "path"}},

@@ -18,6 +18,10 @@ current uv-based install, development, and release instructions.
 - Experimental HTTPS S3 remote-primary capture with a dedicated bounded staging
   filesystem, disabled cache, shared staging lease, pressure checks and
   structured resource failures. Final remote-server qualification is deferred.
+- Experimental central noncurrent-version retention with signed checkpoint
+  dependencies, explicit catalog and grants, shared repository leases, lock and
+  expiry checks, and journaled exact-version deletion without automatic replay.
+  Current-pack compaction and live provider qualification remain outstanding.
 - Refreshed matching 1280×640 GitHub social preview artwork, embedded ownership metadata, checked provenance, and explicit repository-settings upload instructions.
 
 ### Fixed

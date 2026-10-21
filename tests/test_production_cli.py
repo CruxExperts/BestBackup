@@ -92,6 +92,74 @@ def test_central_acceptance_dispatch_uses_independent_recovery_owner(monkeypatch
     assert {"kit", "verifier", "source_signer", "repository_id", "snapshot"} <= set(schema["required"])
 
 
+def test_cloud_retention_dispatch_binds_target_and_existing_ledger(service, tmp_path, monkeypatch):
+    from dataclasses import replace
+    from threading import Event
+    from bbackup import production_operations as module
+    from bbackup.models import RepositoryBinding
+    from bbackup.operations import repository_key
+
+    identity = "s3:https://retention.example.test/bucket/repo"
+    service.bindings.repositories["local"] = RepositoryBinding(identity, tmp_path / "password")
+    policy = tmp_path / "central-policy.json"
+    policy.write_text(json.dumps({"endpoint_url": "https://retention.example.test", "bucket": "bucket", "prefix": "repo/"}))
+    policy.chmod(0o600)
+    records = tmp_path / "records.json"
+    records.write_text(json.dumps([str(tmp_path / "accepted")]))
+    records.chmod(0o600)
+    calls = []
+    class Adapter:
+        def __init__(self, *args, **kwargs):
+            calls.append(("adapter", args, kwargs))
+        def initialize_central_retention_catalog(self, *args, **kwargs):
+            calls.append(("enroll", args, kwargs))
+            return {"enrolled": True}
+        def plan_central_retention(self, *args, **kwargs):
+            calls.append(("plan", args, kwargs))
+            return {"candidate_count": 0}
+        def apply_central_retention(self, *args, **kwargs):
+            calls.append(("apply", args, kwargs))
+            return {"status": "applied"}
+        def reconcile_central_retention(self, *args, **kwargs):
+            calls.append(("reconcile", args, kwargs))
+            return {"status": "reconciled_abandoned"}
+    monkeypatch.setattr(module, "S3CloudAdapter", Adapter)
+    common = {"repository": "local", "policy_file": str(policy)}
+    grant = {**common, "grant_file": str(tmp_path / "grant.json")}
+    window = {**grant, "records_file": str(records), "quiescent_window_confirmed": True}
+    cancel = Event()
+    def dispatch(command, values):
+        return module._service_operation(service, command, values, None, None, cancel)
+    assert dispatch("cloud-retention catalog-enroll", grant)["enrolled"] is True
+    assert dispatch("cloud-retention plan", window)["candidate_count"] == 0
+    assert calls[-1][2]["repository_lease_id"] == repository_key(identity)
+    assert dispatch("cloud-retention apply", {**window, "plan_id": "a" * 32, "plan_sha256": "b" * 64})["status"] == "applied"
+    assert calls[-1][2]["ledger"] is service.ledger
+    assert calls[-1][2]["cancel_event"] is cancel
+    assert calls[-1][2]["expected_repository_lease_id"] == repository_key(identity)
+    dispatch("cloud-retention reconcile", {**common, "plan_file": str(tmp_path / "plan.json")})
+    assert calls[-1][2] == {"ledger": service.ledger, "expected_repository_lease_id": repository_key(identity)}
+    service.bindings.repositories["local"] = replace(service.bindings.repositories["local"], repository=identity + "-other")
+    before = len(calls)
+    with pytest.raises(ConfigurationError, match="differs from enrolled"):
+        dispatch("cloud-retention apply", window)
+    assert len(calls) == before
+
+
+def test_cloud_retention_requires_enrollment_and_private_record_list(service, tmp_path, monkeypatch):
+    result = CliRunner().invoke(cli, ["cloud-retention", "apply", "--schema"])
+    schema = json.loads(result.output)["data"]
+    assert {"repository", "policy_file", "grant_file", "records_file", "plan_sha256"} <= set(schema["required"])
+    assert schema["additionalProperties"] is False
+    for key in ("catalog-enroll", "plan", "apply", "reconcile"):
+        definition = execute_operation("skills", {"name": "cloud-retention " + key})
+        assert definition
+    with pytest.raises(ConfigurationError):
+        execute_operation("cloud-retention catalog-enroll", {
+            "repository": "local", "policy_file": str(tmp_path / "policy"),
+            "grant_file": str(tmp_path / "grant")})
+
+
 def test_resource_failure_keeps_structured_evidence_without_source_paths(service, monkeypatch):
     from bbackup.service import BackupService, ResourceBudgetExceeded
 

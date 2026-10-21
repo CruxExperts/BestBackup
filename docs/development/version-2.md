@@ -61,6 +61,25 @@ are refused. These implementation checks do not qualify B2 or whole-machine
 recovery. Current debugging uses small workstation fixtures; the final
 remote-server drill is deliberately deferred.
 
+The unreleased central retention slice adds explicit catalog enrollment and
+private recurring grants, signed central acceptance selection, exact manifest
+dependency preservation, central observation-based noncurrent grace, conservative
+lock/lifecycle checks, and single-request journaled deletion with read-only
+reconciliation. It uses the enrolled repository's shared lease. Missing protected
+versions or catalog records stop deletion. This reclaims only noncurrent object
+versions; current-pack compaction, live B2/AWS behavior and production savings
+remain outstanding for #25. Focused tests include actual GPG-signed acceptance
+records and uncertainty before/after deletion.
+
+On 2026-10-20 a workstation-only Garage S3 drill captured a 2,184,000-byte file
+fixture directly to the emulator using a 1,048,576-byte staging mount, ran an
+incremental capture and full repository check, and restored the older snapshot
+including a hidden synthetic credential file and a symlink. Initial/incremental
+PUT payloads were 4,979/4,113 bytes; internet backup traffic was zero. The source
+was intentionally repetitive and small, so these numbers are fixture evidence,
+not performance or cost estimates. This does not qualify provider permissions,
+independent disaster recovery or an entire Linux machine.
+
 - Strict version-2 JSON configuration rejects duplicate keys, unknown fields,
   unsupported source types, and inconsistent repository references. Private host
   bindings and password files are separate from portable policy.

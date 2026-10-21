@@ -102,6 +102,44 @@ Apply only a reviewed local retention plan after explicit approval; never prunes
 - `--plan-token`: string.
 - `--approved`: boolean.
 
+## `cloud-retention catalog-enroll`
+
+Explicitly enroll a new central exact-version retention catalog; never replace a missing established catalog.
+
+- `--repository`: string.
+- `--policy-file`: path.
+- `--grant-file`: path.
+
+## `cloud-retention plan`
+
+Plan noncurrent object-version deletion from independently accepted checkpoints and private authority.
+
+- `--repository`: string.
+- `--policy-file`: path.
+- `--grant-file`: path.
+- `--records-file`: path.
+- `--quiescent-window-confirmed`: boolean.
+
+## `cloud-retention apply`
+
+Apply one reviewed exact-version plan under the shared repository lease; never replay uncertain deletes.
+
+- `--repository`: string.
+- `--policy-file`: path.
+- `--grant-file`: path.
+- `--records-file`: path.
+- `--plan-id`: string.
+- `--plan-sha256`: string.
+- `--quiescent-window-confirmed`: boolean.
+
+## `cloud-retention reconcile`
+
+Reconcile a cloud-version deletion journal using read-only observations without replaying it.
+
+- `--repository`: string.
+- `--policy-file`: path.
+- `--plan-file`: path.
+
 ## `restore`
 
 Restore and verify files in a new isolated directory.

@@ -188,6 +188,8 @@ def test_historical_repository_and_kit_restore_without_original_ledger(tmp_path,
     assert accepted["protection_qualified"] is False
     assert accepted["captured_at"] == checkpoint.captured_at
     assert accepted["verified_at"] >= accepted["captured_at"]
+    assert verify_checkpoint(accepted_dir / "checkpoint.jsonl", accepted_dir / "checkpoint.sig",
+        signer, home=home) == accepted["manifest_sha256"]
     assert verify_recovery_acceptance(accepted_dir, trusted_verifier=verifier,
         repository_id=repository_id, snapshot=captured["snapshot_id"], home=home) == accepted
     # Even a correctly signed record must satisfy the strict central schema.

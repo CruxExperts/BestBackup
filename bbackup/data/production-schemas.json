@@ -1,4 +1,128 @@
 {
+  "cloud-retention apply": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "grant_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "plan_id": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "plan_sha256": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "policy_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "quiescent_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      },
+      "records_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "policy_file",
+      "grant_file",
+      "records_file",
+      "plan_id",
+      "plan_sha256"
+    ],
+    "type": "object"
+  },
+  "cloud-retention catalog-enroll": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "grant_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "policy_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "policy_file",
+      "grant_file"
+    ],
+    "type": "object"
+  },
+  "cloud-retention plan": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "grant_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "policy_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "quiescent_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      },
+      "records_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "policy_file",
+      "grant_file",
+      "records_file"
+    ],
+    "type": "object"
+  },
+  "cloud-retention reconcile": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "plan_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "policy_file": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "repository": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "policy_file",
+      "plan_file"
+    ],
+    "type": "object"
+  },
   "config migrate": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,

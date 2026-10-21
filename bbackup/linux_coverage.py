@@ -1,17 +1,20 @@
 """Machine-bound Linux coverage inventory and exact reviewed scope.
 
 Private declarations and candidates stay beneath the existing state root. This
-module inventories names and metadata; it never opens protected file contents.
+module inventories names and metadata and runs integrity checks for reviewed
+SQLite roots; it never exposes protected file contents.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import base64
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import stat
 import tempfile
 from typing import Any
@@ -27,10 +30,18 @@ _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _METADATA = {"numeric_owner", "mode", "acl", "xattr", "links"}
 _MAX_INVENTORY = 16 * 1024 * 1024
 _MAX_ENTRIES = 100_000
+_MAX_SQLITE_XATTRS = 256
+_MAX_SQLITE_XATTR_BYTES = 1024 * 1024
 
 
 class CoverageError(RuntimeError):
     """Sanitized coverage failure; private paths never appear in messages."""
+
+
+class _SQLiteCoverageError(CoverageError):
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
 
 
 @dataclass(frozen=True)
@@ -51,6 +62,8 @@ class CoverageCheck:
     counts: dict[str, int]
     approved_roots: tuple[tuple[str, Path, str, str], ...] = field(default=(), repr=False)
     approved_exclusions: tuple[Path, ...] = field(default=(), repr=False)
+    approved_sqlite: tuple[dict[str, Any], ...] = field(default=(), repr=False)
+    sqlite_capture_exclusions: tuple[Path, ...] = field(default=(), repr=False)
     recovery_status: str = "untested"
 
     @property
@@ -373,6 +386,83 @@ def _within(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
 
+def sqlite_file_identity(path: Path) -> dict[str, Any]:
+    """Read stable file identity and reconstructable metadata for a SQLite file."""
+    path = Path(path)
+    if not path.is_absolute() or ".." in path.parts or _has_symlink_ancestor(path):
+        raise _SQLiteCoverageError("sqlite_database_unsafe")
+    try:
+        before = path.lstat()
+    except FileNotFoundError:
+        raise _SQLiteCoverageError("sqlite_database_missing") from None
+    except OSError:
+        raise _SQLiteCoverageError("sqlite_database_unavailable") from None
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+        raise _SQLiteCoverageError("sqlite_database_unsafe")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    try:
+        descriptor = os.open(path, flags)
+    except PermissionError:
+        raise _SQLiteCoverageError("sqlite_database_unreadable") from None
+    except OSError:
+        raise _SQLiteCoverageError("sqlite_database_unavailable") from None
+    try:
+        info = os.fstat(descriptor)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or (info.st_dev, info.st_ino) != (before.st_dev, before.st_ino)
+                or _has_symlink_ancestor(path)):
+            raise _SQLiteCoverageError("sqlite_database_unsafe")
+        try:
+            names = sorted(os.listxattr(descriptor))
+            if len(names) > _MAX_SQLITE_XATTRS:
+                raise OSError("xattr count exceeds limit")
+            xattrs = []
+            total = 0
+            for name in names:
+                value = os.getxattr(descriptor, name)
+                total += len(name.encode("utf-8", "surrogateescape")) + len(value)
+                if total > _MAX_SQLITE_XATTR_BYTES:
+                    raise OSError("xattr bytes exceed limit")
+                xattrs.append({"name": name, "value_base64": base64.b64encode(value).decode("ascii")})
+        except OSError:
+            raise _SQLiteCoverageError("sqlite_metadata_unreadable") from None
+        for suffix in ("-wal", "-shm", "-journal"):
+            sidecar = Path(str(path) + suffix)
+            try:
+                sidecar_info = sidecar.lstat()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                raise _SQLiteCoverageError("sqlite_sidecar_unsafe") from None
+            if (not stat.S_ISREG(sidecar_info.st_mode) or sidecar_info.st_nlink != 1
+                    or _has_symlink_ancestor(sidecar)):
+                raise _SQLiteCoverageError("sqlite_sidecar_unsafe")
+        identity = {"device": info.st_dev, "inode": info.st_ino,
+                    "uid": info.st_uid, "gid": info.st_gid,
+                    "mode": info.st_mode & 0o7777, "links": info.st_nlink,
+                    "xattrs": xattrs}
+        return identity
+    finally:
+        os.close(descriptor)
+
+
+def verify_sqlite_identity(path: Path, expected: dict[str, Any]) -> None:
+    """Fail closed if reviewed SQLite identity or metadata changed."""
+    if sqlite_file_identity(path) != expected:
+        raise _SQLiteCoverageError("sqlite_reviewed_identity_changed")
+
+
+def _sqlite_identity_with_integrity(path: Path) -> dict[str, Any]:
+    identity = sqlite_file_identity(path)
+    try:
+        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2) as database:
+            if database.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                raise _SQLiteCoverageError("sqlite_database_invalid")
+    except sqlite3.Error:
+        raise _SQLiteCoverageError("sqlite_database_invalid") from None
+    return identity
+
+
 def _has_symlink_ancestor(path: Path) -> bool:
     current = Path("/")
     for part in path.parts[1:]:
@@ -447,10 +537,13 @@ def _evidence_reasons(declaration: dict[str, Any]) -> set[str]:
 
 def _walk(root: Path, exclusions: set[Path], mounts: dict[Path, dict], decisions: dict[Path, str],
           reasons: set[str], counts: dict[str, int], metadata: "hashlib._Hash",
-          links: dict[tuple[int, int], tuple[int, int]]) -> None:
+          links: dict[tuple[int, int], tuple[int, int]], skipped: set[Path] | None = None) -> None:
     stack = [(root, 0)]
+    skipped = skipped or set()
     while stack:
         path, depth = stack.pop()
+        if path in skipped:
+            continue
         if path in exclusions:
             counts["excluded"] += 1
             continue
@@ -541,10 +634,40 @@ def _scan(declaration: dict[str, Any], scope: dict[str, Any], *, inventory: Inve
                             for item in mounts),
                            key=lambda item: (item["mountpoint"], item["root"],
                                              item["filesystem"], item["source_digest"]))
-    if any(item["adapter"] != "files" for item in declaration["roots"]):
+    if any(item["adapter"] not in ("files", "sqlite") for item in declaration["roots"]):
         reasons.add("capture_adapter_unsupported_for_coverage")
     exclusions = {Path(item["path"]) for item in declaration["exclusions"]}
     reasons.update(_evidence_reasons(declaration))
+    sqlite_roots = [item for item in declaration["roots"] if item["adapter"] == "sqlite"]
+    sqlite_identities: dict[str, dict[str, Any]] = {}
+    sqlite_recipes: dict[str, dict[str, str]] = {}
+    sqlite_skip_paths: set[Path] = set()
+    sqlite_capture_exclusions: set[Path] = set()
+    for root in sqlite_roots:
+        path = Path(root["path"])
+        try:
+            identity = _sqlite_identity_with_integrity(path)
+            sqlite_identities[root["id"]] = identity
+        except _SQLiteCoverageError as exc:
+            reasons.add(exc.reason)
+        for exclusion in exclusions:
+            if _within(path, exclusion) or _within(exclusion, path):
+                reasons.add("sqlite_state_excluded")
+        exact_apps = [app for app in declaration["applications"]
+                      if app["source_id"] == root["source_id"]
+                      and app["state_roots"] == [str(path)]]
+        overlapping_apps = [app for app in declaration["applications"]
+                            if str(path) in app["state_roots"]]
+        if len(exact_apps) != 1 or len(overlapping_apps) != 1:
+            reasons.add("sqlite_application_state_unaccounted")
+        else:
+            sqlite_recipes[root["id"]] = exact_apps[0]["startup_recipe"]
+        paths = {path, *(Path(str(path) + suffix) for suffix in ("-wal", "-shm", "-journal"))}
+        sqlite_skip_paths.update(paths)
+        sqlite_capture_exclusions.update(paths)
+        if any(item["adapter"] == "files" and Path(item["path"]) in paths
+               for item in declaration["roots"]):
+            reasons.add("sqlite_artifact_explicitly_mapped")
     for exclusion in declaration["exclusions"]:
         path = Path(exclusion["path"])
         root = next(item for item in declaration["roots"] if item["id"] == exclusion["root_id"])
@@ -593,10 +716,12 @@ def _scan(declaration: dict[str, Any], scope: dict[str, Any], *, inventory: Inve
         reasons.add("package_reinstall_unaccounted")
     counts = {"roots": len(roots), "entries": 0, "files": 0, "directories": 0,
               "symlinks": 0, "excluded": 0, "users": len(users), "groups": len(groups),
-              "mounts": len(mounts), "applications": len(units)}
+              "mounts": len(mounts), "applications": len(units),
+              "sqlite_databases": len(sqlite_roots)}
     metadata = hashlib.sha256()
     links: dict[tuple[int, int], tuple[int, int]] = {}
-    for root in roots.values():
+    for item in declaration["roots"]:
+        root = Path(item["path"])
         try:
             if _has_symlink_ancestor(root):
                 reasons.add("root_symlink_unsupported")
@@ -604,19 +729,36 @@ def _scan(declaration: dict[str, Any], scope: dict[str, Any], *, inventory: Inve
         except OSError:
             reasons.add("root_unreadable")
             continue
-        _walk(root, exclusions, mount_by_path, decisions, reasons, counts, metadata, links)
+        if item["adapter"] == "sqlite":
+            identity = sqlite_identities.get(item["id"])
+            if identity is not None:
+                counts["entries"] += 1
+                counts["files"] += 1
+                metadata.update(_canonical(["sqlite", str(root), identity]))
+            continue
+        _walk(root, exclusions, mount_by_path, decisions, reasons, counts, metadata, links,
+              skipped=sqlite_skip_paths)
     if any(observed < expected for observed, expected in links.values()):
         reasons.add("hardlink_scope_unproven")
     structural = {"users": users, "groups": groups, "mounts": stable_mounts,
                   "applications": units, "declared_applications": declaration["applications"],
                   "roots": [{"id": item["id"], "path": item["path"], "source_id": item["source_id"],
-                             "adapter": item["adapter"], "exists": Path(item["path"]).exists()}
+                             "adapter": item["adapter"], "exists": Path(item["path"]).exists(),
+                             **({"sqlite_identity": sqlite_identities.get(item["id"])}
+                                if item["adapter"] == "sqlite" else {})}
                             for item in declaration["roots"]],
                   "package_digest": package_digest}
+    approved_sqlite = [{"root_id": root["id"], "path": root["path"],
+                        "source_id": root["source_id"],
+                        "identity": sqlite_identities.get(root["id"]),
+                        "recipe_digest": sqlite_recipes.get(root["id"], {}).get("recipe_sha256")}
+                       for root in sqlite_roots]
     return {"schema_version": 1, "declaration_digest": _digest(declaration),
             "scope_policy_digest": _digest(scope), "enrollment": evidence_bytes(policy_bytes, binding_bytes),
             "structural_digest": _digest(structural), "metadata_digest": metadata.hexdigest(),
-            "counts": counts, "reasons": sorted(reasons), "roots": declaration["roots"]}
+            "counts": counts, "reasons": sorted(reasons), "roots": declaration["roots"],
+            "approved_sqlite": approved_sqlite,
+            "sqlite_capture_exclusions": sorted(map(str, sqlite_capture_exclusions))}
 
 
 def _private_directory(state: Path, *, create: bool = True) -> Path:
@@ -811,8 +953,12 @@ def check_coverage(declaration_path: Path, scope_policy: Any, *, state: Path,
     roots = tuple((root["id"], Path(root["path"]), root["source_id"], root["adapter"])
                   for root in declaration["roots"])
     exclusions = tuple(Path(item["path"]) for item in declaration["exclusions"])
+    approved_sqlite = tuple({**item, "baseline_digest": baseline_digest}
+                            for item in current["approved_sqlite"])
+    sqlite_capture_exclusions = tuple(Path(path) for path in current["sqlite_capture_exclusions"])
     return CoverageCheck("complete", (), baseline_digest, candidate_digest,
-                         current["counts"], roots, exclusions)
+                         current["counts"], roots, exclusions, approved_sqlite,
+                         sqlite_capture_exclusions)
 
 
 def evaluate_recovery_evidence(evidence_path: Path | None, *, baseline_digest: str,

@@ -1,11 +1,13 @@
 import sqlite3
 import json
+import hashlib
 from pathlib import Path
 from threading import Event
 
 import pytest
 
 from bbackup.capture import CaptureError, capture_sources
+from bbackup.linux_coverage import sqlite_file_identity
 from bbackup.models import Source
 
 
@@ -33,6 +35,37 @@ def test_sqlite_transactional_export_and_cleanup(tmp_path):
     assert not exported.exists()
     writer.rollback()
     writer.close()
+
+
+def test_covered_sqlite_manifest_binds_export_to_reviewed_source(tmp_path):
+    original = tmp_path / "database [one]*?.sqlite"
+    with sqlite3.connect(original) as database:
+        database.execute("CREATE TABLE committed (value TEXT)")
+        database.execute("INSERT INTO committed VALUES ('covered')")
+    context = {"root_id": "database", "path": str(original), "source_id": "db",
+               "identity": sqlite_file_identity(original), "recipe_digest": "a" * 64,
+               "baseline_digest": "b" * 64}
+    with capture_sources((Source("db", "sqlite", (str(original),)),), tmp_path,
+                         coverage_sqlite={"db": context}) as paths:
+        exported = Path(paths[0])
+        manifest = json.loads(Path(paths[-1]).read_text())
+        assert manifest["schema_version"] == 2
+        assert len(manifest["exports"]) == 1
+        entry = manifest["exports"][0]
+        assert entry["coverage_root_id"] == "database"
+        assert entry["original_path"] == str(original)
+        assert entry["reviewed_identity"] == context["identity"]
+        assert entry["recipe_digest"] == "a" * 64
+        assert entry["baseline_digest"] == "b" * 64
+        assert entry["export_sha256"] == hashlib.sha256(exported.read_bytes()).hexdigest()
+        with sqlite3.connect(exported) as database:
+            assert database.execute("PRAGMA quick_check").fetchone() == ("ok",)
+            assert database.execute("SELECT value FROM committed").fetchall() == [("covered",)]
+    with pytest.raises(CaptureError, match="identity changed"):
+        original.chmod(0o600)
+        with capture_sources((Source("db", "sqlite", (str(original),)),), tmp_path,
+                             coverage_sqlite={"db": context}):
+            pass
 
 
 def test_sqlite_budget_preflight_refuses_export_before_writing(tmp_path):

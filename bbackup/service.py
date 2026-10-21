@@ -480,6 +480,8 @@ class BackupService:
         sources = tuple(source for source in self.sources if source.name in job.sources)
         covered = job.coverage_policy is not None
         coverage_exclusions = ()
+        sqlite_capture_exclusions = ()
+        coverage_sqlite = {}
         if covered:
             from .linux_coverage import check_coverage
             if self.policy_bytes is None or self.binding_bytes is None:
@@ -491,14 +493,31 @@ class BackupService:
                                       policy_bytes=self.policy_bytes, binding_bytes=self.binding_bytes)
             if not coverage.capture_ready:
                 raise ServiceError("Covered capture is not ready; inspect and review current coverage")
-            expected = {(source.name, Path(path), source.kind)
-                        for source in sources for path in source.paths}
-            approved = {(source_id, path, adapter)
-                        for _, path, source_id, adapter in coverage.approved_roots}
-            if (any(source.kind != "files" for source in sources)
+            expected_items = [(source.name, Path(path), source.kind)
+                              for source in sources for path in source.paths]
+            expected = set(expected_items)
+            approved_items = [(source_id, path, adapter)
+                              for _, path, source_id, adapter in coverage.approved_roots]
+            approved = set(approved_items)
+            if (any(source.kind not in ("files", "sqlite") for source in sources)
+                    or len(expected_items) != len(expected)
+                    or len(approved_items) != len(approved)
                     or expected != approved):
                 raise ServiceError("Covered capture sources differ from reviewed root mappings")
             coverage_exclusions = coverage.approved_exclusions
+            sqlite_capture_exclusions = coverage.sqlite_capture_exclusions
+            sqlite_by_source = {item["source_id"]: item for item in coverage.approved_sqlite}
+            if (len(sqlite_by_source) != len(coverage.approved_sqlite)
+                    or set(sqlite_by_source) != {source.name for source in sources
+                                                 if source.kind == "sqlite"}):
+                raise ServiceError("Covered SQLite sources differ from reviewed root mappings")
+            for source_name, reviewed in sqlite_by_source.items():
+                source = next(item for item in sources if item.name == source_name)
+                if (source.kind != "sqlite" or source.paths != (reviewed["path"],)
+                        or not reviewed.get("identity") or not reviewed.get("recipe_digest")
+                        or not reviewed.get("baseline_digest")):
+                    raise ServiceError("Covered SQLite sources differ from reviewed root mappings")
+                coverage_sqlite[source_name] = reviewed
         if remote_primary and any(source.kind == "docker" for source in sources):
             raise ServiceError("Remote-primary Docker capture has no bounded export support")
         monitor = None
@@ -567,6 +586,7 @@ class BackupService:
                     protected_paths=tuple(protected),
                     operation_id=capture_id,
                     resource_monitor=monitor,
+                    coverage_sqlite=coverage_sqlite,
                 ))
             except ResourceLimitError as exc:
                 raise ResourceBudgetExceeded({
@@ -588,9 +608,16 @@ class BackupService:
             try:
                 args = [*engine.base_args(), "backup", "--tag", f"bbackup-job={job.name}",
                         "--tag", f"bbackup-capture={capture_id}"]
-                if coverage_exclusions:
+                if coverage_sqlite:
+                    from .linux_coverage import CoverageError, verify_sqlite_identity
+                    try:
+                        for reviewed in coverage_sqlite.values():
+                            verify_sqlite_identity(Path(reviewed["path"]), reviewed["identity"])
+                    except CoverageError:
+                        raise ServiceError("Reviewed SQLite source identity changed before capture dispatch") from None
+                if coverage_exclusions or sqlite_capture_exclusions:
                     from .linux_coverage import restic_literal_exclusion
-                    for excluded in coverage_exclusions:
+                    for excluded in dict.fromkeys((*coverage_exclusions, *sqlite_capture_exclusions)):
                         args.extend(("--exclude", restic_literal_exclusion(excluded)))
                 args.extend(("--", *paths))
                 plan, _ = self._execute(

@@ -1,14 +1,22 @@
 import json
 import gzip
+import hashlib
+import os
 import shutil
 import sqlite3
+import subprocess
+import sys
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from bbackup.models import Configuration, HostBindings, RepositoryBinding, SourceBinding
-from bbackup.linux_coverage import CoverageCheck
+from bbackup.enrollment import policy_lease, write_bytes
+from bbackup.linux_coverage import (CoverageCheck, InventoryPaths, check_coverage,
+                                    discover_coverage, review_coverage,
+                                    sqlite_file_identity)
 from bbackup.operations import (
     OperationPlan,
     OperationRun,
@@ -132,6 +140,200 @@ def test_covered_exact_exclusion_is_absent_from_real_restored_snapshot(tmp_path,
     tree = restored / str(data).lstrip("/")
     assert (tree / "keep.txt").read_text() == "keep"
     assert not (tree / "omit*.txt").exists()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("restic") is None, reason="requires restic")
+def test_covered_sqlite_export_restores_with_reviewed_metadata_recipe(tmp_path, monkeypatch):
+    data = tmp_path / "data[fixture]"
+    data.mkdir()
+    (data / "keep.txt").write_text("sibling survives\n")
+    database_path = data / "database [review]*?.sqlite"
+    writer = sqlite3.connect(database_path)
+    writer.execute("PRAGMA journal_mode=WAL")
+    writer.execute("CREATE TABLE committed (value TEXT)")
+    writer.execute("INSERT INTO committed VALUES ('committed row')")
+    writer.commit()
+    writer.execute("INSERT INTO committed VALUES ('uncommitted row')")
+    wal_path = Path(str(database_path) + "-wal")
+    assert wal_path.is_file()
+    try:
+        os.setxattr(database_path, "user.coverage", b"restore-me")
+    except (AttributeError, OSError):
+        writer.close()
+        pytest.skip("Fixture filesystem cannot store SQLite xattrs")
+    source_identity = sqlite_file_identity(database_path)
+    source_metadata_json = json.dumps(source_identity, sort_keys=True)
+
+    def write_private(path, value):
+        path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+        path.chmod(0o600)
+        return path
+
+    def recipe(name, procedure_text):
+        procedure = tmp_path / f"{name}.py"
+        procedure.write_text(procedure_text, encoding="utf-8")
+        procedure.chmod(0o600)
+        digest = hashlib.sha256(procedure.read_bytes()).hexdigest()
+        evidence = write_private(tmp_path / f"{name}.evidence.json", {
+            "schema_version": 1, "recipe_id": name, "recipe_sha256": digest,
+            "environment": "isolated-local-fixture",
+            "checks": {"procedure_executed": True, "result_verified": True},
+        })
+        return ({"reason": "rebuild covered state", "consequence": "run on recovery",
+                 "recipe_id": name, "recipe_sha256": digest},
+                {"recipe_id": name, "recipe_sha256": digest,
+                 "procedure_path": str(procedure), "evidence_path": str(evidence),
+                 "evidence_sha256": hashlib.sha256(evidence.read_bytes()).hexdigest()},
+                procedure)
+
+    metadata_recipe_body = (
+        "import base64, json, os, sys\n"
+        f"metadata = json.loads({source_metadata_json!r})\n"
+        "path = sys.argv[1]\n"
+        "os.chown(path, metadata['uid'], metadata['gid'])\n"
+        "os.chmod(path, metadata['mode'])\n"
+        "for item in metadata['xattrs']:\n"
+        "    os.setxattr(path, item['name'], base64.b64decode(item['value_base64']))\n"
+    )
+    app_recipe, app_evidence, recipe_path = recipe("sqlite_rebuild", metadata_recipe_body)
+    package_recipe, package_evidence, _ = recipe(
+        "package_rebuild", "from pathlib import Path\nPath(__file__).read_text()\n")
+    inventory_root = tmp_path / "inventory"
+    inventory_root.mkdir()
+    passwd = inventory_root / "passwd"
+    passwd.write_text(f"fixture:x:1000:1000::{data}:/bin/sh\n")
+    group = inventory_root / "group"
+    group.write_text("fixture:x:1000:\n")
+    mountinfo = inventory_root / "mountinfo"
+    mountinfo.write_text("1 1 0:1 / / rw - ext4 /dev/fixture rw\n")
+    packages = inventory_root / "packages"
+    packages.write_text("Package: fixture\n")
+    units = inventory_root / "units"
+    units.mkdir()
+    (units / "fixture.service").write_text("[Service]\n")
+    inventory = InventoryPaths(passwd, group, mountinfo, packages, units)
+    scope = {"schema_version": 1, "approved_roots": ["data", "database"],
+             "require_privileged": False, "filesystem_boundaries": "explicit",
+             "metadata_expectations": {name: True for name in
+                                       ("numeric_owner", "mode", "acl", "xattr", "links")}}
+    declaration = write_private(tmp_path / "declaration.json", {
+        "schema_version": 1,
+        "roots": [{"id": "data", "path": str(data), "source_id": "files", "adapter": "files"},
+                  {"id": "database", "path": str(database_path), "source_id": "db", "adapter": "sqlite"}],
+        "exclusions": [], "mount_decisions": [], "identity_decisions": [],
+        "applications": [{"id": "fixture", "unit": "fixture", "source_id": "db",
+                           "state_roots": [str(database_path)], "startup_recipe": app_recipe}],
+        "package_reconstruction": package_recipe,
+        "reconstruction_evidence": [app_evidence, package_evidence],
+    })
+    policy_bytes, binding_bytes = b'{"policy":1}', b'{"binding":1}'
+    state = tmp_path / "state"
+    write_bytes(state, policy_bytes, binding_bytes)
+    with policy_lease(state, create=True):
+        pass
+    discovered = discover_coverage(declaration, scope, state=state,
+        policy_bytes=policy_bytes, binding_bytes=binding_bytes, inventory=inventory)
+    assert discovered["coverage_status"] == "complete"
+    reviewed = review_coverage(declaration, scope, discovered["candidate_digest"],
+        state=state, policy_bytes=policy_bytes, binding_bytes=binding_bytes, inventory=inventory)
+    assert reviewed["coverage_status"] == "complete"
+
+    password = tmp_path / "password"
+    password.write_text("fixture-password")
+    password.chmod(0o600)
+    config = Configuration.parse({"schema_version": 3,
+        "repositories": [{"name": "primary"}],
+        "sources": [{"name": "files", "kind": "files"}, {"name": "db", "kind": "sqlite"}],
+        "jobs": [{"name": "daily", "repository": "primary", "sources": ["files", "db"],
+                  "coverage_policy": scope}]})
+    bindings = HostBindings(state, {
+        "primary": RepositoryBinding(str(tmp_path / "repository"), password),
+    }, source_bindings={"files": SourceBinding(paths=(str(data),)),
+                        "db": SourceBinding(paths=(str(database_path),))},
+        schema_version=3, coverage_declarations={"daily": declaration})
+    service = BackupService(config, bindings, policy_bytes=policy_bytes,
+                            binding_bytes=binding_bytes)
+    real_check = check_coverage
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage",
+        lambda declaration_path, policy, **kwargs: real_check(
+            declaration_path, policy, inventory=inventory, **kwargs))
+    service.initialize("primary")
+    snapshot = service.capture("daily")["snapshot_id"]
+    writer.rollback()
+    writer.close()
+
+    restored = tmp_path / "restored"
+    service.restore("primary", snapshot, restored)
+    restored_manifest, = restored.rglob("bbackup-capture.json")
+    manifest = json.loads(restored_manifest.read_text())
+    assert manifest["schema_version"] == 2
+    entries = [item for item in manifest["exports"] if item["source"] == "db"]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["coverage_root_id"] == "database"
+    assert entry["original_path"] == str(database_path)
+    assert entry["baseline_digest"] == reviewed["baseline_digest"]
+    assert entry["recipe_digest"] == app_recipe["recipe_sha256"]
+    assert entry["reviewed_identity"] == source_identity
+    export = restored / entry["path"].lstrip("/")
+    assert hashlib.sha256(export.read_bytes()).hexdigest() == entry["export_sha256"]
+    with sqlite3.connect(export) as database:
+        assert database.execute("PRAGMA quick_check").fetchone() == ("ok",)
+        assert database.execute("SELECT value FROM committed").fetchall() == [
+            ("committed row",)]
+    restored_data = restored / str(data).lstrip("/")
+    assert (restored_data / "keep.txt").read_text() == "sibling survives\n"
+    restored_raw = restored_data / database_path.name
+    assert not restored_raw.exists()
+    for suffix in ("-wal", "-shm", "-journal"):
+        assert not Path(str(restored_raw) + suffix).exists()
+    assert not (restored / str(wal_path).lstrip("/")).exists()
+
+    fresh = tmp_path / "fresh-database.sqlite"
+    shutil.copyfile(export, fresh)
+    subprocess.run([sys.executable, str(recipe_path), str(fresh)], check=True)
+    with sqlite3.connect(fresh) as database:
+        assert database.execute("PRAGMA quick_check").fetchone() == ("ok",)
+        assert database.execute("SELECT value FROM committed").fetchall() == [
+            ("committed row",)]
+    reconstructed = sqlite_file_identity(fresh)
+    for key in ("uid", "gid", "mode", "links", "xattrs"):
+        assert reconstructed[key] == source_identity[key]
+
+    direct_scope = {**scope, "approved_roots": ["data", "wal", "database"]}
+    direct_declaration_raw = json.loads(declaration.read_text())
+    direct_declaration_raw["roots"].insert(1, {"id": "wal", "path": str(wal_path),
+        "source_id": "files", "adapter": "files"})
+    direct_declaration = write_private(tmp_path / "direct-wal-declaration.json",
+                                       direct_declaration_raw)
+    direct_candidate = discover_coverage(direct_declaration, direct_scope, state=state,
+        policy_bytes=policy_bytes, binding_bytes=binding_bytes, inventory=inventory)
+    assert direct_candidate["coverage_status"] == "incomplete"
+    assert "sqlite_artifact_explicitly_mapped" in direct_candidate["reasons"]
+    direct_config = Configuration.parse({"schema_version": 3,
+        "repositories": [{"name": "primary"}],
+        "sources": [{"name": "files", "kind": "files"}, {"name": "db", "kind": "sqlite"}],
+        "jobs": [{"name": "daily", "repository": "primary", "sources": ["files", "db"],
+                  "coverage_policy": direct_scope}]})
+    direct_bindings = HostBindings(state, {
+        "primary": RepositoryBinding(str(tmp_path / "repository"), password),
+    }, source_bindings={"files": SourceBinding(paths=(str(data), str(wal_path))),
+                        "db": SourceBinding(paths=(str(database_path),))},
+        schema_version=3, coverage_declarations={"daily": direct_declaration})
+    direct_service = BackupService(direct_config, direct_bindings,
+                                   policy_bytes=policy_bytes, binding_bytes=binding_bytes)
+    monkeypatch.setattr(direct_service.runner, "run",
+                        lambda *_args, **_kwargs: pytest.fail("unsafe WAL source reached Restic"))
+    with pytest.raises(ServiceError, match="Covered capture is not ready"):
+        direct_service.capture("daily")
+
+    def mismatched_review(*args, **kwargs):
+        accepted = real_check(*args, inventory=inventory, **kwargs)
+        return replace(accepted, approved_sqlite=())
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage", mismatched_review)
+    with pytest.raises(ServiceError, match="SQLite sources differ"):
+        service.capture("daily")
 
 
 def _remote_service(tmp_path, *, with_replica=False):

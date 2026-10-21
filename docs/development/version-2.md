@@ -85,10 +85,26 @@ ID to an absolute `path`, configured `source_id` and `adapter`. It also requires
 `package_reconstruction`, and `reconstruction_evidence`. Empty arrays are
 permitted, but unresolved inventory gaps block approval. See the maintained
 [fixture declarations](../../tests/test_linux_coverage.py) for the exact shapes.
-Current covered capture supports ordinary file sources only. SQLite and native
-database exports and Docker require additional metadata/reconstruction support
-before they can satisfy this coverage profile; ordinary jobs still support
-their existing adapters.
+Covered capture supports ordinary files and individually transactional SQLite
+exports. Each SQLite root requires an application declaration whose state root
+is that exact database path and whose reconstruction procedure has verified
+private evidence. PostgreSQL, MySQL/MariaDB and Docker remain unsupported for
+covered jobs; ordinary jobs retain their existing adapters.
+
+SQLite review binds the database's device/inode, numeric owner, mode, link count
+and bounded extended attributes, including filesystem ACL attributes when
+present. The database must be a readable regular file without symlink ancestors
+or additional hard links. Replacement or metadata changes require fresh review;
+ordinary database writes and journal-file churn do not. Unsafe journal links and
+user exclusions covering the database prevent approval.
+
+Capture uses the existing SQLite backup API and omits the live database and its
+`-wal`, `-shm` and `-journal` files from file-tree capture. The encrypted capture
+manifest binds the export hash to the reviewed root, source identity, original
+metadata, reconstruction recipe and baseline. Generic restore returns that
+export and manifest; the reviewed reconstruction procedure must place the
+database and restore its original metadata. This does not provide automatic
+in-place application recovery or a shared transaction across files or databases.
 
 Each exclusion or reconstruction decision names a reason, consequence, recipe
 ID and procedure SHA-256. A referenced private procedure and private evidence
@@ -134,7 +150,10 @@ baseline and snapshot. Local fixture records can produce `recovery_status:
 emulated`; absent, incomplete or unverified independent records stay `untested`.
 No command marks complete-machine recovery qualified. Current tests include
 small real Restic capture/restore with enforced exclusions, account and service
-drift, private evidence integrity and unprivileged readability. Privileged
+drift, private evidence integrity and unprivileged readability. A local WAL-mode
+SQLite/files drill restores committed rows, omits uncommitted rows and raw
+database/journal files, validates export provenance, and reconstructs original
+metadata with the reviewed recipe. Privileged
 full-scope capture, metadata/secrets/users/application reconstruction on a clean
 replacement, and final remote-server qualification remain outstanding for #24.
 

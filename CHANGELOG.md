@@ -25,9 +25,12 @@ current uv-based install, development, and release instructions.
   Schema-2 B2 policies can select a native lock-metadata reader; schema-1
   generic S3 policies remain unchanged. Current-pack compaction and complete
   provider protection qualification remain outstanding.
-- Opt-in reviewed Linux file coverage with private inventory, exact scope and
-  exclusions, drift checks, bounded reconstruction evidence, and root system
-  unit rendering. Complete-machine recovery remains unqualified.
+- Opt-in reviewed Linux file and transactional SQLite coverage with private
+  inventory, exact scope and exclusions, drift checks, reviewed database
+  identity/metadata and reconstruction evidence, and root system unit rendering.
+  SQLite exports carry provenance in the encrypted capture manifest; live
+  database/journal files are omitted from file-tree capture. Complete-machine
+  recovery remains unqualified.
 - Refreshed matching 1280×640 GitHub social preview artwork, embedded ownership metadata, checked provenance, and explicit repository-settings upload instructions.
 
 ### Qualification evidence

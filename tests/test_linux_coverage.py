@@ -2,13 +2,16 @@
 import json
 import hashlib
 import os
+import sqlite3
+from pathlib import Path
 
 import pytest
 
 from bbackup.enrollment import policy_lease, write_bytes
 from bbackup.linux_coverage import (CoverageError, InventoryPaths, check_coverage,
                                     discover_coverage, evaluate_recovery_evidence,
-                                    review_coverage, validate_scope_policy)
+                                    restic_literal_exclusion, review_coverage,
+                                    validate_scope_policy)
 
 
 def _private_json(path, value):
@@ -96,6 +99,36 @@ def _review(fixture):
     return candidate, reviewed
 
 
+def _sqlite_root(coverage_fixture):
+    root = coverage_fixture["root"]
+    (root / "database.sqlite").unlink(missing_ok=True)
+    database_path = root / "database [review]*?.sqlite"
+    writer = sqlite3.connect(database_path)
+    writer.execute("PRAGMA journal_mode=WAL")
+    writer.execute("CREATE TABLE committed (value TEXT)")
+    writer.execute("INSERT INTO committed VALUES ('first')")
+    writer.commit()
+    try:
+        os.setxattr(database_path, "user.coverage", b"original")
+    except (AttributeError, OSError):
+        writer.close()
+        pytest.skip("Fixture filesystem cannot store SQLite xattrs")
+    (coverage_fixture["inventory"].application_units / "fixture.service").write_text(
+        "[Service]\n")
+    declaration = json.loads(coverage_fixture["declaration"].read_text())
+    recipe, evidence = _recipe(database_path.parent, "sqlite_rebuild")
+    declaration["roots"].append({"id": "database", "path": str(database_path),
+        "source_id": "database", "adapter": "sqlite"})
+    declaration["applications"] = [{"id": "fixture", "unit": "fixture",
+        "source_id": "database", "state_roots": [str(database_path)],
+        "startup_recipe": recipe}]
+    declaration["reconstruction_evidence"].append(evidence)
+    _private_json(coverage_fixture["declaration"], declaration)
+    coverage_fixture["policy"] = {**coverage_fixture["policy"],
+                                   "approved_roots": ["home", "database"]}
+    return database_path, writer
+
+
 def test_exact_review_capture_readiness_and_new_files(coverage_fixture):
     candidate, reviewed = _review(coverage_fixture)
     checked = _call(check_coverage, coverage_fixture)
@@ -107,6 +140,137 @@ def test_exact_review_capture_readiness_and_new_files(coverage_fixture):
     assert str(coverage_fixture["root"]) not in json.dumps(checked.public_result())
     (coverage_fixture["root"] / ".new-hidden-secret").write_text("new secret")
     assert _call(check_coverage, coverage_fixture).capture_ready
+
+
+def test_reviewed_sqlite_root_ignores_wal_churn_and_excludes_raw_files(coverage_fixture):
+    database_path, writer = _sqlite_root(coverage_fixture)
+    try:
+        _, reviewed = _review(coverage_fixture)
+        checked = _call(check_coverage, coverage_fixture)
+        assert checked.capture_ready
+        assert checked.baseline_digest == reviewed["baseline_digest"]
+        assert len(checked.approved_sqlite) == 1
+        accepted = checked.approved_sqlite[0]
+        assert accepted["root_id"] == "database"
+        assert accepted["path"] == str(database_path)
+        assert accepted["identity"]["inode"] == database_path.stat().st_ino
+        assert accepted["identity"]["xattrs"] == [
+            {"name": "user.coverage", "value_base64": "b3JpZ2luYWw="}]
+        assert accepted["recipe_digest"] == json.loads(
+            coverage_fixture["declaration"].read_text())["applications"][0][
+                "startup_recipe"]["recipe_sha256"]
+        assert accepted["baseline_digest"] == reviewed["baseline_digest"]
+        assert set(checked.sqlite_capture_exclusions) == {
+            database_path, Path(str(database_path) + "-wal"),
+            Path(str(database_path) + "-shm"), Path(str(database_path) + "-journal")}
+        literal = restic_literal_exclusion(database_path)
+        assert "\\[" in literal and "\\]" in literal and "\\*" in literal and "\\?" in literal
+
+        writer.execute("INSERT INTO committed VALUES ('after review')")
+        writer.commit()
+        assert Path(str(database_path) + "-wal").exists()
+        churned = _call(check_coverage, coverage_fixture)
+        assert churned.capture_ready
+        assert churned.candidate_digest == checked.candidate_digest
+    finally:
+        writer.close()
+
+
+@pytest.mark.parametrize("change", ["inode", "mode"])
+def test_reviewed_sqlite_identity_and_metadata_drift(coverage_fixture, change):
+    database_path, writer = _sqlite_root(coverage_fixture)
+    writer.close()
+    _review(coverage_fixture)
+    if change == "inode":
+        replacement = coverage_fixture["root"].parent / "replacement.sqlite"
+        with sqlite3.connect(replacement) as database:
+            database.execute("CREATE TABLE replacement(value TEXT)")
+        os.replace(replacement, database_path)
+    else:
+        database_path.chmod(database_path.stat().st_mode & 0o777 ^ 0o100)
+    checked = _call(check_coverage, coverage_fixture)
+    assert checked.coverage_status == "drift"
+    assert "structural_inventory_changed" in checked.reasons
+
+
+@pytest.mark.parametrize("failure", ["missing", "corrupt"])
+def test_missing_or_corrupt_sqlite_root_is_incomplete_before_review(coverage_fixture, failure):
+    database_path, writer = _sqlite_root(coverage_fixture)
+    writer.close()
+    if failure == "missing":
+        database_path.unlink()
+    else:
+        database_path.write_bytes(b"not a SQLite database")
+    candidate = _call(discover_coverage, coverage_fixture)
+    assert candidate["coverage_status"] == "incomplete"
+    expected = "sqlite_database_missing" if failure == "missing" else "sqlite_database_invalid"
+    assert expected in candidate["reasons"]
+
+
+@pytest.mark.parametrize("unsafe", ["symlink", "directory", "hardlink"])
+def test_unsafe_existing_sqlite_sidecar_is_incomplete(coverage_fixture, unsafe):
+    database_path, writer = _sqlite_root(coverage_fixture)
+    writer.close()
+    sidecar = Path(str(database_path) + "-wal")
+    outside = coverage_fixture["root"].parent / "outside-sidecar"
+    outside.write_bytes(b"sidecar")
+    if unsafe == "symlink":
+        sidecar.symlink_to(outside)
+    elif unsafe == "directory":
+        sidecar.mkdir()
+    else:
+        sidecar.hardlink_to(outside)
+    candidate = _call(discover_coverage, coverage_fixture)
+    assert candidate["coverage_status"] == "incomplete"
+    assert "sqlite_sidecar_unsafe" in candidate["reasons"]
+
+
+def test_sqlite_requires_exact_application_state_and_verified_recipe(coverage_fixture):
+    database_path, writer = _sqlite_root(coverage_fixture)
+    writer.close()
+    declaration = json.loads(coverage_fixture["declaration"].read_text())
+    declaration["applications"][0]["state_roots"] = [str(database_path), str(coverage_fixture["root"])]
+    _private_json(coverage_fixture["declaration"], declaration)
+    candidate = _call(discover_coverage, coverage_fixture)
+    assert "sqlite_application_state_unaccounted" in candidate["reasons"]
+
+    declaration["applications"][0]["state_roots"] = [str(database_path)]
+    declaration["reconstruction_evidence"] = [item for item in declaration["reconstruction_evidence"]
+        if item["recipe_id"] != declaration["applications"][0]["startup_recipe"]["recipe_id"]]
+    _private_json(coverage_fixture["declaration"], declaration)
+    candidate = _call(discover_coverage, coverage_fixture)
+    assert "reconstruction_evidence_missing" in candidate["reasons"]
+
+
+def test_user_exclusion_cannot_cover_reviewed_sqlite_state(coverage_fixture, tmp_path):
+    database_path, writer = _sqlite_root(coverage_fixture)
+    writer.close()
+    declaration = json.loads(coverage_fixture["declaration"].read_text())
+    recipe, evidence = _recipe(tmp_path, "exclude_sqlite")
+    declaration["exclusions"] = [{"root_id": "home", "path": str(database_path),
+                                  "recipe": recipe}]
+    declaration["reconstruction_evidence"].append(evidence)
+    _private_json(coverage_fixture["declaration"], declaration)
+    candidate = _call(discover_coverage, coverage_fixture)
+    assert "sqlite_state_excluded" in candidate["reasons"]
+
+
+def test_sqlite_sidecar_cannot_be_an_explicit_files_root(coverage_fixture):
+    database_path, writer = _sqlite_root(coverage_fixture)
+    try:
+        wal_path = Path(str(database_path) + "-wal")
+        assert wal_path.is_file()
+        declaration = json.loads(coverage_fixture["declaration"].read_text())
+        declaration["roots"].append({"id": "wal", "path": str(wal_path),
+            "source_id": "files", "adapter": "files"})
+        _private_json(coverage_fixture["declaration"], declaration)
+        coverage_fixture["policy"] = {**coverage_fixture["policy"],
+                                       "approved_roots": ["home", "database", "wal"]}
+        candidate = _call(discover_coverage, coverage_fixture)
+        assert candidate["coverage_status"] == "incomplete"
+        assert "sqlite_artifact_explicitly_mapped" in candidate["reasons"]
+    finally:
+        writer.close()
 
 
 @pytest.mark.parametrize("change", ["user", "mount", "app"])

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import ExitStack, contextmanager
+import hashlib
 import json
 import os
 import re
@@ -12,8 +13,10 @@ import sqlite3
 import stat
 import tempfile
 import time
+from typing import Any
 
 from .models import DatabaseBinding, Source, strict_json
+from .linux_coverage import CoverageError, verify_sqlite_identity
 from .operations import OperationPlan, OperationRunner, OperationStatus
 from .resource_limits import ResourceLimitError, ResourceMonitor
 
@@ -335,11 +338,13 @@ def capture_sources(
     operation_id: str | None = None,
     runner: OperationRunner | None = None,
     resource_monitor: ResourceMonitor | None = None,
+    coverage_sqlite: Mapping[str, Mapping[str, Any]] | None = None,
 ):
     """Yield source paths plus temporary native exports and private Docker metadata.
 
     Ordinary file trees are live, best-effort captures, not atomic filesystem
-    snapshots. PostgreSQL and SQLite use transactional exports. MySQL and
+    snapshots. Each PostgreSQL and SQLite export is transactional within that
+    database; separate files and databases do not share a transaction. MySQL and
     MariaDB require an explicit read-lock quiescence declaration and use a
     server read lock during export. Docker sources require a local daemon and
     remain stopped only while the caller runs the restic operation.
@@ -369,6 +374,16 @@ def capture_sources(
                 original = Path(source.paths[0])
                 if not original.is_file():
                     raise CaptureError("SQLite source must be an existing database file")
+                covered_sqlite = (coverage_sqlite or {}).get(source.name)
+                if covered_sqlite is not None:
+                    if (covered_sqlite.get("path") != str(original)
+                            or covered_sqlite.get("source_id") != source.name
+                            or not isinstance(covered_sqlite.get("identity"), dict)):
+                        raise CaptureError("Reviewed SQLite mapping does not match the source")
+                    try:
+                        verify_sqlite_identity(original, covered_sqlite["identity"])
+                    except CoverageError:
+                        raise CaptureError("Reviewed SQLite source identity changed") from None
                 target = Path(temporary) / (source.name + ".sqlite")
 
                 def progress(status, remaining, total):
@@ -394,11 +409,30 @@ def capture_sources(
                                 raise CaptureError("SQLite capture validation failed")
                 except sqlite3.Error as exc:
                     raise CaptureError("SQLite capture failed") from exc
+                if covered_sqlite is not None:
+                    try:
+                        verify_sqlite_identity(original, covered_sqlite["identity"])
+                    except CoverageError:
+                        raise CaptureError("Reviewed SQLite source identity changed") from None
                 paths.append(str(target))
-                exports.append({
+                export = {
                     "source": source.name, "kind": source.kind,
                     "format": "sqlite", "path": str(target),
-                })
+                }
+                if covered_sqlite is not None:
+                    digest = hashlib.sha256()
+                    with target.open("rb") as exported:
+                        for chunk in iter(lambda: exported.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                    export.update({
+                        "coverage_root_id": covered_sqlite["root_id"],
+                        "original_path": str(original),
+                        "reviewed_identity": covered_sqlite["identity"],
+                        "recipe_digest": covered_sqlite["recipe_digest"],
+                        "baseline_digest": covered_sqlite["baseline_digest"],
+                        "export_sha256": digest.hexdigest(),
+                    })
+                exports.append(export)
             elif source.kind in ("postgresql", "mysql", "mariadb"):
                 binding = _database_binding(source, database_bindings)
                 suffix = ".dump" if source.kind == "postgresql" else ".sql"

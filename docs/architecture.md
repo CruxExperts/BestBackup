@@ -27,7 +27,7 @@ The `bbackup production` CLI is strict and schema-discoverable; the Textual dash
 Unreleased work adds restricted B2 source-key assessment, independent central
 acceptance of signed historical checkpoints, centrally authorized noncurrent
 version reclamation, remote-primary capture with bounded staging, and reviewed
-Linux file coverage. These paths use the same operation boundary and existing
+Linux file and transactional SQLite coverage. These paths use the same operation boundary and existing
 repository ledger; coverage review owns a separate exclusive policy lease.
 Management credentials remain an explicit option, separate from the default
 restricted source role. Their implementation and workstation fixture evidence

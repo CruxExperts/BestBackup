@@ -172,7 +172,7 @@ def test_dashboard_job_shortcuts_use_shared_operation_panel(service, monkeypatch
             await app._supervise("stop")
             await pilot.pause()
     asyncio.run(exercise())
-    assert calls == [("jobs run", {"name": "daily"})]
+    assert calls == [("jobs run", {"name": "daily", "quiet_administrative_window_confirmed": False})]
 
 
 def test_invalid_existing_setup_cannot_enroll_without_a_successful_review(tmp_path, monkeypatch):

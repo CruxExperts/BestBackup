@@ -1,6 +1,6 @@
 # Agent integration
 
-The version 2 command line is designed for agents and other noninteractive clients. It accepts strict JSON input, publishes a schema for each operation, and emits sanitized versioned results. Stable v2.0.2 qualification is limited to the tested local/file, selected live database, headless dashboard, and AMD64 Ubuntu paths listed below. B2/AWS and native Docker are not production-qualified; follow the same read-before-write and no-replay rules you would use for an operator.
+The version 2 command line is designed for agents and other noninteractive clients. It accepts strict JSON input, publishes a schema for each operation, and emits sanitized versioned results. Stable v2.0.3 qualification is limited to the tested local/file, selected live database, headless dashboard, and AMD64 Ubuntu paths listed below. B2/AWS and native Docker are not production-qualified; follow the same read-before-write and no-replay rules you would use for an operator.
 
 ## Discover commands and schemas
 
@@ -47,6 +47,18 @@ bbackup production \
 ```
 
 Restore requires a new target directory and verifies file data. It does not validate application startup or database behavior. Database restores accept trusted PostgreSQL, MySQL, and MariaDB archives with database-specific destination safeguards: PostgreSQL creates a new database using snapshot-time locale metadata; MySQL/MariaDB require the original database name on a separate empty recovery server with only built-in schemas. Set the explicit `trusted_archive` acknowledgement. Never restore untrusted archives: database restores execute archived SQL. See [the v2 database restore limits](development/version-2.md#native-database-capture-and-restore).
+
+Reviewed Linux coverage also has an experimental manual PostgreSQL path; it is
+unreleased and does not change ordinary PostgreSQL adapters or stable
+qualification. `jobs run`, `coverage discover`, `coverage review`,
+`coverage check`, and `coverage recovery-evidence` accept the boolean
+`--quiet-administrative-window-confirmed`, which defaults to false. Set it only
+while an externally coordinated window prevents administrator, schema, role,
+database, and configuration changes; it does not stop those changes itself.
+Ordinary row writes may continue. Scheduled covered PostgreSQL jobs remain
+blocked because timer dispatch cannot confirm the window. See the [manual
+coverage procedure](development/version-2.md#experimental-postgresql-covered-capture-unreleased)
+for declaration, capture, and restore limits.
 
 ## Read bounded operation records
 

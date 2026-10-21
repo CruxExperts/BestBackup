@@ -437,6 +437,16 @@ def _bounded_write(output, chunk: bytes, monitor: ResourceMonitor | None):
     return output.write(chunk)
 
 
+def _file_sha256(path: Path, monitor: ResourceMonitor | None = None) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            if monitor is not None:
+                monitor.check()
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _capture_postgresql(source, binding, target, runner, deadline, cancel, monitor=None):
     assert binding.service_file is not None and binding.service_name is not None
     env_values = {"PGSERVICEFILE": str(binding.service_file), "PGPASSFILE": "/dev/null",
@@ -666,6 +676,8 @@ def capture_sources(
     runner: OperationRunner | None = None,
     resource_monitor: ResourceMonitor | None = None,
     coverage_sqlite: Mapping[str, Mapping[str, Any]] | None = None,
+    coverage_postgresql: Mapping[str, Mapping[str, Any]] | None = None,
+    validate_coverage=None,
     durable_artifacts: DurableCaptureArtifacts | None = None,
 ):
     """Yield source paths plus temporary native exports and private Docker metadata.
@@ -796,6 +808,15 @@ def capture_sources(
                 })
                 if source.kind == "postgresql":
                     exports[-1]["database_options"] = database_options
+                    reviewed = (coverage_postgresql or {}).get(source.name)
+                    if reviewed is not None:
+                        if (reviewed.get("source_id") != source.name
+                                or reviewed.get("connection") != source.connection
+                                or reviewed.get("database") != source.database):
+                            raise CaptureError("Reviewed PostgreSQL mapping differs from export")
+                        exports[-1]["coverage"] = dict(reviewed)
+                        exports[-1]["source_database"] = source.database
+                        exports[-1]["export_sha256"] = _file_sha256(target, resource_monitor)
                 else:
                     exports[-1].update(mysql_metadata)
                 if durable_artifacts is not None:
@@ -815,6 +836,8 @@ def capture_sources(
                 paths.extend(docker_paths)
                 exports.extend(docker_exports)
             if exports:
+                if validate_coverage is not None:
+                    validate_coverage()
                 manifest = Path(temporary) / "bbackup-capture.json"
                 if durable_artifacts is not None:
                     durable_artifacts.begin_export(manifest)

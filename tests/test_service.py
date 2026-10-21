@@ -105,6 +105,90 @@ def test_covered_capture_requires_enrollment_and_exact_root_mapping(tmp_path, mo
         service.capture("daily")
 
 
+def test_covered_postgresql_requires_manual_quiet_window_and_exact_sources(tmp_path, monkeypatch):
+    from bbackup.models import DatabaseBinding
+
+    recovery = tmp_path / "recovery"
+    recovery.mkdir()
+    material = recovery / "roles.sql"
+    material.write_text("reviewed roles")
+    material.chmod(0o600)
+    password = tmp_path / "restic-password"
+    password.write_text("fixture-password")
+    password.chmod(0o600)
+    service_file = tmp_path / "pg_service.conf"
+    service_file.write_text("[local]\nhost=/var/run/postgresql\nuser=postgres\n")
+    service_file.chmod(0o600)
+    scope = {"schema_version": 1, "approved_roots": ["recovery_root", "app_root"],
+        "require_privileged": False, "filesystem_boundaries": "explicit",
+        "metadata_expectations": {name: True for name in
+            ("numeric_owner", "mode", "acl", "xattr", "links")}}
+    config = Configuration.parse({"schema_version": 3,
+        "repositories": [{"name": "primary"}],
+        "sources": [{"name": "files", "kind": "files"},
+                    {"name": "database", "kind": "postgresql"}],
+        "jobs": [{"name": "daily", "repository": "primary",
+                  "sources": ["files", "database"], "coverage_policy": scope}]})
+    bindings = HostBindings(tmp_path / "state", {
+        "primary": RepositoryBinding(str(tmp_path / "repository"), password)},
+        database_bindings={"pg_local": DatabaseBinding(
+            "postgresql", service_file=service_file, service_name="local")},
+        source_bindings={"files": SourceBinding(paths=(str(recovery),)),
+                         "database": SourceBinding(database="app", connection="pg_local")},
+        schema_version=3, coverage_declarations={"daily": tmp_path / "declaration.json"})
+    captured = BackupService(config, bindings, policy_bytes=b"policy", binding_bytes=b"binding")
+    reviewed = {"source_id": "database", "connection": "pg_local", "database": "app",
+        "root_id": "app_root", "cluster_id": "primary", "baseline_digest": "a" * 64,
+        "data_directory_identity": {"device": 1},
+        "recovery_artifacts": [{"path": str(material), "root_id": "recovery_root",
+                                "sha256": hashlib.sha256(material.read_bytes()).hexdigest()}]}
+    observed = []
+
+    def check(_declaration, _policy, **kwargs):
+        context = kwargs["postgresql_context"]
+        observed.append(context.quiet_administrative_window)
+        if not context.quiet_administrative_window:
+            return CoverageCheck("incomplete", ("postgresql_quiet_administrative_window_required",),
+                                 None, None, {})
+        return CoverageCheck("complete", (), "a" * 64, "b" * 64, {},
+                             (("recovery_root", recovery, "files", "files"),),
+                             approved_postgresql=(reviewed,))
+
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage", check)
+    with pytest.raises(ServiceError, match="not ready"):
+        captured.capture("daily")
+
+    def stop_before_export(*_args, **kwargs):
+        assert kwargs["coverage_postgresql"]["database"]["database"] == "app"
+        assert callable(kwargs["validate_coverage"])
+        raise RuntimeError("manual PostgreSQL capture reached export")
+
+    monkeypatch.setattr("bbackup.service.capture_sources", stop_before_export)
+    with pytest.raises(RuntimeError, match="reached export"):
+        captured.capture("daily", quiet_administrative_window_confirmed=True)
+    assert observed == [False, True]
+
+    checks = 0
+
+    def drifts_after_export(*args, **kwargs):
+        nonlocal checks
+        checks += 1
+        if checks == 1:
+            return check(*args, **kwargs)
+        return CoverageCheck("drift", ("postgresql_reconstruction_evidence_stale",),
+                             "a" * 64, "changed", {})
+
+    def stage_then_recheck(*_args, **kwargs):
+        kwargs["validate_coverage"]()
+        pytest.fail("drift reached Restic dispatch")
+
+    monkeypatch.setattr("bbackup.linux_coverage.check_coverage", drifts_after_export)
+    monkeypatch.setattr("bbackup.service.capture_sources", stage_then_recheck)
+    with pytest.raises(ServiceError, match="changed during capture"):
+        captured.capture("daily", quiet_administrative_window_confirmed=True)
+    assert checks == 2
+
+
 @pytest.mark.integration
 @pytest.mark.skipif(shutil.which("restic") is None, reason="requires restic")
 def test_covered_exact_exclusion_is_absent_from_real_restored_snapshot(tmp_path, monkeypatch):
@@ -599,6 +683,79 @@ def test_remote_success_reconciliation_requires_each_export_bytes(tmp_path, monk
     assert service.ledger.inspect(repository_key(service._identity("primary")), token)[1] is OperationStatus.UNCERTAIN
 
 
+@pytest.mark.parametrize("tamper_material", [False, True])
+def test_remote_covered_reconciliation_hashes_stored_material_before_receipt(tmp_path, monkeypatch,
+                                                                             tamper_material):
+    from bbackup.capture import DurableCaptureArtifacts
+
+    service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
+    monkeypatch.setattr(service.runner, "run", lambda plan, **_kwargs: _run(
+        plan, status=OperationStatus.FAILED, exit_code=1))
+    with pytest.raises(ServiceError):
+        service.capture("daily")
+    token, stage, record = _retained_capture(service, staging)
+    archive = (stage / record["exports"][0]["name"]).read_bytes()
+    manifest_path = stage / record["manifest"]["name"]
+    manifest = json.loads(manifest_path.read_text())
+    procedure, evidence, material = "/private/procedure", "/private/evidence", "/private/material"
+    stored = {procedure: b"procedure", evidence: b"evidence", material: b"reviewed material"}
+    coverage = {"root_id": "dbroot", "source_id": "db", "connection": "source_pg",
+                "database": "app_db", "cluster_id": "primary", "major_version": "17",
+                "data_directory": "/private/pgdata",
+                "data_directory_identity": {"device": 1, "inode": 2, "uid": 3, "gid": 4, "mode": 0o700},
+                "recovery_file_roots": [{"root_id": name, "path": path}
+                    for name, path in (("procedure", procedure), ("evidence", evidence),
+                                       ("material", material))],
+                "recovery_artifacts": [{"root_id": name, "path": path,
+                    "sha256": hashlib.sha256(stored[path]).hexdigest()}
+                    for name, path in (("procedure", procedure), ("evidence", evidence),
+                                       ("material", material))]}
+    for key in ("baseline_digest", "system_identifier_sha256", "cluster_inventory_sha256",
+                "global_inventory_sha256", "role_inventory_sha256", "configuration_sha256",
+                "connection_material_sha256", "database_inventory_sha256", "recipe_sha256"):
+        coverage[key] = "a" * 64
+    entry = manifest["exports"][0]
+    entry.update(kind="postgresql", format="postgresql-custom", source_database="app_db",
+                 coverage=coverage, export_sha256=hashlib.sha256(archive).hexdigest())
+    manifest_path.write_text(json.dumps(manifest))
+    snapshot = "e" * 64
+    record_owner = DurableCaptureArtifacts.load(
+        staging, service.state, repository_key(service._identity("primary")), token)
+    record_owner.record["manifest"] = {"name": manifest_path.name,
+                                       **record_owner._fingerprint(manifest_path)}
+    record_owner._save()
+    payloads = {str(stage / record["exports"][0]["name"]): archive,
+                str(manifest_path): manifest_path.read_bytes(), **stored}
+    if tamper_material:
+        payloads[material] += b"tampered"
+    snapshot_paths = [str(stage / record["exports"][0]["name"]), str(manifest_path),
+                      procedure, evidence, material]
+
+    def inspect(plan, **kwargs):
+        assert "--no-lock" in plan.argv
+        if "locks" in plan.argv:
+            return _run(plan)
+        if "snapshots" in plan.argv:
+            return _run(plan, stdout=json.dumps([{"id": snapshot,
+                "tags": [f"bbackup-capture={token}", "bbackup-job=daily"]}]).encode())
+        if "cat" in plan.argv:
+            return _run(plan, stdout=json.dumps({"paths": snapshot_paths}).encode())
+        payload = payloads[plan.argv[-1]]
+        kwargs["on_stdout_chunk"](payload)
+        return replace(_run(plan, stdout=payload), stdout_tail=b"")
+
+    monkeypatch.setattr(service.runner, "run", inspect)
+    if tamper_material:
+        with pytest.raises(ServiceError, match="recovery artifact differs"):
+            service.reconcile_run("primary", token, ReconciliationOutcome.SUCCEEDED,
+                                  quiescent_window_confirmed=True)
+        assert stage.exists() and service.snapshots() == []
+    else:
+        service.reconcile_run("primary", token, ReconciliationOutcome.SUCCEEDED,
+                              quiescent_window_confirmed=True)
+        assert not stage.exists() and service.snapshots()[0]["snapshot_id"] == snapshot
+
+
 @pytest.mark.parametrize("locked_at", ["before", "after"])
 def test_remote_reconciliation_refuses_active_restic_lock(tmp_path, monkeypatch, locked_at):
     service, _database_path, staging = _remote_sqlite_service(tmp_path, monkeypatch)
@@ -1006,6 +1163,84 @@ def test_database_restore_uses_snapshot_manifest_without_original_sources(servic
     assert result["target_database"] == "recovered"
     assert result["database_validated"] is True
     assert result["application_validated"] is False
+    assert not list(fresh.state.glob("database-restore-*"))
+
+
+@pytest.mark.parametrize("tamper", ["export", "material", None])
+@pytest.mark.parametrize("material_root", ["directory", "file"])
+def test_covered_postgresql_restore_rejects_tampered_bytes_before_mutation(service, tmp_path,
+                                                                           monkeypatch, tamper, material_root):
+    from bbackup.models import DatabaseBinding
+
+    service_file = tmp_path / "pg_service.conf"
+    service_file.write_text("[local]\nhost=/var/run/postgresql\nuser=postgres\n")
+    service_file.chmod(0o600)
+    binding = DatabaseBinding("postgresql", service_file=service_file, service_name="local")
+    config = Configuration.parse({"schema_version": 2,
+        "repositories": [{"name": "local"}, {"name": "copy", "role": "replica"}],
+        "sources": [], "jobs": []})
+    fresh = BackupService(config, HostBindings(tmp_path / "restore-state",
+        service.bindings.repositories, {"destination": binding}))
+    snapshot = "a" * 64
+    manifest_path = "/private/capture/bbackup-capture.json"
+    archive_path = "/private/capture/database.dump"
+    files_root = "/private/recovery"
+    artifact_path = files_root + "/roles.sql"
+    procedure_path = files_root + "/procedure.txt"
+    evidence_path = files_root + "/evidence.json"
+    archive_bytes = b"PGDMP-reviewed-export"
+    material_bytes = b"reviewed recovery material"
+    coverage = {"root_id": "database_root", "source_id": "database",
+        "connection": "source_pg", "database": "app_db", "cluster_id": "primary",
+        "major_version": "17", "data_directory": "/private/pgdata",
+        "data_directory_identity": {"device": 1, "inode": 2, "uid": 3, "gid": 4, "mode": 0o700},
+        "recovery_file_roots": ([{"root_id": "recovery_root", "path": files_root}]
+            + ([{"root_id": "material_file", "path": artifact_path}]
+               if material_root == "file" else [])),
+        "recovery_artifacts": [{"root_id": ("material_file" if material_root == "file"
+            and path == artifact_path else "recovery_root"), "path": path,
+            "sha256": hashlib.sha256(content).hexdigest()}
+            for path, content in ((procedure_path, b"procedure"),
+                                  (evidence_path, b"evidence"),
+                                  (artifact_path, material_bytes))]}
+    for key in ("baseline_digest", "system_identifier_sha256", "cluster_inventory_sha256",
+                "global_inventory_sha256", "role_inventory_sha256", "configuration_sha256",
+                "connection_material_sha256", "database_inventory_sha256", "recipe_sha256"):
+        coverage[key] = "b" * 64
+    entry = {"source": "database", "kind": "postgresql", "format": "postgresql-custom",
+             "path": archive_path, "source_database": "app_db", "coverage": coverage,
+             "export_sha256": hashlib.sha256(archive_bytes).hexdigest(),
+             "database_options": {"encoding": "UTF8", "collate": "C", "ctype": "C", "provider": "c"}}
+    payloads = {manifest_path: json.dumps({"schema_version": 2, "exports": [entry]}).encode(),
+                archive_path: archive_bytes if tamper != "export" else archive_bytes + b"changed",
+                procedure_path: b"procedure", evidence_path: b"evidence",
+                artifact_path: material_bytes if tamper != "material" else material_bytes + b"changed"}
+    metadata = json.dumps({"paths": [manifest_path, archive_path, files_root, artifact_path]}).encode()
+    monkeypatch.setattr(fresh, "_engine", lambda _repository: SimpleNamespace(base_args=lambda: ["restic"]))
+    calls = []
+
+    def execute(_repository, argv, *, on_stdout=None, **_kwargs):
+        calls.append(argv)
+        content = metadata if argv[-3:-1] == ["cat", "snapshot"] else payloads[argv[-1]]
+        if on_stdout is not None:
+            on_stdout(content)
+            return None, SimpleNamespace(stdout_bytes=len(content), stdout_tail=b"")
+        return None, SimpleNamespace(stdout_bytes=len(content), stdout_tail=content)
+
+    monkeypatch.setattr(fresh, "_execute", execute)
+    mutated = []
+    monkeypatch.setattr("bbackup.database_restore.restore_postgresql",
+                        lambda *_args, **_kwargs: mutated.append(True) or "recovered")
+    if tamper is None:
+        result = fresh.restore_database("local", snapshot, "database", "destination", "recovered",
+                                        trusted_archive=True)
+        assert result["target_database"] == "recovered"
+        assert mutated == [True]
+    else:
+        with pytest.raises(ServiceError, match="digest differs"):
+            fresh.restore_database("local", snapshot, "database", "destination", "recovered",
+                                   trusted_archive=True)
+        assert not mutated
     assert not list(fresh.state.glob("database-restore-*"))
 
 

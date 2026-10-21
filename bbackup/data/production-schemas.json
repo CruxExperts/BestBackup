@@ -350,6 +350,10 @@
       "name": {
         "minLength": 1,
         "type": "string"
+      },
+      "quiet_administrative_window_confirmed": {
+        "default": false,
+        "type": "boolean"
       }
     },
     "required": [
@@ -364,6 +368,10 @@
       "name": {
         "minLength": 1,
         "type": "string"
+      },
+      "quiet_administrative_window_confirmed": {
+        "default": false,
+        "type": "boolean"
       }
     },
     "required": [
@@ -382,6 +390,10 @@
       "name": {
         "minLength": 1,
         "type": "string"
+      },
+      "quiet_administrative_window_confirmed": {
+        "default": false,
+        "type": "boolean"
       },
       "snapshot": {
         "minLength": 1,
@@ -405,6 +417,10 @@
       "name": {
         "minLength": 1,
         "type": "string"
+      },
+      "quiet_administrative_window_confirmed": {
+        "default": false,
+        "type": "boolean"
       }
     },
     "required": [
@@ -603,6 +619,10 @@
       "name": {
         "minLength": 1,
         "type": "string"
+      },
+      "quiet_administrative_window_confirmed": {
+        "default": false,
+        "type": "boolean"
       }
     },
     "required": [

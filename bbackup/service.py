@@ -75,6 +75,70 @@ def _overlap(a: Path, b: Path) -> bool:
     return a == b or a in b.parents or b in a.parents
 
 
+def _covered_postgresql_refs(entry: dict, *, source: str,
+                             snapshot_paths: list[str]) -> list[dict]:
+    """Validate the covered export and its file routes before restore dispatch."""
+    coverage = entry.get("coverage")
+    if coverage is None:
+        return []
+    if (not isinstance(snapshot_paths, list)
+            or any(not isinstance(path, str) for path in snapshot_paths)):
+        raise ServiceError("Covered PostgreSQL snapshot paths are invalid")
+    digest = re.compile(r"[0-9a-f]{64}\Z")
+    if (not isinstance(coverage, dict) or coverage.get("source_id") != source
+            or not isinstance(coverage.get("connection"), str)
+            or not coverage["connection"]
+            or not isinstance(coverage.get("database"), str)
+            or coverage.get("database") != entry.get("source_database")
+            or not isinstance(coverage.get("root_id"), str)
+            or not isinstance(coverage.get("cluster_id"), str)
+            or not isinstance(coverage.get("major_version"), str)
+            or not isinstance(coverage.get("data_directory"), str)
+            or not isinstance(entry.get("export_sha256"), str)
+            or not digest.fullmatch(entry["export_sha256"])):
+        raise ServiceError("Covered PostgreSQL export identity is invalid")
+    for key in ("baseline_digest", "system_identifier_sha256", "cluster_inventory_sha256",
+                "global_inventory_sha256", "role_inventory_sha256", "configuration_sha256",
+                "connection_material_sha256", "database_inventory_sha256", "recipe_sha256"):
+        if not isinstance(coverage.get(key), str) or not digest.fullmatch(coverage[key]):
+            raise ServiceError("Covered PostgreSQL evidence is invalid")
+    identity = coverage.get("data_directory_identity")
+    if (not isinstance(identity, dict) or set(identity) != {"device", "inode", "uid", "gid", "mode"}
+            or any(type(value) is not int or value < 0 for value in identity.values())):
+        raise ServiceError("Covered PostgreSQL directory identity is invalid")
+    roots = coverage.get("recovery_file_roots")
+    artifacts = coverage.get("recovery_artifacts")
+    if (not isinstance(roots, list) or not roots or len(roots) > 64
+            or not isinstance(artifacts, list) or len(artifacts) < 3 or len(artifacts) > 130):
+        raise ServiceError("Covered PostgreSQL recovery routes are invalid")
+    root_paths = {}
+    for root in roots:
+        if (not isinstance(root, dict) or set(root) != {"root_id", "path"}
+                or not isinstance(root["root_id"], str)
+                or not isinstance(root["path"], str)):
+            raise ServiceError("Covered PostgreSQL recovery routes are invalid")
+        path = Path(root["path"])
+        if (not path.is_absolute() or ".." in path.parts or root["path"] not in snapshot_paths
+                or root["root_id"] in root_paths):
+            raise ServiceError("Covered PostgreSQL recovery route was not captured")
+        root_paths[root["root_id"]] = path
+    seen = set()
+    for item in artifacts:
+        if (not isinstance(item, dict) or set(item) != {"path", "sha256", "root_id"}
+                or not isinstance(item["path"], str)
+                or not isinstance(item["root_id"], str)
+                or not isinstance(item["sha256"], str)
+                or not digest.fullmatch(item["sha256"]) or item["path"] in seen):
+            raise ServiceError("Covered PostgreSQL recovery artifact is invalid")
+        path = Path(item["path"])
+        root = root_paths.get(item["root_id"])
+        if (root is None or not path.is_absolute() or ".." in path.parts
+                or (path != root and root not in path.parents)):
+            raise ServiceError("Covered PostgreSQL recovery artifact route is invalid")
+        seen.add(item["path"])
+    return artifacts
+
+
 class BackupService:
     def __init__(self, config: Configuration, bindings: HostBindings, *,
                  policy_bytes: bytes | None = None, binding_bytes: bytes | None = None):
@@ -727,7 +791,8 @@ class BackupService:
         except StopIteration:
             raise ServiceError("Unknown job") from None
 
-    def capture(self, job_name, *, cancel=None):
+    def capture(self, job_name, *, cancel=None,
+                quiet_administrative_window_confirmed=False):
         job = self._job(job_name)
         remote_primary = self.repository_roles[job.repository] == "remote-primary"
         if remote_primary:
@@ -737,15 +802,25 @@ class BackupService:
         coverage_exclusions = ()
         sqlite_capture_exclusions = ()
         coverage_sqlite = {}
+        coverage_postgresql = {}
+        validate_coverage = None
         if covered:
             from .linux_coverage import check_coverage
+            from .postgresql_coverage import PostgreSQLCoverageContext
             if self.policy_bytes is None or self.binding_bytes is None:
                 raise ServiceError("Covered capture requires exact enrolled policy and binding snapshots")
             declaration = self.bindings.coverage_declarations.get(job.name)
             if declaration is None:
                 raise ServiceError("Covered capture declaration is missing")
-            coverage = check_coverage(declaration, job.coverage_policy, state=self.state,
-                                      policy_bytes=self.policy_bytes, binding_bytes=self.binding_bytes)
+            pg_sources = {source.name: source for source in sources if source.kind == "postgresql"}
+            pg_context = (PostgreSQLCoverageContext(
+                pg_sources, self.bindings.database_bindings, self.runner, cancel=cancel,
+                quiet_administrative_window=quiet_administrative_window_confirmed)
+                if pg_sources else None)
+            coverage_arguments = {"state": self.state, "policy_bytes": self.policy_bytes,
+                                  "binding_bytes": self.binding_bytes,
+                                  "postgresql_context": pg_context}
+            coverage = check_coverage(declaration, job.coverage_policy, **coverage_arguments)
             if not coverage.capture_ready:
                 raise ServiceError("Covered capture is not ready; inspect and review current coverage")
             expected_items = [(source.name, Path(path), source.kind)
@@ -754,11 +829,55 @@ class BackupService:
             approved_items = [(source_id, path, adapter)
                               for _, path, source_id, adapter in coverage.approved_roots]
             approved = set(approved_items)
-            if (any(source.kind not in ("files", "sqlite") for source in sources)
+            if (any(source.kind not in ("files", "sqlite", "postgresql") for source in sources)
                     or len(expected_items) != len(expected)
                     or len(approved_items) != len(approved)
                     or expected != approved):
                 raise ServiceError("Covered capture sources differ from reviewed root mappings")
+            pg_by_source = {item["source_id"]: item for item in coverage.approved_postgresql}
+            if (len(pg_by_source) != len(coverage.approved_postgresql)
+                    or set(pg_by_source) != set(pg_sources)):
+                raise ServiceError("Covered PostgreSQL sources differ from reviewed logical roots")
+            for name, reviewed in pg_by_source.items():
+                source = pg_sources[name]
+                if (reviewed["connection"] != source.connection
+                        or reviewed["database"] != source.database
+                        or not reviewed.get("baseline_digest")
+                        or not reviewed.get("data_directory_identity")
+                        or not reviewed.get("recovery_artifacts")):
+                    raise ServiceError("Covered PostgreSQL selector or evidence differs")
+                coverage_postgresql[name] = dict(reviewed)
+            physical_roots = {root_id: (path, source_id, adapter)
+                              for root_id, path, source_id, adapter in coverage.approved_roots}
+            for reviewed in pg_by_source.values():
+                for artifact in reviewed["recovery_artifacts"]:
+                    route = physical_roots.get(artifact.get("root_id"))
+                    path = Path(artifact["path"])
+                    if (route is None or route[2] != "files"
+                            or path != route[0] and route[0] not in path.parents
+                            or not any(item.name == route[1] and item.kind == "files"
+                                       and str(route[0]) in item.paths for item in sources)):
+                        raise ServiceError("PostgreSQL recovery artifact is outside reviewed file inputs")
+            for covered_source in coverage_postgresql.values():
+                covered_source["recovery_file_roots"] = [
+                    {"root_id": root_id, "path": str(path)}
+                    for root_id, (path, _, adapter) in physical_roots.items()
+                    if adapter == "files" and any(
+                        artifact["root_id"] == root_id
+                        for artifact in covered_source["recovery_artifacts"])]
+            if pg_sources:
+                approved_pg = coverage.approved_postgresql
+                baseline = coverage.baseline_digest
+                candidate = coverage.candidate_digest
+
+                def validate_coverage():
+                    current = check_coverage(declaration, job.coverage_policy,
+                                             **coverage_arguments)
+                    if (not current.capture_ready or current.baseline_digest != baseline
+                            or current.candidate_digest != candidate
+                            or current.approved_postgresql != approved_pg):
+                        raise ServiceError("Reviewed PostgreSQL coverage changed during capture")
+                    return current
             coverage_exclusions = coverage.approved_exclusions
             sqlite_capture_exclusions = coverage.sqlite_capture_exclusions
             sqlite_by_source = {item["source_id"]: item for item in coverage.approved_sqlite}
@@ -810,6 +929,8 @@ class BackupService:
             self.ledger.mark_capture_artifacts(artifacts.record["repository_id"], capture_id)
 
         def finalize_capture(plan, result):
+            if validate_coverage is not None:
+                validate_coverage()
             tail = result.stdout_tail
             if isinstance(tail, bytes):
                 tail = tail.decode("utf-8", errors="replace")
@@ -851,6 +972,8 @@ class BackupService:
                     operation_id=capture_id,
                     resource_monitor=monitor,
                     coverage_sqlite=coverage_sqlite,
+                    coverage_postgresql=coverage_postgresql,
+                    validate_coverage=validate_coverage,
                     durable_artifacts=artifacts,
                 ))
             except ResourceLimitError as exc:
@@ -885,6 +1008,8 @@ class BackupService:
                             verify_sqlite_identity(Path(reviewed["path"]), reviewed["identity"])
                     except CoverageError:
                         raise ServiceError("Reviewed SQLite source identity changed before capture dispatch") from None
+                if validate_coverage is not None:
+                    validate_coverage()
                 if coverage_exclusions or sqlite_capture_exclusions:
                     from .linux_coverage import restic_literal_exclusion
                     for excluded in dict.fromkeys((*coverage_exclusions, *sqlite_capture_exclusions)):
@@ -984,11 +1109,12 @@ class BackupService:
                 if inspect([*engine.base_args(), "--no-lock", "list", "locks"]):
                     raise ServiceError("Remote repository has an active Restic lock")
 
-            def inspect_export(snapshot_id, item):
+            def inspect_export(snapshot_id, item, *, return_bytes=False):
                 expected_size = item["size"]
                 expected_hash = item["sha256"]
                 observed_size = 0
                 digest = hashlib.sha256()
+                captured = bytearray() if return_bytes else None
 
                 def receive(chunk):
                     nonlocal observed_size
@@ -996,6 +1122,8 @@ class BackupService:
                     if observed_size > expected_size:
                         raise ServiceError("Remote capture export exceeds the recorded size")
                     digest.update(chunk)
+                    if captured is not None:
+                        captured.extend(chunk)
 
                 plan = OperationPlan(
                     operation_id, repository_id, "inspect",
@@ -1009,6 +1137,53 @@ class BackupService:
                         or result.stdout_bytes != observed_size or observed_size != expected_size
                         or digest.hexdigest() != expected_hash or result.stdout_tail):
                     raise ServiceError("Remote capture export differs from the retained record")
+                return bytes(captured) if captured is not None else None
+
+            def inspect_covered_material(snapshot_id, manifest_bytes):
+                try:
+                    manifest_data = strict_json(manifest_bytes)
+                    if (manifest_data["schema_version"] != 2
+                            or not isinstance(manifest_data["exports"], list)):
+                        raise ValueError()
+                    covered = [entry for entry in manifest_data["exports"]
+                               if isinstance(entry, dict) and entry.get("coverage") is not None]
+                    if not covered:
+                        return
+                    snapshot_data = strict_json(inspect(
+                        [*engine.base_args(), "--no-lock", "cat", "snapshot", snapshot_id]))
+                    paths = snapshot_data["paths"]
+                    if not isinstance(paths, list):
+                        raise ValueError()
+                    for entry in covered:
+                        if entry.get("kind") != "postgresql":
+                            raise ValueError()
+                        refs = _covered_postgresql_refs(
+                            entry, source=entry["source"], snapshot_paths=paths)
+                        for ref in refs:
+                            observed_size = 0
+                            digest = hashlib.sha256()
+
+                            def receive(chunk):
+                                nonlocal observed_size
+                                observed_size += len(chunk)
+                                if observed_size > 64 * 1024 * 1024:
+                                    raise ServiceError("Covered PostgreSQL recovery artifact exceeds bound")
+                                digest.update(chunk)
+
+                            plan = OperationPlan(
+                                operation_id, repository_id, "inspect",
+                                tuple([*engine.base_args(), "--no-lock", "dump", snapshot_id,
+                                       ref["path"]]),
+                                env=self._operation_environment(repository), timeout_seconds=3600,
+                            )
+                            result = self.runner.run(plan, cancel_event=cancel,
+                                                     on_stdout_chunk=receive)
+                            if (result.status is not OperationStatus.SUCCEEDED or result.exit_code != 0
+                                    or result.stdout_bytes != observed_size or result.stdout_tail
+                                    or digest.hexdigest() != ref["sha256"]):
+                                raise ServiceError("Covered PostgreSQL recovery artifact differs from reviewed manifest")
+                except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+                    raise ServiceError("Covered PostgreSQL recovery manifest is invalid") from None
 
             try:
                 require_no_repository_locks()
@@ -1039,7 +1214,7 @@ class BackupService:
                 for export in artifacts.record["exports"]:
                     inspect_export(snapshot, export)
                 if manifest is not None:
-                    inspect_export(snapshot, manifest)
+                    inspect_covered_material(snapshot, inspect_export(snapshot, manifest, return_bytes=True))
                 require_no_repository_locks()
                 replicas = artifacts.record["required_replicas"]
                 if not isinstance(replicas, dict):
@@ -1868,6 +2043,9 @@ class BackupService:
                 raise ValueError()
         except (ValueError, TypeError, KeyError):
             raise ServiceError("Snapshot does not contain a valid selected native database export") from None
+        recovery_artifacts = (_covered_postgresql_refs(
+            entry, source=source, snapshot_paths=metadata["paths"])
+            if binding.kind == "postgresql" else [])
         # The bounded runner streams the archive directly to private temporary
         # storage. No original-host source configuration or ledger is required.
         with tempfile.TemporaryDirectory(prefix="database-restore-", dir=self.state) as staging:
@@ -1876,6 +2054,30 @@ class BackupService:
                 archive.chmod(0o600)
                 self._execute(repository, [*engine.base_args(), "dump", snapshot, str(archive_path)],
                               label="database-export", cancel=cancel, on_stdout=output.write)
+            if recovery_artifacts:
+                archive_hash = hashlib.sha256()
+                with archive.open("rb") as exported:
+                    for chunk in iter(lambda: exported.read(1024 * 1024), b""):
+                        archive_hash.update(chunk)
+                if archive_hash.hexdigest() != entry["export_sha256"]:
+                    raise ServiceError("Covered PostgreSQL export digest differs from reviewed manifest")
+                for artifact in recovery_artifacts:
+                    digest = hashlib.sha256()
+                    size = 0
+
+                    def hash_artifact(chunk):
+                        nonlocal size
+                        size += len(chunk)
+                        if size > 64 * 1024 * 1024:
+                            raise ServiceError("Covered PostgreSQL recovery artifact exceeds bound")
+                        digest.update(chunk)
+
+                    _, recovered = self._execute(repository,
+                        [*engine.base_args(), "dump", snapshot, artifact["path"]],
+                        label="database-material", cancel=cancel, on_stdout=hash_artifact)
+                    if (recovered.stdout_bytes != size
+                            or digest.hexdigest() != artifact["sha256"]):
+                        raise ServiceError("Covered PostgreSQL recovery artifact digest differs")
             client = "pg_restore" if binding.kind == "postgresql" else binding.kind
             plan = OperationPlan.create(identity, "database-restore", [client])
             with self.ledger.begin(plan) as lease:
@@ -1901,8 +2103,10 @@ class BackupService:
         return {"operation_id": plan.operation_id, "snapshot_id": snapshot,
                 "database_validated": True, "application_validated": False, "target_database": result}
 
-    def run_job(self, job_name, *, cancel=None):
-        result = self.capture(job_name, cancel=cancel)
+    def run_job(self, job_name, *, cancel=None,
+                quiet_administrative_window_confirmed=False):
+        result = self.capture(job_name, cancel=cancel,
+            quiet_administrative_window_confirmed=quiet_administrative_window_confirmed)
         result["replicas"] = []
         result["replica_failures"] = []
         for destination in self._job(job_name).replicas:

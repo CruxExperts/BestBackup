@@ -22,6 +22,8 @@ from typing import Any
 from .enrollment import (coverage_evidence_bytes, evidence_bytes, policy_lease,
                          verify_bytes)
 from .models import ConfigurationError, strict_json
+from .postgresql_coverage import (PostgreSQLCoverageContext,
+                                  inspect_postgresql_coverage)
 
 
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
@@ -67,10 +69,13 @@ class CoverageCheck:
     approved_sqlite: tuple[dict[str, Any], ...] = field(default=(), repr=False)
     sqlite_capture_exclusions: tuple[Path, ...] = field(default=(), repr=False)
     recovery_status: str = "untested"
+    approved_postgresql: tuple[dict[str, Any], ...] = field(default=(), repr=False)
+    postgresql_capture_exclusions: tuple[Path, ...] = field(default=(), repr=False)
 
     @property
     def capture_ready(self) -> bool:
-        return self.coverage_status == "complete" and bool(self.approved_roots)
+        return self.coverage_status == "complete" and bool(
+            self.approved_roots or self.approved_postgresql)
 
     def public_result(self) -> dict[str, object]:
         return {"coverage_status": self.coverage_status, "recovery_status": self.recovery_status,
@@ -188,13 +193,18 @@ def _recipe(raw: Any) -> dict[str, str]:
 
 
 def _declaration(raw: Any, scope: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(raw, dict) or set(raw) != {
+    schema1_keys = {
         "schema_version", "roots", "exclusions", "mount_decisions",
         "identity_decisions", "applications", "package_reconstruction", "reconstruction_evidence",
-    } or type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+    }
+    if (not isinstance(raw, dict) or type(raw.get("schema_version")) is not int
+            or (raw["schema_version"] == 1 and set(raw) != schema1_keys)
+            or (raw["schema_version"] == 2 and set(raw) != schema1_keys | {
+                "database_roots", "postgresql_clusters"})
+            or raw["schema_version"] not in (1, 2)):
         raise CoverageError("Invalid private coverage declaration schema")
     roots = []
-    if not isinstance(raw["roots"], list) or len(raw["roots"]) != len(scope["approved_roots"]):
+    if not isinstance(raw["roots"], list) or len(raw["roots"]) > 64:
         raise CoverageError("Private coverage roots must match portable scope")
     for item in raw["roots"]:
         if not isinstance(item, dict) or set(item) != {"id", "path", "source_id", "adapter"}:
@@ -206,8 +216,12 @@ def _declaration(raw: Any, scope: dict[str, Any]) -> dict[str, Any]:
         if root["adapter"] not in ("files", "sqlite", "postgresql", "mysql", "mariadb"):
             raise CoverageError("Unsupported declared capture adapter")
         roots.append(root)
+    if raw["schema_version"] == 2 and any(root["adapter"] not in ("files", "sqlite")
+                                          for root in roots):
+        raise CoverageError("Schema-2 physical roots must use file or SQLite adapters")
     if {root["id"] for root in roots} != set(scope["approved_roots"]):
-        raise CoverageError("Private coverage roots differ from portable scope")
+        if raw["schema_version"] == 1:
+            raise CoverageError("Private coverage roots differ from portable scope")
     if len({root["path"] for root in roots}) != len(roots):
         raise CoverageError("Duplicate private coverage path")
     exclusions = []
@@ -280,10 +294,105 @@ def _declaration(raw: Any, scope: dict[str, Any]) -> dict[str, Any]:
                          "evidence_sha256": _sha(item["evidence_sha256"], "evidence")})
     if len({(item["recipe_id"], item["recipe_sha256"]) for item in evidence}) != len(evidence):
         raise CoverageError("Duplicate reconstruction evidence reference")
-    return {"schema_version": 1, "roots": roots, "exclusions": exclusions,
-            "mount_decisions": mounts, "identity_decisions": identities,
-            "applications": applications, "package_reconstruction": package_recipe,
-            "reconstruction_evidence": evidence}
+    database_roots = []
+    clusters = []
+    if raw["schema_version"] == 2:
+        if (not isinstance(raw["database_roots"], list) or not raw["database_roots"]
+                or len(raw["database_roots"]) > 64
+                or not isinstance(raw["postgresql_clusters"], list)
+                or len(raw["postgresql_clusters"]) != 1):
+            raise CoverageError("PostgreSQL coverage requires one bounded cluster")
+        for item in raw["database_roots"]:
+            if not isinstance(item, dict) or set(item) != {
+                    "id", "adapter", "source_id", "cluster_id", "connection", "database"}:
+                raise CoverageError("Invalid logical PostgreSQL database root")
+            database = item["database"]
+            if (item["adapter"] != "postgresql" or not isinstance(database, str)
+                    or not database or len(database) > 128 or any(c in database for c in "\0\r\n")):
+                raise CoverageError("Invalid logical PostgreSQL database root")
+            database_roots.append({"id": _identifier(item["id"], "root"),
+                                   "adapter": "postgresql",
+                                   "source_id": _identifier(item["source_id"], "source"),
+                                   "cluster_id": _identifier(item["cluster_id"], "cluster"),
+                                   "connection": _identifier(item["connection"], "connection"),
+                                   "database": database})
+        for item in raw["postgresql_clusters"]:
+            if not isinstance(item, dict) or set(item) != {
+                    "id", "connection", "data_directory", "databases", "reconstruction",
+                    "consistency_window"}:
+                raise CoverageError("Invalid PostgreSQL cluster declaration")
+            if item["consistency_window"] != {"quiet_administrative_window": True,
+                                              "schema_changes_frozen": True}:
+                raise CoverageError("PostgreSQL consistency window is not explicitly attested")
+            if not isinstance(item["databases"], list) or not item["databases"] or len(item["databases"]) > 4096:
+                raise CoverageError("PostgreSQL database decisions must be complete and bounded")
+            cluster_id = _identifier(item["id"], "cluster")
+            connection = _identifier(item["connection"], "connection")
+            data_directory = str(_absolute(item["data_directory"], "PostgreSQL data directory"))
+            decisions = []
+            for decision in item["databases"]:
+                if (not isinstance(decision, dict) or decision.get("decision") not in ("capture", "reconstruct")
+                        or set(decision) != ({"name", "oid", "decision", "root_id"}
+                                            if decision.get("decision") == "capture"
+                                            else {"name", "oid", "decision"})):
+                    raise CoverageError("Invalid PostgreSQL database reconstruction decision")
+                name, oid = decision["name"], decision["oid"]
+                if (not isinstance(name, str) or not name or len(name) > 128
+                        or any(c in name for c in "\0\r\n") or type(oid) is not int or oid <= 0):
+                    raise CoverageError("Invalid PostgreSQL database identity")
+                clean = {"name": name, "oid": oid, "decision": decision["decision"]}
+                if decision["decision"] == "capture":
+                    clean["root_id"] = _identifier(decision["root_id"], "root")
+                decisions.append(clean)
+            if (len({choice["name"] for choice in decisions}) != len(decisions)
+                    or len({choice["oid"] for choice in decisions}) != len(decisions)):
+                raise CoverageError("Duplicate PostgreSQL database decision")
+            reconstruction = item["reconstruction"]
+            if not isinstance(reconstruction, dict) or set(reconstruction) != {
+                    "recipe", "procedure_path", "evidence_path", "evidence_sha256", "recovery_material"}:
+                raise CoverageError("PostgreSQL reconstruction evidence is incomplete")
+            material = reconstruction["recovery_material"]
+            if not isinstance(material, list) or not material or len(material) > 128:
+                raise CoverageError("PostgreSQL recovery material references must be bounded")
+            material_clean = []
+            for ref in material:
+                if not isinstance(ref, dict) or set(ref) != {"path", "sha256"}:
+                    raise CoverageError("Invalid PostgreSQL recovery material reference")
+                material_clean.append({"path": str(_absolute(ref["path"], "recovery material")),
+                                       "sha256": _sha(ref["sha256"], "recovery material")})
+            if len({ref["path"] for ref in material_clean}) != len(material_clean):
+                raise CoverageError("Duplicate PostgreSQL recovery material reference")
+            clusters.append({"id": cluster_id, "connection": connection,
+                "data_directory": data_directory, "databases": decisions,
+                "consistency_window": item["consistency_window"],
+                "reconstruction": {"recipe": _recipe(reconstruction["recipe"]),
+                    "procedure_path": str(_absolute(reconstruction["procedure_path"], "procedure")),
+                    "evidence_path": str(_absolute(reconstruction["evidence_path"], "evidence")),
+                    "evidence_sha256": _sha(reconstruction["evidence_sha256"], "evidence"),
+                    "recovery_material": material_clean}})
+        if len({root["id"] for root in database_roots} | {root["id"] for root in roots}) != len(database_roots) + len(roots):
+            raise CoverageError("Duplicate physical and logical coverage root")
+        if {root["id"] for root in database_roots} | {root["id"] for root in roots} != set(scope["approved_roots"]):
+            raise CoverageError("Private coverage roots differ from portable scope")
+        cluster = clusters[0]
+        if cluster["connection"] != database_roots[0]["connection"]:
+            raise CoverageError("PostgreSQL root and cluster selectors differ")
+        if any(root["cluster_id"] != cluster["id"] or root["connection"] != cluster["connection"]
+               for root in database_roots):
+            raise CoverageError("PostgreSQL database roots must select the declared local cluster")
+        capture_ids = {choice["root_id"] for choice in cluster["databases"]
+                       if choice["decision"] == "capture"}
+        if capture_ids != {root["id"] for root in database_roots}:
+            raise CoverageError("PostgreSQL capture decisions differ from logical roots")
+    declaration = {"schema_version": raw["schema_version"], "roots": roots,
+                   "exclusions": exclusions, "mount_decisions": mounts,
+                   "identity_decisions": identities, "applications": applications,
+                   "package_reconstruction": package_recipe,
+                   "reconstruction_evidence": evidence}
+    if raw["schema_version"] == 2:
+        declaration["database_roots"] = database_roots
+        declaration["postgresql_clusters"] = clusters
+    return declaration
 
 
 def _bounded_read(path: Path, limit: int = _MAX_INVENTORY) -> bytes:
@@ -631,7 +740,8 @@ def _walk(root: Path, exclusions: set[Path], mounts: dict[Path, dict], decisions
             continue
         stack.extend((child, depth + 1) for child in children)
 def _scan(declaration: dict[str, Any], scope: dict[str, Any], *, inventory: InventoryPaths,
-          policy_bytes: bytes, binding_bytes: bytes, enforce_mount_ids: bool = True) -> dict[str, Any]:
+          policy_bytes: bytes, binding_bytes: bytes, enforce_mount_ids: bool = True,
+          postgresql_context: PostgreSQLCoverageContext | None = None) -> dict[str, Any]:
     reasons: set[str] = set()
     if scope["require_privileged"] and os.geteuid() != 0:
         reasons.add("privileged_inventory_required")
@@ -641,12 +751,25 @@ def _scan(declaration: dict[str, Any], scope: dict[str, Any], *, inventory: Inve
     package_digest = hashlib.sha256(_bounded_read(inventory.packages)).hexdigest()
     units = _application_units(inventory.application_units)
     roots = {item["id"]: Path(item["path"]) for item in declaration["roots"]}
+    postgresql_data_directories = [Path(item["data_directory"])
+                                   for item in declaration.get("postgresql_clusters", [])]
     # Only mounts whose data boundary can affect a reviewed root belong in
     # drift identity. systemd PrivateTmp and other unrelated namespace mounts
     # may have new kernel mount IDs on every invocation.
     mounts = [item for item in mount_inventory if any(
         _within(Path(item["mountpoint"]), root) or _within(root, Path(item["mountpoint"]))
-        for root in roots.values())]
+        for root in roots.values()) and not any(
+            _within(Path(item["mountpoint"]), data_directory)
+            for data_directory in postgresql_data_directories)]
+    postgresql_storage_mounts = [
+        {key: item[key] for key in ("root", "mountpoint", "filesystem", "source_digest")}
+        for item in mount_inventory if any(
+            _within(Path(item["mountpoint"]), data_directory)
+            for data_directory in postgresql_data_directories)]
+    if any(Path(item["mountpoint"]) != data_directory
+           for item in postgresql_storage_mounts for data_directory in postgresql_data_directories
+           if _within(Path(item["mountpoint"]), data_directory)):
+        reasons.add("postgresql_external_storage_mount_unsupported")
     stable_mounts = sorted(({key: item[key] for key in
                              ("root", "mountpoint", "filesystem", "source_digest")}
                             for item in mounts),
@@ -656,6 +779,29 @@ def _scan(declaration: dict[str, Any], scope: dict[str, Any], *, inventory: Inve
         reasons.add("capture_adapter_unsupported_for_coverage")
     exclusions = {Path(item["path"]) for item in declaration["exclusions"]}
     reasons.update(_evidence_reasons(declaration))
+    postgresql = {"reasons": [], "approved_postgresql": [],
+                  "capture_exclusions": [], "clusters": []}
+    if declaration["schema_version"] == 2:
+        postgresql = inspect_postgresql_coverage(declaration["database_roots"],
+                                                 declaration["postgresql_clusters"],
+                                                 postgresql_context, declaration["roots"],
+                                                 declaration["exclusions"])
+        reasons.update(postgresql["reasons"])
+    postgresql_skip_paths: set[Path] = set()
+    postgresql_capture_exclusions: set[Path] = set()
+    for raw_directory in postgresql["capture_exclusions"]:
+        data_directory = Path(raw_directory)
+        overlaps = [item for item in declaration["roots"]
+                    if _within(Path(item["path"]), data_directory)
+                    or _within(data_directory, Path(item["path"]))]
+        unsafe_overlap = [item for item in overlaps
+                          if item["adapter"] != "files"
+                          or _within(Path(item["path"]), data_directory)]
+        if unsafe_overlap:
+            reasons.add("postgresql_raw_storage_root_conflict")
+            continue
+        postgresql_skip_paths.add(data_directory)
+        postgresql_capture_exclusions.add(data_directory)
     sqlite_roots = [item for item in declaration["roots"] if item["adapter"] == "sqlite"]
     sqlite_identities: dict[str, dict[str, Any]] = {}
     sqlite_recipes: dict[str, dict[str, str]] = {}
@@ -732,10 +878,13 @@ def _scan(declaration: dict[str, Any], scope: dict[str, Any], *, inventory: Inve
                 reasons.add("application_state_unaccounted")
     if not any(_within(inventory.packages, root) for root in roots.values()) and declaration["package_reconstruction"] is None:
         reasons.add("package_reinstall_unaccounted")
-    counts = {"roots": len(roots), "entries": 0, "files": 0, "directories": 0,
+    database_roots = declaration.get("database_roots", [])
+    counts = {"roots": len(roots) + len(database_roots), "entries": 0, "files": 0, "directories": 0,
               "symlinks": 0, "excluded": 0, "users": len(users), "groups": len(groups),
               "mounts": len(mounts), "applications": len(units),
               "sqlite_databases": len(sqlite_roots)}
+    if declaration["schema_version"] == 2:
+        counts["postgresql_databases"] = len(database_roots)
     metadata = hashlib.sha256()
     links: dict[tuple[int, int], tuple[int, int]] = {}
     for item in declaration["roots"]:
@@ -755,7 +904,7 @@ def _scan(declaration: dict[str, Any], scope: dict[str, Any], *, inventory: Inve
                 metadata.update(_canonical(["sqlite", str(root), identity]))
             continue
         _walk(root, exclusions, mount_by_path, decisions, reasons, counts, metadata, links,
-              skipped=sqlite_skip_paths)
+              skipped=sqlite_skip_paths | postgresql_skip_paths)
     if any(observed < expected for observed, expected in links.values()):
         reasons.add("hardlink_scope_unproven")
     structural = {"users": users, "groups": groups, "mounts": stable_mounts,
@@ -766,17 +915,26 @@ def _scan(declaration: dict[str, Any], scope: dict[str, Any], *, inventory: Inve
                                 if item["adapter"] == "sqlite" else {})}
                             for item in declaration["roots"]],
                   "package_digest": package_digest}
+    if declaration["schema_version"] == 2:
+        structural["database_roots"] = database_roots
+        structural["postgresql"] = postgresql["clusters"]
+        structural["postgresql_storage_mounts"] = sorted(postgresql_storage_mounts,
+            key=lambda item: (item["mountpoint"], item["root"], item["filesystem"], item["source_digest"]))
     approved_sqlite = [{"root_id": root["id"], "path": root["path"],
                         "source_id": root["source_id"],
                         "identity": sqlite_identities.get(root["id"]),
                         "recipe_digest": sqlite_recipes.get(root["id"], {}).get("recipe_sha256")}
                        for root in sqlite_roots]
-    return {"schema_version": 1, "declaration_digest": _digest(declaration),
+    candidate = {"schema_version": 1, "declaration_digest": _digest(declaration),
             "scope_policy_digest": _digest(scope), "enrollment": evidence_bytes(policy_bytes, binding_bytes),
             "structural_digest": _digest(structural), "metadata_digest": metadata.hexdigest(),
             "counts": counts, "reasons": sorted(reasons), "roots": declaration["roots"],
             "approved_sqlite": approved_sqlite,
             "sqlite_capture_exclusions": sorted(map(str, sqlite_capture_exclusions))}
+    if declaration["schema_version"] == 2:
+        candidate["approved_postgresql"] = postgresql["approved_postgresql"]
+        candidate["postgresql_capture_exclusions"] = sorted(map(str, postgresql_capture_exclusions))
+    return candidate
 
 
 def _private_directory(state: Path, *, create: bool = True) -> Path:
@@ -849,12 +1007,14 @@ def _inputs(declaration_path: Path, scope_policy: Any):
 
 def discover_coverage(declaration_path: Path, scope_policy: Any, *, state: Path,
                       policy_bytes: bytes, binding_bytes: bytes,
-                      inventory: InventoryPaths = InventoryPaths()) -> dict[str, object]:
+                      inventory: InventoryPaths = InventoryPaths(),
+                      postgresql_context: PostgreSQLCoverageContext | None = None) -> dict[str, object]:
     """Inventory bounded private scope and persist an immutable review candidate."""
     verify_bytes(state, policy_bytes, binding_bytes)
     declaration, scope = _inputs(declaration_path, scope_policy)
     candidate = _scan(declaration, scope, inventory=inventory,
-                      policy_bytes=policy_bytes, binding_bytes=binding_bytes)
+                      policy_bytes=policy_bytes, binding_bytes=binding_bytes,
+                      postgresql_context=postgresql_context)
     base = _private_directory(state)
     candidates = _private_child(base, "candidates", create=True)
     digest = _write_immutable(candidates, candidate)
@@ -868,7 +1028,8 @@ def discover_coverage(declaration_path: Path, scope_policy: Any, *, state: Path,
 
 def review_coverage(declaration_path: Path, scope_policy: Any, candidate_digest: str, *, state: Path,
                     policy_bytes: bytes, binding_bytes: bytes,
-                    inventory: InventoryPaths = InventoryPaths()) -> dict[str, object]:
+                    inventory: InventoryPaths = InventoryPaths(),
+                    postgresql_context: PostgreSQLCoverageContext | None = None) -> dict[str, object]:
     """Approve only a complete, exact current candidate under the policy lease."""
     _sha(candidate_digest, "candidate")
     with policy_lease(state, exclusive=True):
@@ -881,7 +1042,8 @@ def review_coverage(declaration_path: Path, scope_policy: Any, candidate_digest:
         except (UnicodeError, ConfigurationError):
             raise CoverageError("Reviewed coverage candidate is invalid") from None
         current = _scan(declaration, scope, inventory=inventory,
-                        policy_bytes=policy_bytes, binding_bytes=binding_bytes)
+                        policy_bytes=policy_bytes, binding_bytes=binding_bytes,
+                        postgresql_context=postgresql_context)
         if _digest(recorded) != candidate_digest or _digest(current) != candidate_digest:
             raise CoverageError("Coverage candidate changed; discover and review again")
         if current["reasons"]:
@@ -922,7 +1084,8 @@ def review_coverage(declaration_path: Path, scope_policy: Any, candidate_digest:
 
 def check_coverage(declaration_path: Path, scope_policy: Any, *, state: Path,
                    policy_bytes: bytes, binding_bytes: bytes,
-                   inventory: InventoryPaths = InventoryPaths()) -> CoverageCheck:
+                   inventory: InventoryPaths = InventoryPaths(),
+                   postgresql_context: PostgreSQLCoverageContext | None = None) -> CoverageCheck:
     """Verify enrollment, immutable baseline and current structural coverage."""
     try:
         verify_bytes(state, policy_bytes, binding_bytes)
@@ -958,7 +1121,7 @@ def check_coverage(declaration_path: Path, scope_policy: Any, *, state: Path,
     try:
         current = _scan(declaration, scope, inventory=inventory,
                         policy_bytes=policy_bytes, binding_bytes=binding_bytes,
-                        enforce_mount_ids=False)
+                        enforce_mount_ids=False, postgresql_context=postgresql_context)
     except CoverageError:
         return CoverageCheck("incomplete", ("inventory_unavailable",), baseline_digest, None, {})
     candidate_digest = _digest(current)
@@ -974,9 +1137,17 @@ def check_coverage(declaration_path: Path, scope_policy: Any, *, state: Path,
     approved_sqlite = tuple({**item, "baseline_digest": baseline_digest}
                             for item in current["approved_sqlite"])
     sqlite_capture_exclusions = tuple(Path(path) for path in current["sqlite_capture_exclusions"])
+    approved_postgresql = tuple({**item, "baseline_digest": baseline_digest}
+                                for item in current.get("approved_postgresql", ()))
+    postgresql_capture_exclusions = tuple(Path(path) for path in
+                                          current.get("postgresql_capture_exclusions", ()))
+    if declaration["schema_version"] == 2:
+        exclusions = tuple(sorted(set(exclusions) | set(postgresql_capture_exclusions), key=str))
     return CoverageCheck("complete", (), baseline_digest, candidate_digest,
                          current["counts"], roots, exclusions, approved_sqlite,
-                         sqlite_capture_exclusions)
+                         sqlite_capture_exclusions,
+                         approved_postgresql=approved_postgresql,
+                         postgresql_capture_exclusions=postgresql_capture_exclusions)
 
 
 def evaluate_recovery_evidence(evidence_path: Path | None, *, baseline_digest: str,

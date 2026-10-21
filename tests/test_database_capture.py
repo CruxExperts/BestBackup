@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import threading
 import time
 from pathlib import Path
@@ -96,6 +97,44 @@ def test_postgresql_custom_dump_streams_to_private_temporary_file(
         assert exported.stat().st_mode & 0o777 == 0o600
 
     assert exported is not None and not exported.exists()
+
+
+def test_covered_postgresql_manifest_binds_export_and_file_inputs(tmp_path, monkeypatch):
+    clients = tmp_path / "clients"
+    clients.mkdir()
+    _script(clients, "pg_dump", "printf 'PGDMP-reviewed-database'\n")
+    monkeypatch.setenv("PATH", str(clients))
+    binding = _postgres_binding(tmp_path)
+    recovery = tmp_path / "recovery"
+    recovery.mkdir()
+    material = _private_file(recovery / "roles.sql", "reviewed recovery")
+    reviewed = {"source_id": "database", "connection": "production",
+                "database": "app_db", "root_id": "app_root", "cluster_id": "primary",
+                "baseline_digest": "a" * 64,
+                "recovery_artifacts": [{"path": str(material),
+                    "sha256": hashlib.sha256(material.read_bytes()).hexdigest(),
+                    "root_id": "recovery_root"}],
+                "recovery_file_roots": [{"root_id": "recovery_root", "path": str(recovery)}]}
+    checks = []
+    with capture_sources((Source("files", "files", (str(recovery),)), _source("postgresql")),
+                         tmp_path, database_bindings={"production": binding},
+                         coverage_postgresql={"database": reviewed},
+                         validate_coverage=lambda: checks.append("checked")) as paths:
+        assert str(recovery) in paths
+        manifest = json.loads(Path(paths[-1]).read_text())
+        entry = manifest["exports"][0]
+        exported = Path(entry["path"])
+        assert entry["source_database"] == "app_db"
+        assert entry["coverage"] == reviewed
+        assert entry["export_sha256"] == hashlib.sha256(exported.read_bytes()).hexdigest()
+    assert checks == ["checked"]
+
+    with pytest.raises(CaptureError, match="mapping differs"):
+        with capture_sources((_source("postgresql"),), tmp_path,
+                             database_bindings={"production": binding},
+                             coverage_postgresql={"database": {**reviewed,
+                                 "database": "wrong"}}):
+            pytest.fail("mismatched logical source became a capture")
 
 
 @pytest.mark.parametrize("output", ["", "not-a-custom-archive"])

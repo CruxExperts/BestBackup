@@ -1,6 +1,8 @@
 # ruff: noqa: F811
 import json
 from dataclasses import asdict
+from pathlib import Path
+from types import SimpleNamespace
 
 from click.testing import CliRunner
 import pytest
@@ -66,6 +68,24 @@ def test_schema_and_sanitized_listing(service):
     assert ".password" not in result.output and "repository" not in json.loads(result.output)["data"][0]
     help_data = execute_operation("skills", {"name": "service install"})["service install"]
     assert help_data["ui"]["activate"]["help"].startswith("Enable and start")
+
+
+def test_manual_postgresql_window_flag_is_explicit_and_defaults_false(service, monkeypatch):
+    from bbackup.service import BackupService
+    observed = []
+
+    def run_job(self, name, *, cancel=None, quiet_administrative_window_confirmed=False):
+        observed.append((name, quiet_administrative_window_confirmed))
+        return {"manual_window": quiet_administrative_window_confirmed}
+
+    monkeypatch.setattr(BackupService, "run_job", run_job)
+    assert invoke(service, ["jobs", "run", "--name", "daily"]).exit_code == 0
+    result = invoke(service, ["jobs", "run", "--name", "daily",
+                              "--quiet-administrative-window-confirmed"])
+    assert result.exit_code == 0
+    assert observed == [("daily", False), ("daily", True)]
+    schema = json.loads(invoke(service, ["coverage", "discover", "--schema"]).output)["data"]
+    assert schema["properties"]["quiet_administrative_window_confirmed"]["type"] == "boolean"
 
 
 @pytest.mark.parametrize("quiet_window", [False, True])
@@ -296,6 +316,43 @@ def test_coverage_cli_uses_enrolled_bytes_and_exclusive_review_owner(service, tm
     result = invoke(service, ["coverage", "review", "--name", "daily", "--candidate-digest", "a" * 64])
     assert result.exit_code == 0, result.output
     assert calls == ["discover", "review"]
+
+
+def test_postgresql_coverage_operations_forward_manual_window_and_cancel(monkeypatch):
+    from threading import Event
+    from bbackup import production_operations as module
+
+    cancel = Event()
+    job = SimpleNamespace(name="daily", coverage_policy={"schema_version": 1},
+                          sources=("database",))
+    pg_source = SimpleNamespace(name="database", kind="postgresql")
+    configuration = SimpleNamespace(jobs=(job,), sources=(pg_source,))
+    resolved = SimpleNamespace(name="database", kind="postgresql")
+    bindings = SimpleNamespace(state_dir=Path("/private/state"),
+        coverage_declarations={"daily": Path("/private/declaration")},
+        source_bindings={"database": SimpleNamespace(resolve=lambda _source: resolved)},
+        database_bindings={"source_pg": object()})
+    seen = []
+
+    def inspect(_path, _policy, **kwargs):
+        context = kwargs["postgresql_context"]
+        seen.append((context.quiet_administrative_window, context.cancel,
+                     context.sources["database"] is resolved))
+        return SimpleNamespace(capture_ready=True, baseline_digest="a" * 64,
+                               public_result=lambda: {"coverage_status": "complete"})
+
+    monkeypatch.setattr(module, "discover_coverage", inspect)
+    monkeypatch.setattr(module, "review_coverage", lambda path, policy, candidate, **kw:
+                        inspect(path, policy, **kw))
+    monkeypatch.setattr(module, "check_coverage", inspect)
+    monkeypatch.setattr(module, "evaluate_recovery_evidence", lambda *_args, **_kwargs: {"ok": True})
+    for command in ("coverage discover", "coverage review", "coverage check",
+                    "coverage recovery-evidence"):
+        values = {"name": "daily", "quiet_administrative_window_confirmed": True,
+                  "candidate_digest": "a" * 64, "snapshot": "b" * 64}
+        module._coverage_operation(configuration, bindings, b"policy", b"bindings",
+                                   command, values, cancel=cancel)
+    assert seen == [(True, cancel, True)] * 4
 
 
 def test_coverage_cli_sanitizes_errors_and_does_not_approve_an_ordinary_job(service, monkeypatch):

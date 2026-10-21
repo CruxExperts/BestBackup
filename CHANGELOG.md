@@ -36,10 +36,23 @@ current uv-based install, development, and release instructions.
   SQLite exports carry provenance in the encrypted capture manifest; live
   database/journal files are omitted from file-tree capture. Complete-machine
   recovery remains unqualified.
+- Experimental manual PostgreSQL covered capture adds schema-2 private cluster
+  and database decisions, per-database `pg_dump` archives, digest-bound recovery
+  artifacts, and an explicit administrator-coordinated quiet-window assertion.
+  Database-level ownership, ACLs, and connection limits require a verified
+  reconstruction procedure after native restore.
+  A local covered capture and replacement rehearsal passed; stable v2.0.3
+  qualification and ordinary PostgreSQL adapters are unchanged.
 - Refreshed matching 1280×640 GitHub social preview artwork, embedded ownership metadata, checked provenance, and explicit repository-settings upload instructions.
 
 ### Qualification evidence
 
+- On 2026-10-21, isolated PostgreSQL 17.11 containers passed covered capture
+  and restore into a fresh replacement database. The encrypted snapshot omitted
+  raw PostgreSQL files; recovered materials and their tested procedure rebuilt
+  database ownership, ACLs, connection limits, and three UTF-8 rows. The fixture
+  contained 10,006 logical bytes. This is local manual-path evidence, with no
+  off-host, unattended, or whole-machine qualification.
 - On 2026-10-21, a root-covered files/SQLite rehearsal passed in two fresh
   Ubuntu 24.04 AMD64 guests. The replacement restored encrypted data, rebuilt
   fixture accounts and metadata, and verified application startup. The logical

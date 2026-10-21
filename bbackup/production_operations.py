@@ -17,8 +17,9 @@ from .enrollment import (_read_regular, machine_identity, parse_pair, policy_lea
                          read_pair, verify_bytes)
 from .linux_coverage import (check_coverage, discover_coverage,
                              evaluate_recovery_evidence, review_coverage)
+from .postgresql_coverage import PostgreSQLCoverageContext
 from .models import ConfigurationError, strict_json
-from .operations import ReconciliationOutcome, repository_key
+from .operations import OperationRunner, ReconciliationOutcome, repository_key
 from .recovery import (accept_recovery_checkpoint, create_checked_kit, open_kit, verify_checkpoint,
                        verify_reconstructed_repository)
 from .scheduling import install_user_units, job_units, system_job_units
@@ -122,7 +123,7 @@ def execute_operation(command: str, values: dict[str, Any], *, service: BackupSe
         if configuration.schema_version != 3:
             raise ConfigurationError("Coverage review requires version-three enrollment")
         return _coverage_operation(configuration, bindings, policy_bytes, binding_bytes,
-                                   command, values)
+                                   command, values, cancel=cancel)
     if command == "doctor" and config_path is not None and bindings_path is not None:
         policy_bytes, binding_bytes = read_pair(config_path, bindings_path)
         configuration, bindings = parse_pair(policy_bytes, binding_bytes)
@@ -149,7 +150,8 @@ def execute_operation(command: str, values: dict[str, Any], *, service: BackupSe
 def _service_operation(service, command, values, config_path, bindings_path, cancel):
     if command.startswith("coverage "):
         return _coverage_operation(service.config, service.bindings,
-                                   service.policy_bytes, service.binding_bytes, command, values)
+                                   service.policy_bytes, service.binding_bytes, command, values,
+                                   cancel=cancel)
     if command.startswith("cloud-retention "):
         return _cloud_retention_operation(service, command, values, cancel)
     if command.startswith("cloud-maintenance "):
@@ -161,7 +163,8 @@ def _service_operation(service, command, values, config_path, bindings_path, can
     if command == "jobs list":
         return [asdict(job) for job in service.config.jobs]
     if command == "jobs run":
-        return service.run_job(values["name"], cancel=cancel)
+        return service.run_job(values["name"], cancel=cancel,
+            quiet_administrative_window_confirmed=values["quiet_administrative_window_confirmed"])
     if command == "repositories list":
         return [asdict(repo) for repo in service.config.repositories]
     if command == "repositories init":
@@ -246,12 +249,20 @@ def _service_operation(service, command, values, config_path, bindings_path, can
     raise ServiceError("Unsupported command")
 
 
-def _coverage_operation(configuration, bindings, policy_bytes, binding_bytes, command, values):
+def _coverage_operation(configuration, bindings, policy_bytes, binding_bytes, command, values,
+                        *, cancel=None):
     job = next((item for item in configuration.jobs if item.name == values["name"]), None)
     if job is None or job.coverage_policy is None or job.name not in bindings.coverage_declarations:
         raise ConfigurationError("Job requires portable coverage policy and private declaration")
     arguments = {"state": bindings.state_dir, "policy_bytes": policy_bytes,
                  "binding_bytes": binding_bytes}
+    pg_sources = {source.name: bindings.source_bindings[source.name].resolve(source)
+                  for source in configuration.sources if source.name in job.sources
+                  and source.kind == "postgresql"}
+    if pg_sources:
+        arguments["postgresql_context"] = PostgreSQLCoverageContext(
+            pg_sources, bindings.database_bindings, OperationRunner(), cancel=cancel,
+            quiet_administrative_window=values.get("quiet_administrative_window_confirmed", False))
     declaration = bindings.coverage_declarations[job.name]
     if command == "coverage discover":
         return discover_coverage(declaration, job.coverage_policy, **arguments)

@@ -93,8 +93,12 @@ permitted, but unresolved inventory gaps block approval. See the maintained
 Covered capture supports ordinary files and individually transactional SQLite
 exports. Each SQLite root requires an application declaration whose state root
 is that exact database path and whose reconstruction procedure has verified
-private evidence. PostgreSQL, MySQL/MariaDB and Docker remain unsupported for
-covered jobs; ordinary jobs retain their existing adapters.
+private evidence. An experimental manual PostgreSQL extension is described
+below. MySQL/MariaDB and Docker remain unsupported for covered jobs; ordinary
+jobs retain their existing adapters. Existing schema-1 private declarations
+and the portable schema-1 coverage policy keep their current shapes. The
+PostgreSQL extension uses a schema-2 private declaration and does not change
+ordinary native PostgreSQL capture or restore.
 
 Application declarations use service-unit stems without the `.service` suffix.
 Ordinary names, templates and instances such as `serial-getty@ttyS0`, including
@@ -115,6 +119,137 @@ metadata, reconstruction recipe and baseline. Generic restore returns that
 export and manifest; the reviewed reconstruction procedure must place the
 database and restore its original metadata. This does not provide automatic
 in-place application recovery or a shared transaction across files or databases.
+
+#### Experimental PostgreSQL covered capture (unreleased)
+
+The private schema-2 declaration adds `database_roots` for selected logical
+databases and one `postgresql_clusters` entry. Each captured database maps to
+the exact portable PostgreSQL source and private connection alias; the alias
+and source selector must agree with the private host bindings. Here is only the
+logical-root fragment, not a complete declaration; see the maintained
+[PostgreSQL coverage fixture](../../tests/test_postgresql_coverage.py) for the
+full valid shape:
+
+```json
+{
+  "database_roots": [
+    {"id": "application_db", "adapter": "postgresql",
+     "source_id": "application_source", "cluster_id": "primary",
+     "connection": "private_connection_alias", "database": "application"}
+  ]
+}
+```
+
+The declaration accounts for every database in the selected cluster,
+including templates and databases that reject connections. Each gets an
+explicit `capture` or `reconstruct` decision tied to its current name and OID;
+nonconnectable databases must be reconstructed. A reconstructed database needs
+actual procedure-execution and result-verification evidence bound to the
+reviewed database and cluster inventory. The local administrative connection
+must have the native inspection privileges needed to read cluster, database,
+role, membership, and configuration metadata. `pg_controldata` must be
+available on `PATH` at the matching major version. Its control-file system ID
+must equal the SQL-reported ID, and SQL `data_directory` must exactly match the
+declared absolute local path in the same filesystem namespace. Review also
+binds that directory's device, inode, numeric owner and group, and mode, plus digests for
+the private connection and password files, database and global inventories,
+roles, authentication files, and configuration.
+
+Only one local primary cluster is supported. `pg_wal` must be inside the same
+filesystem as the declared data directory; non-default tablespaces, external
+WAL, external configuration or authentication includes, authentication
+`@file` references, SSL-enabled arrangements, standbys, and unsupported
+extensions, languages, or foreign objects are rejected. This is a bounded
+local path, not general PostgreSQL cluster backup support.
+
+The administrator must coordinate a quiet window for role, database,
+configuration, and schema changes throughout discovery, review, checks, and
+capture. Normal row writes may continue. The boolean confirmation defaults to
+false and does not stop external changes; scheduled covered PostgreSQL jobs
+remain blocked because their timer dispatch cannot assert that window. Set the
+flag only while that external coordination is active. A capture uses one
+transactional native `pg_dump` custom archive per selected database. It does
+not create one shared transaction across databases or between database and
+file roots.
+
+After database accounting and restoration evidence pass, the literal reviewed
+`data_directory` (including its live raw files and `pg_wal`) is excluded from
+file-tree capture. Recovery procedure, evidence, and actual recovery-material
+files must be private regular files inside the same job's approved file roots,
+outside the data directory and declared exclusions. Individual file roots are
+allowed. Their bytes are included in the encrypted snapshot. Its encrypted
+manifest binds the reviewed approval, each database export hash, and each
+recovery-artifact hash. Covered PostgreSQL restore verifies the archive and
+all referenced recovery-material bytes from that snapshot before its first
+target-database mutation. Existing trusted-archive acknowledgement and new
+target database safeguards still apply. The source connection alias is
+provenance only: restore uses a fresh destination-host connection alias and
+does not require the original source binding.
+
+Captured databases also require a reviewed reconstruction procedure for
+database-level metadata. Native restore creates a new database with the
+captured encoding and locale, then runs `pg_restore`; it does not restore the
+database owner, database ACL, or connection limit. The recovered procedure
+must apply and verify those settings for the chosen destination name,
+including PUBLIC revocations and grant options, and account for other reviewed
+database attributes. Its execution evidence must
+compare the reviewed source metadata with a reconstructed database before
+coverage review and capture. Repeat that procedure from the recovered materials
+after the final restore. The native `database_validated` result means that
+`SELECT 1` succeeded after archive restore; `application_validated` remains
+false. Neither result establishes completion of the reconstruction procedure.
+
+Use the manual commands only during the coordinated window; replace the
+candidate digest, snapshot ID, and evidence path with the reviewed values:
+
+```bash
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage discover --name application-stack --quiet-administrative-window-confirmed
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage review --name application-stack --candidate-digest FULL_CANDIDATE_SHA256 \
+  --quiet-administrative-window-confirmed
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage check --name application-stack --quiet-administrative-window-confirmed
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  coverage recovery-evidence --name application-stack --snapshot FULL_SNAPSHOT_ID \
+  --evidence-file PRIVATE_EVIDENCE_FILE --quiet-administrative-window-confirmed
+bbackup production --config config.v3.json --bindings bindings.v3.json \
+  jobs run --name application-stack --quiet-administrative-window-confirmed
+```
+
+On 2026-10-21, a local PostgreSQL 17.11 rehearsal passed in two isolated
+containers with distinct machine identities, data directories, and recovery
+workspaces. The source passed native enrollment, coverage discovery, review,
+readiness checks, and manual capture. Its final encrypted snapshot contained
+16 files totaling 10,006 logical bytes, including a 2,307-byte database archive
+and five digest-bound recovery files; no raw PostgreSQL data-directory nodes
+were present. A full repository read-data check passed over four snapshots
+and eight packs. Adding an unaccounted database separately blocked coverage
+and manual capture while preserving the accepted snapshot.
+
+The replacement restored from a copy of the encrypted repository and separate
+test password escrow, using a fresh connection alias and a previously absent,
+differently named target database. The native restore verified all five recovery
+file hashes and completed in 6.82 seconds; this measures that command alone,
+not application reconstruction or a production recovery deadline. The corrected
+reconstruction procedure was executed and verified before final coverage review
+and capture, then recovered from that snapshot and executed again. Separate SQL
+comparisons matched database ownership, all three ACL entries, connection limit
+7, table ownership and reader permissions, and three committed UTF-8 rows.
+An application-role query returned all three rows. The CLI still reported
+`application_validated: false`; these separate fixture checks supply the
+application evidence.
+
+This is local emulation of the bounded manual path. It does not qualify
+off-host custody, provider access, whole-machine recovery, or unattended
+PostgreSQL coverage. The path remains unreleased and adds no qualification to
+stable v2.0.3; native PostgreSQL support for ordinary jobs is unchanged.
+
+The full regression run reported 1,241 passed, one known Docker skip, and one
+dashboard assertion failure. That assertion was updated to expect the new
+quiet-window field's false default; all seven dashboard tests then passed.
+Runtime code was unchanged between those runs. Version, publishing-readiness,
+generated-interface, compilation, Markdown, lint, and diff checks passed.
 
 Each exclusion or reconstruction decision names a reason, consequence, recipe
 ID and procedure SHA-256. A referenced private procedure and private evidence
@@ -250,7 +385,8 @@ Local validation includes a real three-snapshot Restic repository: the exact
 obsolete accepted ID was forgotten, no-repack prune completed, and both the
 protected and unknown snapshots restored afterward. That drill uses a test
 double for the central cloud session; it is not live B2 maintenance evidence.
-The runtime suite passed 1,158 tests with two skips. The Unix-socket case skipped
+At maintenance-slice acceptance, the runtime suite passed 1,158 tests with two
+skips. The Unix-socket case skipped
 because the test temporary path exceeded the platform limit, then passed in a
 separate short-path run. The legacy Docker roundtrip still skipped after its
 backup returned false and supplies no Docker recovery qualification.

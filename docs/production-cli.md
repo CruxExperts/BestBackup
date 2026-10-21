@@ -54,6 +54,7 @@ List configured capture jobs.
 Capture locally and copy explicit successful snapshots.
 
 - `--name`: string.
+- `--quiet-administrative-window-confirmed`: boolean.
 
 ## `repositories list`
 
@@ -228,6 +229,7 @@ Render root system service and persistent timer units after validating root-cont
 Inventory exact private Linux scope and record a bounded candidate for review.
 
 - `--name`: string.
+- `--quiet-administrative-window-confirmed`: boolean.
 
 ## `coverage review`
 
@@ -235,12 +237,14 @@ Approve an exact complete Linux coverage candidate for the enrolled machine, use
 
 - `--name`: string.
 - `--candidate-digest`: string.
+- `--quiet-administrative-window-confirmed`: boolean.
 
 ## `coverage check`
 
 Check reviewed Linux coverage and structural drift without exposing private paths.
 
 - `--name`: string.
+- `--quiet-administrative-window-confirmed`: boolean.
 
 ## `coverage recovery-evidence`
 
@@ -249,6 +253,7 @@ Assess private local recovery evidence against the exact current baseline and sn
 - `--name`: string.
 - `--snapshot`: string.
 - `--evidence-file`: optional-string.
+- `--quiet-administrative-window-confirmed`: boolean.
 
 ## `service install`
 

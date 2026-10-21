@@ -33,7 +33,9 @@ B2/AWS, native Docker, ARM64 backup/restore, cross-application-version upgrades 
 Development work on restricted cloud credentials, central recovery and
 retention, bounded remote-primary capture, and reviewed Linux coverage is
 [documented separately](docs/development/version-2.md#unreleased-cloud-and-machine-recovery-program).
-These features remain unreleased and do not expand the tested stable scope.
+The reviewed Linux coverage work now includes an experimental manual
+PostgreSQL path. These features remain unreleased and do not expand the tested
+stable scope.
 
 For packaged releases, start with the [latest release downloads](https://github.com/CruxExperts/BestBackup/releases/latest) and [installation guide](INSTALL.md).
 

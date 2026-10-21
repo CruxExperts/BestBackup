@@ -1953,7 +1953,7 @@ PRODUCTION_COMMANDS: dict[str, ProductionCommand] = {
     "config migrate": {"summary": "Write enrolled version-three files beside untouched version-two originals.", "fields": {}},
     "service enroll": {"summary": "Explicitly enroll the exact version-three policy and bindings on this machine and user.", "fields": {}},
     "jobs list": {"summary": "List configured capture jobs.", "fields": {}},
-    "jobs run": {"summary": "Capture locally and copy explicit successful snapshots.", "fields": {"name": "string"}},
+    "jobs run": {"summary": "Capture locally and copy explicit successful snapshots.", "fields": {"name": "string", "quiet_administrative_window_confirmed": "boolean"}},
     "repositories list": {"summary": "List declared repositories without host credentials.", "fields": {}},
     "repositories init": {"summary": "Initialize an encrypted repository.", "fields": {"name": "string", "source": "optional-string"}},
     "repositories check": {"summary": "Read and verify repository data.", "fields": {"name": "string"}},
@@ -2001,10 +2001,10 @@ PRODUCTION_COMMANDS: dict[str, ProductionCommand] = {
     "runs list": {"summary": "Read sanitized operation events.", "fields": {"limit": "limit", "offset": "offset"}},
     "service render": {"summary": "Render disabled systemd service and persistent timer units.", "fields": {"name": "string", "executable": "path"}},
     "service render-system": {"summary": "Render root system service and persistent timer units after validating root-controlled executable and configuration paths; never installs them.", "fields": {"name": "string", "executable": "path"}},
-    "coverage discover": {"summary": "Inventory exact private Linux scope and record a bounded candidate for review.", "fields": {"name": "string"}},
-    "coverage review": {"summary": "Approve an exact complete Linux coverage candidate for the enrolled machine, user, policy and bindings.", "fields": {"name": "string", "candidate_digest": "string"}},
-    "coverage check": {"summary": "Check reviewed Linux coverage and structural drift without exposing private paths.", "fields": {"name": "string"}},
-    "coverage recovery-evidence": {"summary": "Assess private local recovery evidence against the exact current baseline and snapshot; never qualifies whole-machine recovery.", "fields": {"name": "string", "snapshot": "string", "evidence_file": "optional-string"}},
+    "coverage discover": {"summary": "Inventory exact private Linux scope and record a bounded candidate for review.", "fields": {"name": "string", "quiet_administrative_window_confirmed": "boolean"}},
+    "coverage review": {"summary": "Approve an exact complete Linux coverage candidate for the enrolled machine, user, policy and bindings.", "fields": {"name": "string", "candidate_digest": "string", "quiet_administrative_window_confirmed": "boolean"}},
+    "coverage check": {"summary": "Check reviewed Linux coverage and structural drift without exposing private paths.", "fields": {"name": "string", "quiet_administrative_window_confirmed": "boolean"}},
+    "coverage recovery-evidence": {"summary": "Assess private local recovery evidence against the exact current baseline and snapshot; never qualifies whole-machine recovery.", "fields": {"name": "string", "snapshot": "string", "evidence_file": "optional-string", "quiet_administrative_window_confirmed": "boolean"}},
     "service install": {"summary": "Install reviewed user-level units; activate the exact timer only with --activate.", "fields": {"name": "string", "executable": "path", "activate": "boolean"}},
 }
 

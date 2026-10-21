@@ -623,6 +623,17 @@ class BackupService:
         env = self._operation_environment(remote_participants[0] if remote_participants else name)
         if remote_participants and argv and argv[0] == "restic" and "--no-cache" not in argv:
             argv = (argv[0], "--no-cache", *argv[1:])
+        elif argv and argv[0] == "restic":
+            has_explicit_cache = any(
+                argument == "--no-cache" or argument == "--cache-dir"
+                or argument.startswith("--cache-dir=")
+                for argument in argv[1:]
+            )
+            has_cache_environment = any(
+                env.get(variable) for variable in ("HOME", "XDG_CACHE_HOME", "RESTIC_CACHE_DIR")
+            )
+            if not has_explicit_cache and not has_cache_environment:
+                argv = (argv[0], "--no-cache", *argv[1:])
         plans = {}
         for repository in repositories:
             identity = self._identity(repository)

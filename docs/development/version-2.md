@@ -62,6 +62,11 @@ private state. Public results contain counts, digests and reason codes only.
 `coverage_status: complete` means the exact declared scope is accounted for;
 it is not a claim that every machine file or application is recoverable.
 
+Restic service operations use an explicit cache-free fallback when their child
+environment provides neither `HOME` nor `XDG_CACHE_HOME` and no cache option was
+selected. This supports verified restore from minimal system-service
+environments without relying on an interactive login environment.
+
 For example, this is a portable job-field fragment:
 
 ```json

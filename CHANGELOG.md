@@ -69,6 +69,8 @@ current uv-based install, development, and release instructions.
 
 ### Fixed
 
+- Service operations disable Restic's cache when the child environment has no
+  cache location, so verified restore also works from minimal system services.
 - Remote capture reconciliation uses Restic reads without cloud lock writes,
   requires an acknowledged quiet window and refuses observed repository locks
   before and after inspection. It never retries an uncertain upload.

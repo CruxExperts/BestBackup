@@ -764,12 +764,56 @@ def test_remote_primary_capture_direct_source_no_cache_and_explicit_provider_env
     assert captured["cloud_complete"] and not captured["local_complete"]
     assert captured["resource_observation"]["staging_capacity_bounded"]
     assert "--no-cache" in observed["argv"]
+    assert observed["argv"].count("--no-cache") == 1
     assert str(data) in observed["argv"]
     assert observed["env"]["TMPDIR"] == str(staging)
     assert "RESTIC_REPOSITORY" not in observed["env"]
     assert "AWS_PROFILE" not in observed["env"]
     assert observed["env"]["AWS_ACCESS_KEY_ID"] == "fixture-key"
     assert list(staging.iterdir()) == []
+
+
+@pytest.mark.parametrize("cache_environment", [None, "HOME", "XDG_CACHE_HOME"])
+def test_local_restic_cache_behavior_follows_child_environment(service, monkeypatch, cache_environment):
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.delenv("RESTIC_CACHE_DIR", raising=False)
+    if cache_environment is not None:
+        monkeypatch.setenv(cache_environment, "/fixture/cache-root")
+    observed = {}
+
+    def run(plan, **_kwargs):
+        observed["argv"] = plan.argv
+        observed["env"] = dict(plan.env)
+        return _run(plan)
+
+    monkeypatch.setattr(service.runner, "run", run)
+    service.check("local")
+
+    if cache_environment is None:
+        assert observed["argv"][1] == "--no-cache"
+        assert not observed["env"].get("HOME")
+        assert not observed["env"].get("XDG_CACHE_HOME")
+    else:
+        assert "--no-cache" not in observed["argv"]
+        assert observed["env"][cache_environment] == "/fixture/cache-root"
+
+
+def test_local_restic_explicit_cache_dir_is_preserved_without_home(service, tmp_path, monkeypatch):
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.delenv("RESTIC_CACHE_DIR", raising=False)
+    cache_dir = str(tmp_path / "cache")
+    observed = {}
+
+    def run(plan, **_kwargs):
+        observed["argv"] = plan.argv
+        return _run(plan)
+
+    monkeypatch.setattr(service.runner, "run", run)
+    service._execute("local", ("restic", "--cache-dir", cache_dir, "check"), label="check")
+
+    assert observed["argv"] == ("restic", "--cache-dir", cache_dir, "check")
 
 
 def test_manual_remote_primary_copy_is_refused_before_any_dispatch(tmp_path, monkeypatch):
@@ -1361,6 +1405,22 @@ def test_real_capture_copy_check_restore(service, tmp_path):
     assert path.stat().st_mode & 0o777 == 0o640
     assert (path.parent / "link").is_symlink()
     assert len(service.snapshots()) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("restic") is None, reason="requires restic")
+def test_real_restore_verify_without_home_or_xdg_cache(service, tmp_path, monkeypatch):
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+
+    service.initialize("local")
+    captured = service.capture("daily")
+    restored = tmp_path / "restored-without-cache-home"
+    result = service.restore("local", captured["snapshot_id"], restored)
+
+    assert result["files_verified"]
+    restored_file = restored / str(tmp_path / "data" / "hello.txt").lstrip("/")
+    assert restored_file.read_bytes() == b"restore me\n"
 
 
 def _retention_snapshot(snapshot_id, tags=None):

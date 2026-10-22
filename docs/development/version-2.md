@@ -20,8 +20,8 @@ path. These additions are implemented workflows, not new production support.
 They do not establish B2 or AWS protection, a guaranteed thirty-day recovery
 window, off-host custody, final remote-server qualification, complete-machine
 recovery, or general automated PostgreSQL coverage. `protection_qualified`
-remains false. Issues #23, #25 and #26 are closed as not planned and remain unqualified;
-issue #24 remains open. This release does not expand the tested support scope.
+remains false. Issues #23–#26 were canceled and closed as not planned; their experimental
+workflows remain unqualified. This release does not expand the tested support scope.
 
 On 2026-10-21, the v2.0.4 candidate passed the full local suite with 1,242
 passed tests and one skipped test. The exact wheel and source archive built
@@ -63,13 +63,13 @@ closed as not planned; its validated configurable-grace fix is retained.
 Remote-primary disk budgets
 ([#26](https://github.com/CruxExperts/BestBackup/issues/26)) were also canceled and
 closed as not planned, retaining the existing experimental implementation.
-The remaining active request covers integrated privileged Linux recovery ([#24](https://github.com/CruxExperts/BestBackup/issues/24)).
-Linux coverage discovery can proceed independently. Each active request needs
-its own implementation, focused regressions, documentation, review, signed
-commit, and acceptance evidence before closeout. Stable qualification and issue
-closeout require completion and final source/artifact validation. A mocked
-provider result cannot qualify B2; the live trials below do not change #23's
-status or qualify the feature.
+Integrated privileged Linux recovery
+([#24](https://github.com/CruxExperts/BestBackup/issues/24)) was likewise canceled
+and closed as not planned. All four requests are now closed by cancellation,
+not qualification. Existing implementations and historical evidence are retained.
+Any future qualification requires focused regressions, independent review and
+final source/artifact validation against the claimed scope. A mocked provider
+result cannot qualify B2; the live trials below do not establish new support.
 
 The experimental B2 slice adds a restricted source-key metadata assessment to
 native B2 inspection and an independent `recovery accept` command. Acceptance
@@ -337,7 +337,7 @@ SQLite/files drill restores committed rows, omits uncommitted rows and raw
 database/journal files, validates export provenance, and reconstructs original
 metadata with the reviewed recipe. Privileged
 complete-machine recovery and final remote-server qualification remain
-outstanding for #24.
+unproven; #24 was subsequently canceled and closed as not planned.
 
 On 2026-10-21, the opt-in `covered-root` scenario in
 [`qualify_systemd.py`](../../scripts/qualify_systemd.py) passed a separate
@@ -695,7 +695,7 @@ refusal. It does not test elapsed lifecycle expiry, physical reclamation, or
 any file-level lock/retention window; no actual file objects were created.
 Central acceptance remains `protection_qualified: false`. At the time of this
 2026-10-21 trial, requests #23–#26 were open; #23 has since been closed as not
-planned, as have #25 and #26; #24 remains open. The v2.0.4 stable scope remains the v2.0.3
+planned, as have #24–#26. Their closure records cancellation, not qualification. The v2.0.4 stable scope remains the v2.0.3
 tested core scope.
 
 On 2026-10-20 a workstation-only Garage S3 drill captured a 2,184,000-byte file

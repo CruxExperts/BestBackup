@@ -20,8 +20,8 @@ path. These additions are implemented workflows, not new production support.
 They do not establish B2 or AWS protection, a guaranteed thirty-day recovery
 window, off-host custody, final remote-server qualification, complete-machine
 recovery, or general automated PostgreSQL coverage. `protection_qualified`
-remains false. Issues #23 and #25 are closed as not planned and remain unqualified;
-issues #24 and #26 remain open. This release does not expand the tested support scope.
+remains false. Issues #23, #25 and #26 are closed as not planned and remain unqualified;
+issue #24 remains open. This release does not expand the tested support scope.
 
 On 2026-10-21, the v2.0.4 candidate passed the full local suite with 1,242
 passed tests and one skipped test. The exact wheel and source archive built
@@ -60,8 +60,10 @@ B2 recovery, was canceled and closed as not planned. The implementation and live
 trials remain experimental and do not qualify B2 protection. Central retention
 ([#25](https://github.com/CruxExperts/BestBackup/issues/25)) was also canceled and
 closed as not planned; its validated configurable-grace fix is retained.
-The active related requests cover remote-primary disk budgets ([#26](https://github.com/CruxExperts/BestBackup/issues/26)), and integrated
-privileged Linux recovery ([#24](https://github.com/CruxExperts/BestBackup/issues/24)).
+Remote-primary disk budgets
+([#26](https://github.com/CruxExperts/BestBackup/issues/26)) were also canceled and
+closed as not planned, retaining the existing experimental implementation.
+The remaining active request covers integrated privileged Linux recovery ([#24](https://github.com/CruxExperts/BestBackup/issues/24)).
 Linux coverage discovery can proceed independently. Each active request needs
 its own implementation, focused regressions, documentation, review, signed
 commit, and acceptance evidence before closeout. Stable qualification and issue
@@ -693,7 +695,7 @@ refusal. It does not test elapsed lifecycle expiry, physical reclamation, or
 any file-level lock/retention window; no actual file objects were created.
 Central acceptance remains `protection_qualified: false`. At the time of this
 2026-10-21 trial, requests #23–#26 were open; #23 has since been closed as not
-planned, as has #25; #24 and #26 remain open. The v2.0.4 stable scope remains the v2.0.3
+planned, as have #25 and #26; #24 remains open. The v2.0.4 stable scope remains the v2.0.3
 tested core scope.
 
 On 2026-10-20 a workstation-only Garage S3 drill captured a 2,184,000-byte file
@@ -744,7 +746,8 @@ This qualifies only the small local scenario. It does not measure normal peak
 storage, incompressible-data scale, host memory, persistent staging across
 reboot, off-host recovery, or production recovery timing. Reserve checks remain
 observed thresholds rather than a hard guarantee. Final remote-server
-qualification for #26 remains deferred.
+qualification for #26 was subsequently canceled; the issue is closed as not
+planned and the experimental support limit is unchanged.
 
 ### Workstation implementation checks - 2026-10-20
 

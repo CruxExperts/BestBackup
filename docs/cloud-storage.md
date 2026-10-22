@@ -150,7 +150,9 @@ versions only**. They do not run Restic `forget` or `prune`, compact packs, or
 delete current objects and delete markers. Keeping all current packs avoids
 breaking deduplicated snapshots. Full repository compaction and live provider
 qualification remain outside this implementation slice of
-[issue #25](https://github.com/CruxExperts/BestBackup/issues/25).
+[issue #25](https://github.com/CruxExperts/BestBackup/issues/25), which was
+subsequently canceled and closed as not planned. The validated configurable-grace
+fix is retained; no new live provider qualification is claimed.
 
 Run retention on the independently controlled management host with its own
 deletion-capable credentials. Use an enrolled schema-3 repository binding whose

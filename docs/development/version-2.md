@@ -20,8 +20,8 @@ path. These additions are implemented workflows, not new production support.
 They do not establish B2 or AWS protection, a guaranteed thirty-day recovery
 window, off-host custody, final remote-server qualification, complete-machine
 recovery, or general automated PostgreSQL coverage. `protection_qualified`
-remains false. Issue #23 is closed as not planned and remains unqualified;
-issues #24–#26 remain open. This release does not expand the tested support scope.
+remains false. Issues #23 and #25 are closed as not planned and remain unqualified;
+issues #24 and #26 remain open. This release does not expand the tested support scope.
 
 On 2026-10-21, the v2.0.4 candidate passed the full local suite with 1,242
 passed tests and one skipped test. The exact wheel and source archive built
@@ -57,10 +57,10 @@ An implemented capability does not establish completion of its entire delivery s
 
 Issue [#23](https://github.com/CruxExperts/BestBackup/issues/23), for restricted
 B2 recovery, was canceled and closed as not planned. The implementation and live
-trials remain experimental and do not qualify B2 protection. The active related
-requests cover central retention
-([#25](https://github.com/CruxExperts/BestBackup/issues/25)), remote-primary disk
-budgets ([#26](https://github.com/CruxExperts/BestBackup/issues/26)), and integrated
+trials remain experimental and do not qualify B2 protection. Central retention
+([#25](https://github.com/CruxExperts/BestBackup/issues/25)) was also canceled and
+closed as not planned; its validated configurable-grace fix is retained.
+The active related requests cover remote-primary disk budgets ([#26](https://github.com/CruxExperts/BestBackup/issues/26)), and integrated
 privileged Linux recovery ([#24](https://github.com/CruxExperts/BestBackup/issues/24)).
 Linux coverage discovery can proceed independently. Each active request needs
 its own implementation, focused regressions, documentation, review, signed
@@ -426,16 +426,16 @@ grace interval. Their zero-forget maintenance, stale-plan rejection and
 interruption results do not demonstrate aged permanent deletion or physical
 reclamation.
 
-Before [#25](https://github.com/CruxExperts/BestBackup/issues/25) can close,
-preserve the original observation catalog and accepted recovery dependencies
+[Issue #25](https://github.com/CruxExperts/BestBackup/issues/25) was canceled and
+closed as not planned at the user's request. Any future qualification must preserve the original observation catalog and accepted recovery dependencies
 through the policy's configured grace period. Then use an exact-target
 authorized plan to exercise eligible aged B2 versions, verify locked and held
 versions survive, and restore the retained recovery points. Record the exact
 source revision, policy and grant revisions, plan identity, provider
 observations and outcomes without publishing credentials. Do not backdate
 observations, bypass provider locks, or replay an uncertain deletion to
-manufacture acceptance evidence. The issue remains open; no new live deletion or
-recovery result is claimed by this review.
+manufacture acceptance evidence. The prepared live trial was not run; no new
+live deletion or recovery result is claimed by this review.
 
 The configurable-grace candidate passed the full local suite on 2026-10-22 UTC
 with 1,253 passes and one skip using three workers. The focused retention file
@@ -499,7 +499,8 @@ catalog digest was unchanged. The eight-byte probe was deliberately retained.
 This qualifies only the small, zero-forget maintenance exercise. It does not
 demonstrate aged reclamation, an elapsed protection window, independently held
 off-host escrow, or final remote-server recovery. `protection_qualified` remains
-false, the feature ships experimentally in v2.0.4, and #25 remains open.
+false. The feature ships experimentally in v2.0.4; #25 was subsequently
+closed as not planned without expanding qualification.
 
 #### Live B2 central-maintenance interruption trial
 
@@ -692,7 +693,7 @@ refusal. It does not test elapsed lifecycle expiry, physical reclamation, or
 any file-level lock/retention window; no actual file objects were created.
 Central acceptance remains `protection_qualified: false`. At the time of this
 2026-10-21 trial, requests #23–#26 were open; #23 has since been closed as not
-planned, while #24–#26 remain open. The v2.0.4 stable scope remains the v2.0.3
+planned, as has #25; #24 and #26 remain open. The v2.0.4 stable scope remains the v2.0.3
 tested core scope.
 
 On 2026-10-20 a workstation-only Garage S3 drill captured a 2,184,000-byte file

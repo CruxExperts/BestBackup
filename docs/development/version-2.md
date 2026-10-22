@@ -1,10 +1,27 @@
 # Version 2 development
 
-> Stable v2.0.4 production qualification retains the tested core scope recorded
-> below. Experimental additions remain unqualified. The 2026-10-17 record keeps
-> the original v2.0.3 evidence and limits.
+> Stable v2.0.5 production qualification retains the tested core scope recorded
+> below. Experimental additions remain unqualified. The dated records retain
+> historical evidence and limits without expanding that scope.
 
-## v2.0.4 release scope and known limits
+## v2.0.5 release scope and known limits
+
+The v2.0.5 stable qualified scope is unchanged from v2.0.4: local file capture
+and restore; live capture and restore for PostgreSQL 17.11, MySQL 8.4.12, and
+MariaDB 11.8.9; headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04
+packages. The separate user-timer reboot qualification remains limited to the
+components and conditions recorded in its dated evidence below.
+
+This patch accepts a positive, explicitly configured `grace_seconds` value for
+experimental central retention; thirty days remains the recommended baseline.
+Shorter grace reduces the grace-based historical protection period and does not
+establish a thirty-day recovery guarantee. B2/AWS protection, aged reclamation,
+off-host custody, and production recovery remain unqualified. Issues #23–#26
+were canceled and closed as not planned; cancellation does not qualify their
+experimental workflows. This release adds no new live provider qualification;
+the historical workstation evidence below remains unchanged.
+
+## v2.0.4 release scope and known limits (historical)
 
 The v2.0.4 stable qualified scope is unchanged from v2.0.3: local file capture
 and restore; live capture and restore for PostgreSQL 17.11, MySQL 8.4.12, and
@@ -20,7 +37,8 @@ path. These additions are implemented workflows, not new production support.
 They do not establish B2 or AWS protection, a guaranteed thirty-day recovery
 window, off-host custody, final remote-server qualification, complete-machine
 recovery, or general automated PostgreSQL coverage. `protection_qualified`
-remains false. Requests #23–#26 remain open; this release does not close them.
+remains false. Issues #23–#26 were canceled and closed as not planned; their experimental
+workflows remain unqualified. This release does not expand the tested support scope.
 
 On 2026-10-21, the v2.0.4 candidate passed the full local suite with 1,242
 passed tests and one skipped test. The exact wheel and source archive built
@@ -33,7 +51,7 @@ These checks do not expand the production qualification boundary above.
 
 ## Direction and delivery order
 
-The selected stable v2.0.4 release scope is local/file capture and restore,
+The v2.0.4 stable release scope, retained in v2.0.5, is local/file capture and restore,
 live capture-restore drills for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB
 11.8.9, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages.
 The CLI and Textual dashboard share one operations service. Existing 1.x commands
@@ -54,18 +72,21 @@ An implemented capability does not establish completion of its entire delivery s
 
 ### Experimental cloud and machine recovery features
 
-Open requests are sequenced as restricted B2 recovery
-([#23](https://github.com/CruxExperts/BestBackup/issues/23)), central retention
-([#25](https://github.com/CruxExperts/BestBackup/issues/25)), remote-primary disk
-budgets ([#26](https://github.com/CruxExperts/BestBackup/issues/26)), and integrated
-privileged Linux recovery ([#24](https://github.com/CruxExperts/BestBackup/issues/24)).
-Linux coverage discovery can proceed independently. Each request needs its own
-implementation, focused regressions, documentation, review, signed commit, and
-acceptance evidence before closeout. Stable qualification and issue closeout
-require completion and final source/artifact validation; this release ships the
-current workflows experimentally without closing the requests. A mocked
-provider result cannot qualify B2. All four requests remain open; the live
-trials below do not close them.
+Issue [#23](https://github.com/CruxExperts/BestBackup/issues/23), for restricted
+B2 recovery, was canceled and closed as not planned. The implementation and live
+trials remain experimental and do not qualify B2 protection. Central retention
+([#25](https://github.com/CruxExperts/BestBackup/issues/25)) was also canceled and
+closed as not planned; its validated configurable-grace fix is retained.
+Remote-primary disk budgets
+([#26](https://github.com/CruxExperts/BestBackup/issues/26)) were also canceled and
+closed as not planned, retaining the existing experimental implementation.
+Integrated privileged Linux recovery
+([#24](https://github.com/CruxExperts/BestBackup/issues/24)) was likewise canceled
+and closed as not planned. All four requests are now closed by cancellation,
+not qualification. Existing implementations and historical evidence are retained.
+Any future qualification requires focused regressions, independent review and
+final source/artifact validation against the claimed scope. A mocked provider
+result cannot qualify B2; the live trials below do not establish new support.
 
 The experimental B2 slice adds a restricted source-key metadata assessment to
 native B2 inspection and an independent `recovery accept` command. Acceptance
@@ -333,7 +354,7 @@ SQLite/files drill restores committed rows, omits uncommitted rows and raw
 database/journal files, validates export provenance, and reconstructs original
 metadata with the reviewed recipe. Privileged
 complete-machine recovery and final remote-server qualification remain
-outstanding for #24.
+unproven; #24 was subsequently canceled and closed as not planned.
 
 On 2026-10-21, the opt-in `covered-root` scenario in
 [`qualify_systemd.py`](../../scripts/qualify_systemd.py) passed a separate
@@ -414,6 +435,36 @@ Healthy reconciliation alone does not certify completed prune. Repacking,
 aged live deletion and the promised recovery window remain unqualified.
 See the [central maintenance workflow](../cloud-storage.md#central-snapshot-maintenance-experimental).
 
+#### Issue #25 configurable grace (v2.0.5)
+
+The v2.0.5 central retention policy accepts a positive `grace_seconds`
+value; thirty days is the recommended baseline, not a hard-coded minimum.
+Eligibility is measured from central observation of a noncurrent version rather than its
+upload timestamp. The recent live trials do not establish an elapsed configured
+grace interval. Their zero-forget maintenance, stale-plan rejection and
+interruption results do not demonstrate aged permanent deletion or physical
+reclamation.
+
+[Issue #25](https://github.com/CruxExperts/BestBackup/issues/25) was canceled and
+closed as not planned at the user's request. Any future qualification must
+preserve the original observation catalog and accepted recovery dependencies
+through the policy's configured grace period. Then use an exact-target
+authorized plan to exercise eligible aged B2 versions, verify locked and held
+versions survive, and restore the retained recovery points. Record the exact
+source revision, policy and grant revisions, plan identity, provider
+observations and outcomes without publishing credentials. Do not backdate
+observations, bypass provider locks, or replay an uncertain deletion to
+manufacture acceptance evidence. No new live deletion or recovery result is
+claimed by this review.
+
+The configurable-grace candidate passed the full local suite on 2026-10-22 UTC
+with 1,253 passes and one skip using three workers. The focused retention file
+contains 59 tests, including actual apply at the configured observation boundary
+and held-version rejection. Ruff, version synchronization, publishing readiness,
+Markdown standards and generated CLI checks passed. Independent review found no
+material issue with policy/grant binding or the existing deletion safeguards.
+These checks do not establish live B2 reclamation or provider qualification.
+
 Local validation includes a real three-snapshot Restic repository: the exact
 obsolete accepted ID was forgotten, no-repack prune completed, and both the
 protected and unknown snapshots restored afterward. That drill uses a test
@@ -468,7 +519,8 @@ catalog digest was unchanged. The eight-byte probe was deliberately retained.
 This qualifies only the small, zero-forget maintenance exercise. It does not
 demonstrate aged reclamation, an elapsed protection window, independently held
 off-host escrow, or final remote-server recovery. `protection_qualified` remains
-false, the feature ships experimentally in v2.0.4, and #25 remains open.
+false. The feature ships experimentally in v2.0.4; #25 was subsequently
+closed as not planned without expanding qualification.
 
 #### Live B2 central-maintenance interruption trial
 
@@ -659,8 +711,10 @@ was updated, and no deletion was attempted.
 This establishes only the configured overlap guard and central-retention
 refusal. It does not test elapsed lifecycle expiry, physical reclamation, or
 any file-level lock/retention window; no actual file objects were created.
-Central acceptance remains `protection_qualified: false`, requests #23–#26
-remain open, and the v2.0.4 stable scope remains the v2.0.3 tested core scope.
+Central acceptance remains `protection_qualified: false`. At the time of this
+2026-10-21 trial, requests #23–#26 were open; #23 has since been closed as not
+planned, as have #24–#26. Their closure records cancellation, not qualification. The v2.0.4 stable scope remains the v2.0.3
+tested core scope.
 
 On 2026-10-20 a workstation-only Garage S3 drill captured a 2,184,000-byte file
 fixture directly to the emulator using a 1,048,576-byte staging mount, ran an
@@ -710,7 +764,8 @@ This qualifies only the small local scenario. It does not measure normal peak
 storage, incompressible-data scale, host memory, persistent staging across
 reboot, off-host recovery, or production recovery timing. Reserve checks remain
 observed thresholds rather than a hard guarantee. Final remote-server
-qualification for #26 remains deferred.
+qualification for #26 was subsequently canceled; the issue is closed as not
+planned and the experimental support limit is unchanged.
 
 ### Workstation implementation checks - 2026-10-20
 

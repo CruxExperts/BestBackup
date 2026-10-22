@@ -331,6 +331,13 @@ def _refresh_grant_for_policy(env):
     _write_json(env["grant_path"], env["grant"])
 
 
+def _set_grace_seconds(env, seconds):
+    env["policy"] = dict(env["policy"])
+    env["policy"]["grace_seconds"] = seconds
+    _write_json(env["policy_path"], env["policy"])
+    _refresh_grant_for_policy(env)
+
+
 def _prepare_maintenance(env, *, max_objects=20, max_bytes=1024):
     second_dir, _manifest, _digest, _acceptance = _make_record(
         env["root"] / "maintenance-old-acceptance",
@@ -582,6 +589,82 @@ def test_recently_hidden_old_upload_starts_grace_now_and_last_modified_is_ignore
     catalog = json.loads((env["state"] / "retention-catalog.json").read_text())
     token = cloud._retention_version_token("repo/other/old.bin", "old-v1")
     assert catalog["first_observed_noncurrent"][token] == cloud._iso(FrozenDateTime.current)
+    assert env["store"].deleted == []
+
+
+@pytest.mark.parametrize("grace_seconds", [1, 60])
+def test_retention_policy_accepts_positive_configured_grace(retention_env, grace_seconds):
+    env = retention_env
+    policy = {**env["policy"], "grace_seconds": grace_seconds}
+
+    cleaned, _state_dir = cloud._validate_retention_policy(policy, env["adapter"])
+
+    assert cleaned["grace_seconds"] == grace_seconds
+
+
+@pytest.mark.parametrize("grace_seconds", [0, -1, True, False, 1.5, "60"])
+def test_retention_policy_rejects_nonpositive_or_noninteger_grace(retention_env, grace_seconds):
+    env = retention_env
+    policy = {**env["policy"], "grace_seconds": grace_seconds}
+
+    with pytest.raises(CloudError, match="limits are invalid"):
+        cloud._validate_retention_policy(policy, env["adapter"])
+
+
+def test_short_configured_grace_eligibility_begins_at_exact_observation_boundary(retention_env):
+    env = retention_env
+    _set_grace_seconds(env, 60)
+    first = _plan(env)
+    assert first["candidate_count"] == 0
+
+    FrozenDateTime.current += timedelta(seconds=59)
+    before_boundary = _plan(env)
+    assert before_boundary["candidate_count"] == 0
+
+    FrozenDateTime.current += timedelta(seconds=1)
+    at_boundary = _plan(env)
+    assert at_boundary["candidate_count"] == 1
+    private_plan = json.loads(
+        (env["state"] / "retention-plans" / f"{at_boundary['operation_id']}.json").read_text()
+    )
+    assert [(item["key"], item["version_id"]) for item in private_plan["candidates"]] == [
+        ("repo/other/old.bin", "old-v1")
+    ]
+    assert ("repo/data/restore.bin", "historical-v1", False, 8) in env["store"].versions
+    assert ("repo/data/restore.bin", "current-v2", True, 11) in env["store"].versions
+    assert ("repo/other/old.bin", "current-v2", True, 5) in env["store"].versions
+
+    result = _apply(env, at_boundary)
+
+    assert result["status"] == "complete"
+    assert env["store"].deleted == [("repo/other/old.bin", "old-v1")]
+    assert ("repo/data/restore.bin", "historical-v1", False, 8) in env["store"].versions
+    assert ("repo/data/restore.bin", "current-v2", True, 11) in env["store"].versions
+    assert ("repo/other/old.bin", "current-v2", True, 5) in env["store"].versions
+
+
+@pytest.mark.parametrize("lock_state", ["legal_hold", "governance"])
+def test_short_configured_grace_keeps_held_noncurrent_versions_ineligible(retention_env, lock_state):
+    env = retention_env
+    _set_grace_seconds(env, 60)
+    _plan(env)
+    FrozenDateTime.current += timedelta(seconds=60)
+    candidate = ("repo/other/old.bin", "old-v1")
+    if lock_state == "legal_hold":
+        env["store"].legal_holds[candidate] = "ON"
+    else:
+        retain_until = FrozenDateTime.current + timedelta(seconds=60)
+        env["store"].retention[candidate] = {
+            "Mode": "GOVERNANCE",
+            "RetainUntilDate": FrozenDateTime.fromtimestamp(
+                retain_until.timestamp(), timezone.utc,
+            ),
+        }
+
+    plan = _plan(env)
+
+    assert plan["candidate_count"] == 0
+    assert plan["held_version_count"] == 1
     assert env["store"].deleted == []
 
 

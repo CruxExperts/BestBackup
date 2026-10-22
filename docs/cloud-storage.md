@@ -1,6 +1,6 @@
 # Cloud storage: Backblaze B2 and Amazon S3
 
-Keep your first recovery point on local storage. The v2.0.4 tested stable-release
+Keep your first recovery point on local storage. The v2.0.5 tested stable-release
 scope retains local/file capture and restore, selected live database drills,
 headless dashboard happy paths, and AMD64 Ubuntu packages.
 
@@ -9,11 +9,13 @@ small live B2 source-path drill passed on 2026-10-20; it does not qualify B2
 protection or production recovery. No live AWS capture/check/restore result is
 recorded. The local Garage S3 test also passed capture, copy, full-data checking,
 and restore, but does not qualify B2 or Amazon S3. The provider workflows ship
-as experimental in v2.0.4; keep B2/AWS outside production recovery until the
+as experimental in v2.0.5; keep B2/AWS outside production recovery until the
 remaining provider and independent-recovery evidence is complete. A separate live B2
 lifecycle-overlap guard confirmed only the configuration check and central
 retention refusal; it did not test elapsed expiry or physical deletion. See the
 [guard evidence](#b2-lifecycle-overlap-guard-experimental).
+This release adds no new live provider qualification; existing workstation
+trials remain historical and unqualified.
 
 ## Choose a connection
 
@@ -80,9 +82,11 @@ directory-scoped machine prefix, repository read/list/write capabilities, and
 no permanent-version deletion, administration, or unknown capabilities. A broad
 key can still be inspected, but does not satisfy this profile. An eligible
 metadata result alone does not prove that a forbidden operation is denied. The
-small live trial below passed seven denial checks, but full recovery
-qualification remains required by
-[issue #23](https://github.com/CruxExperts/BestBackup/issues/23).
+small live trial below passed seven denial checks.
+[Issue #23](https://github.com/CruxExperts/BestBackup/issues/23) was canceled and
+closed as not planned at the user's request. Full B2 recovery qualification
+remains unproven; closing the request does not change the supported scope or
+establish independent escrow custody or a guaranteed historical recovery window.
 
 Use a distinct prefix per machine, such as `machines/MACHINE_ID/`. Keep the
 provisioner, central verifier, and retention executor identities off source
@@ -148,7 +152,9 @@ versions only**. They do not run Restic `forget` or `prune`, compact packs, or
 delete current objects and delete markers. Keeping all current packs avoids
 breaking deduplicated snapshots. Full repository compaction and live provider
 qualification remain outside this implementation slice of
-[issue #25](https://github.com/CruxExperts/BestBackup/issues/25).
+[issue #25](https://github.com/CruxExperts/BestBackup/issues/25), which was
+subsequently canceled and closed as not planned. The validated configurable-grace
+fix is retained; no new live provider qualification is claimed.
 
 Run retention on the independently controlled management host with its own
 deletion-capable credentials. Use an enrolled schema-3 repository binding whose
@@ -161,7 +167,8 @@ The mode-0600 policy remains schema 1 for generic S3. It contains `policy_id`, a
 64-character random hex `catalog_id`, positive `revision`, exact `endpoint_url`,
 `bucket`, nonempty `prefix`, full `repository_id`, trusted central verifier
 primary fingerprint, `retention_counts` (`daily`, `weekly`, `monthly`),
-`grace_seconds` (at least 2592000), `plan_max_age_seconds`,
+`grace_seconds` (positive integer; 2592000 seconds, or 30 days, is
+recommended), `plan_max_age_seconds`,
 `max_apply_objects`, `max_apply_bytes`, private absolute `state_dir`, nonempty
 `known_good_manifest_digests`, and `pending_manifest_digests`. Keep central state
 independently backed up. Losing an established catalog stops planning;
@@ -232,9 +239,16 @@ bbackup production --config config.v3.json --bindings bindings.v3.json \
 
 Catalog enrollment is a one-time action. Inspect the plan's sanitized counts
 and digests and private immutable file before applying its exact ID and SHA-256.
-The noncurrent grace clock starts at central first observation, rather than the
-upload timestamp. Enabled lifecycle expiration rules are refused. Versioning,
-bucket locking, per-version retention and legal holds are checked conservatively.
+The v2.0.5 configurable-grace change accepts any positive integer; v2.0.4
+required at least 2592000 seconds. The configured noncurrent grace clock starts
+at central first observation,
+rather than the upload timestamp; eligibility begins when the configured number
+of seconds has elapsed. The value is policy-controlled, with 30 days recommended
+as a conservative baseline. A shorter interval also shortens grace-based
+protection for accepted historical checkpoints; a short fixture checks only the
+configured boundary and does not establish a thirty-day recovery guarantee.
+Enabled lifecycle expiration rules are refused. Versioning, bucket locking,
+per-version retention and legal holds are checked conservatively.
 The live verifier read succeeded after the separate central identity received
 `readBucketLifecycleRules`; versioning was enabled and no lifecycle expiration
 rules applied. No lifecycle-write capability was added. Separate canaries

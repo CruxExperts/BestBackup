@@ -35,7 +35,9 @@ prune completion, elapsed lifecycle expiry, physical reclamation, or provider
 protection. These workflows ship in v2.0.4 as experimental and remain
 unqualified. See the [maintenance interruption record](docs/development/version-2.md#live-b2-central-maintenance-interruption-trial)
 and [lifecycle guard evidence](docs/cloud-storage.md#b2-lifecycle-overlap-guard-experimental).
-Requests #23–#26 remain open; the qualified core scope is unchanged from v2.0.3.
+Request [#23](https://github.com/CruxExperts/BestBackup/issues/23) was canceled and
+closed as not planned; requests #24–#26 remain open. Cancellation does not qualify
+the experimental B2 workflow; the qualified core scope is unchanged from v2.0.3.
 
 ## Start with the guided workflow
 

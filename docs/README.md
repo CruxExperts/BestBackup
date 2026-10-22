@@ -14,7 +14,7 @@ The [release dependency evidence](development/release-dependencies.json) records
 | Migrate an existing schema-2 setup | [Quick start: migrate an existing configuration](../QUICKSTART.md#migrate-an-existing-schema-2-configuration) |
 | Maintain an older Docker/YAML workflow | [Legacy management](management.md) and [encryption compatibility](encryption.md) |
 | Schedule jobs or integrate with scripts and agents | [Quick start: apply a schedule](../QUICKSTART.md#apply-a-schedule-deliberately), [agent integration](AGENT_INTEGRATION.md), and the [production command reference](production-cli.md) |
-| Check what v2.0.4 qualifies | [Version 2 qualification record](development/version-2.md) |
+| Check what v2.0.4 qualifies | [Version 2 qualification record and current issue status](development/version-2.md) (including canceled, unqualified [#23](https://github.com/CruxExperts/BestBackup/issues/23)) |
 | Evaluate experimental cloud recovery, retention or Linux coverage | [Experimental program and limits](development/version-2.md#experimental-cloud-and-machine-recovery-features) and [cloud storage](cloud-storage.md) |
 
 ## Operator references

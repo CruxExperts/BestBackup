@@ -80,9 +80,11 @@ directory-scoped machine prefix, repository read/list/write capabilities, and
 no permanent-version deletion, administration, or unknown capabilities. A broad
 key can still be inspected, but does not satisfy this profile. An eligible
 metadata result alone does not prove that a forbidden operation is denied. The
-small live trial below passed seven denial checks, but full recovery
-qualification remains required by
-[issue #23](https://github.com/CruxExperts/BestBackup/issues/23).
+small live trial below passed seven denial checks.
+[Issue #23](https://github.com/CruxExperts/BestBackup/issues/23) was canceled and
+closed as not planned at the user's request. Full B2 recovery qualification
+remains unproven; closing the request does not change the supported scope or
+establish independent escrow custody or a guaranteed historical recovery window.
 
 Use a distinct prefix per machine, such as `machines/MACHINE_ID/`. Keep the
 provisioner, central verifier, and retention executor identities off source

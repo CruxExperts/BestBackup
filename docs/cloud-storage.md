@@ -163,7 +163,8 @@ The mode-0600 policy remains schema 1 for generic S3. It contains `policy_id`, a
 64-character random hex `catalog_id`, positive `revision`, exact `endpoint_url`,
 `bucket`, nonempty `prefix`, full `repository_id`, trusted central verifier
 primary fingerprint, `retention_counts` (`daily`, `weekly`, `monthly`),
-`grace_seconds` (at least 2592000), `plan_max_age_seconds`,
+`grace_seconds` (positive integer; 2592000 seconds, or 30 days, is
+recommended), `plan_max_age_seconds`,
 `max_apply_objects`, `max_apply_bytes`, private absolute `state_dir`, nonempty
 `known_good_manifest_digests`, and `pending_manifest_digests`. Keep central state
 independently backed up. Losing an established catalog stops planning;
@@ -234,9 +235,16 @@ bbackup production --config config.v3.json --bindings bindings.v3.json \
 
 Catalog enrollment is a one-time action. Inspect the plan's sanitized counts
 and digests and private immutable file before applying its exact ID and SHA-256.
-The noncurrent grace clock starts at central first observation, rather than the
-upload timestamp. Enabled lifecycle expiration rules are refused. Versioning,
-bucket locking, per-version retention and legal holds are checked conservatively.
+The unreleased configurable-grace change accepts any positive integer;
+v2.0.4 requires at least 2592000 seconds. The configured noncurrent grace clock
+starts at central first observation,
+rather than the upload timestamp; eligibility begins when the configured number
+of seconds has elapsed. The value is policy-controlled, with 30 days recommended
+as a conservative baseline. A shorter interval also shortens grace-based
+protection for accepted historical checkpoints; a short fixture checks only the
+configured boundary and does not establish a thirty-day recovery guarantee.
+Enabled lifecycle expiration rules are refused. Versioning, bucket locking,
+per-version retention and legal holds are checked conservatively.
 The live verifier read succeeded after the separate central identity received
 `readBucketLifecycleRules`; versioning was enabled and no lifecycle expiration
 rules applied. No lifecycle-write capability was added. Separate canaries

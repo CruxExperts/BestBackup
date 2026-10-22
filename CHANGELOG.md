@@ -10,6 +10,14 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+### Fixed
+
+- Central cloud retention honors an explicitly configured positive deletion
+  grace period instead of imposing a thirty-day minimum. Thirty days remains
+  the recommended profile; shorter grace reduces historical protection and
+  does not establish a thirty-day recovery guarantee. Live aged reclamation
+  remains unqualified under issue #25.
+
 ## [2.0.4] - 2026-10-21
 
 ### Added

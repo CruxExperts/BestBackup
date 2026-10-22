@@ -1227,7 +1227,6 @@ _RETENTION_STOP_CONDITIONS = [
     "mutation_outcome_uncertain",
     "policy_or_grant_expired",
 ]
-_MIN_RETENTION_GRACE_SECONDS = 30 * 24 * 60 * 60
 _PRIVATE_JSON_LIMIT = 16 * 1024 * 1024
 _RETENTION_PLAN_FIELDS = {
     "schema_version",
@@ -1658,7 +1657,7 @@ def _validate_retention_policy(
     if any(type(counts[name]) is not int or counts[name] < 0 for name in counts):
         raise CloudError("Central retention checkpoint counts are invalid")
     for name, minimum in (
-        ("grace_seconds", _MIN_RETENTION_GRACE_SECONDS),
+        ("grace_seconds", 1),
         ("plan_max_age_seconds", 1),
         ("max_apply_objects", 1),
         ("max_apply_bytes", 1),

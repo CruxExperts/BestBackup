@@ -416,6 +416,35 @@ Healthy reconciliation alone does not certify completed prune. Repacking,
 aged live deletion and the promised recovery window remain unqualified.
 See the [central maintenance workflow](../cloud-storage.md#central-snapshot-maintenance-experimental).
 
+#### Issue #25 configurable grace (unreleased)
+
+The unreleased central retention policy accepts a positive `grace_seconds`
+value; thirty days is the recommended baseline, not a hard-coded minimum. Eligibility is
+measured from central observation of a noncurrent version rather than its
+upload timestamp. The recent live trials do not establish an elapsed configured
+grace interval. Their zero-forget maintenance, stale-plan rejection and
+interruption results do not demonstrate aged permanent deletion or physical
+reclamation.
+
+Before [#25](https://github.com/CruxExperts/BestBackup/issues/25) can close,
+preserve the original observation catalog and accepted recovery dependencies
+through the policy's configured grace period. Then use an exact-target
+authorized plan to exercise eligible aged B2 versions, verify locked and held
+versions survive, and restore the retained recovery points. Record the exact
+source revision, policy and grant revisions, plan identity, provider
+observations and outcomes without publishing credentials. Do not backdate
+observations, bypass provider locks, or replay an uncertain deletion to
+manufacture acceptance evidence. The issue remains open; no new live deletion or
+recovery result is claimed by this review.
+
+The configurable-grace candidate passed the full local suite on 2026-10-22 UTC
+with 1,253 passes and one skip using three workers. The focused retention file
+contains 59 tests, including actual apply at the configured observation boundary
+and held-version rejection. Ruff, version synchronization, publishing readiness,
+Markdown standards and generated CLI checks passed. Independent review found no
+material issue with policy/grant binding or the existing deletion safeguards.
+These checks do not establish live B2 reclamation or provider qualification.
+
 Local validation includes a real three-snapshot Restic repository: the exact
 obsolete accepted ID was forgotten, no-repack prune completed, and both the
 protected and unknown snapshots restored afterward. That drill uses a test

@@ -1,6 +1,6 @@
 # Cloud storage: Backblaze B2 and Amazon S3
 
-Keep your first recovery point on local storage. The v2.0.4 tested stable-release
+Keep your first recovery point on local storage. The v2.0.5 tested stable-release
 scope retains local/file capture and restore, selected live database drills,
 headless dashboard happy paths, and AMD64 Ubuntu packages.
 
@@ -9,11 +9,13 @@ small live B2 source-path drill passed on 2026-10-20; it does not qualify B2
 protection or production recovery. No live AWS capture/check/restore result is
 recorded. The local Garage S3 test also passed capture, copy, full-data checking,
 and restore, but does not qualify B2 or Amazon S3. The provider workflows ship
-as experimental in v2.0.4; keep B2/AWS outside production recovery until the
+as experimental in v2.0.5; keep B2/AWS outside production recovery until the
 remaining provider and independent-recovery evidence is complete. A separate live B2
 lifecycle-overlap guard confirmed only the configuration check and central
 retention refusal; it did not test elapsed expiry or physical deletion. See the
 [guard evidence](#b2-lifecycle-overlap-guard-experimental).
+This release adds no new live provider qualification; existing workstation
+trials remain historical and unqualified.
 
 ## Choose a connection
 
@@ -237,9 +239,9 @@ bbackup production --config config.v3.json --bindings bindings.v3.json \
 
 Catalog enrollment is a one-time action. Inspect the plan's sanitized counts
 and digests and private immutable file before applying its exact ID and SHA-256.
-The unreleased configurable-grace change accepts any positive integer;
-v2.0.4 requires at least 2592000 seconds. The configured noncurrent grace clock
-starts at central first observation,
+The v2.0.5 configurable-grace change accepts any positive integer; v2.0.4
+required at least 2592000 seconds. The configured noncurrent grace clock starts
+at central first observation,
 rather than the upload timestamp; eligibility begins when the configured number
 of seconds has elapsed. The value is policy-controlled, with 30 days recommended
 as a conservative baseline. A shorter interval also shortens grace-based

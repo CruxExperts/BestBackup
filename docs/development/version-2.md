@@ -1,10 +1,27 @@
 # Version 2 development
 
-> Stable v2.0.4 production qualification retains the tested core scope recorded
-> below. Experimental additions remain unqualified. The 2026-10-17 record keeps
-> the original v2.0.3 evidence and limits.
+> Stable v2.0.5 production qualification retains the tested core scope recorded
+> below. Experimental additions remain unqualified. The dated records retain
+> historical evidence and limits without expanding that scope.
 
-## v2.0.4 release scope and known limits
+## v2.0.5 release scope and known limits
+
+The v2.0.5 stable qualified scope is unchanged from v2.0.4: local file capture
+and restore; live capture and restore for PostgreSQL 17.11, MySQL 8.4.12, and
+MariaDB 11.8.9; headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04
+packages. The separate user-timer reboot qualification remains limited to the
+components and conditions recorded in its dated evidence below.
+
+This patch accepts a positive, explicitly configured `grace_seconds` value for
+experimental central retention; thirty days remains the recommended baseline.
+Shorter grace reduces the grace-based historical protection period and does not
+establish a thirty-day recovery guarantee. B2/AWS protection, aged reclamation,
+off-host custody, and production recovery remain unqualified. Issues #23–#26
+were canceled and closed as not planned; cancellation does not qualify their
+experimental workflows. This release adds no new live provider qualification;
+the historical workstation evidence below remains unchanged.
+
+## v2.0.4 release scope and known limits (historical)
 
 The v2.0.4 stable qualified scope is unchanged from v2.0.3: local file capture
 and restore; live capture and restore for PostgreSQL 17.11, MySQL 8.4.12, and
@@ -34,7 +51,7 @@ These checks do not expand the production qualification boundary above.
 
 ## Direction and delivery order
 
-The selected stable v2.0.4 release scope is local/file capture and restore,
+The v2.0.4 stable release scope, retained in v2.0.5, is local/file capture and restore,
 live capture-restore drills for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB
 11.8.9, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages.
 The CLI and Textual dashboard share one operations service. Existing 1.x commands
@@ -418,26 +435,27 @@ Healthy reconciliation alone does not certify completed prune. Repacking,
 aged live deletion and the promised recovery window remain unqualified.
 See the [central maintenance workflow](../cloud-storage.md#central-snapshot-maintenance-experimental).
 
-#### Issue #25 configurable grace (unreleased)
+#### Issue #25 configurable grace (v2.0.5)
 
-The unreleased central retention policy accepts a positive `grace_seconds`
-value; thirty days is the recommended baseline, not a hard-coded minimum. Eligibility is
-measured from central observation of a noncurrent version rather than its
+The v2.0.5 central retention policy accepts a positive `grace_seconds`
+value; thirty days is the recommended baseline, not a hard-coded minimum.
+Eligibility is measured from central observation of a noncurrent version rather than its
 upload timestamp. The recent live trials do not establish an elapsed configured
 grace interval. Their zero-forget maintenance, stale-plan rejection and
 interruption results do not demonstrate aged permanent deletion or physical
 reclamation.
 
 [Issue #25](https://github.com/CruxExperts/BestBackup/issues/25) was canceled and
-closed as not planned at the user's request. Any future qualification must preserve the original observation catalog and accepted recovery dependencies
+closed as not planned at the user's request. Any future qualification must
+preserve the original observation catalog and accepted recovery dependencies
 through the policy's configured grace period. Then use an exact-target
 authorized plan to exercise eligible aged B2 versions, verify locked and held
 versions survive, and restore the retained recovery points. Record the exact
 source revision, policy and grant revisions, plan identity, provider
 observations and outcomes without publishing credentials. Do not backdate
 observations, bypass provider locks, or replay an uncertain deletion to
-manufacture acceptance evidence. The prepared live trial was not run; no new
-live deletion or recovery result is claimed by this review.
+manufacture acceptance evidence. No new live deletion or recovery result is
+claimed by this review.
 
 The configurable-grace candidate passed the full local suite on 2026-10-22 UTC
 with 1,253 passes and one skip using three workers. The focused retention file

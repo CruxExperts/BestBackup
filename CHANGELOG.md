@@ -10,6 +10,8 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+## [2.0.5] - 2026-10-22
+
 ### Fixed
 
 - Central cloud retention honors an explicitly configured positive deletion
@@ -17,6 +19,14 @@ current uv-based install, development, and release instructions.
   the recommended profile; shorter grace reduces historical protection and
   does not establish a thirty-day recovery guarantee. Live aged reclamation
   remains unqualified under issue #25.
+
+### Changed
+
+- Issues #23–#26 were canceled and closed as not planned. Their implementations
+  remain experimental and unqualified. This release adds no new live provider
+  qualification; the existing workstation results remain historical.
+- Stable support remains at the v2.0.4 tested core scope; the retention policy
+  change adds no provider or recovery qualification.
 
 ## [2.0.4] - 2026-10-21
 
@@ -661,7 +671,8 @@ are still under development. See [implementation status](docs/development/versio
 
 The `Unreleased` comparison is a live `HEAD` link for navigation, not an immutable historical citation.
 
-[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.4...HEAD
+[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.5...HEAD
+[2.0.5]: https://github.com/CruxExperts/BestBackup/compare/v2.0.4...v2.0.5
 [2.0.4]: https://github.com/CruxExperts/BestBackup/compare/v2.0.3...v2.0.4
 [2.0.3]: https://github.com/CruxExperts/BestBackup/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/CruxExperts/BestBackup/compare/v2.0.1...v2.0.2

@@ -4,7 +4,7 @@ This policy covers security issues in bbackup's source code and the packaged com
 
 ## Version status
 
-Version 2.0.3 includes the reviewed safety and schema-3 enrollment changes. Supported scope and historical release boundaries are recorded in [release evidence](docs/development/version-2.md); reports for released and development code are welcome.
+Version 2.0.5 includes the reviewed safety and schema-3 enrollment changes and the configurable central-retention grace fix. Supported scope and historical release boundaries are recorded in [release evidence](docs/development/version-2.md); reports for released and development code are welcome.
 
 Security fixes are prepared for the latest published release. The project does not promise backports to older versions.
 

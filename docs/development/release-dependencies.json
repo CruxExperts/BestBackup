@@ -16,58 +16,58 @@
     ],
     "package_version_coverage_verified_against_lockfile": true,
     "query_failures": 0,
-    "raw_evidence_sha256": "1c04489e2becf51c2ed9d2acea18bfbbc2db210c9f5a2d331c53ec7263eaf3b8",
+    "raw_evidence_sha256": "d976f5d4c39ab2d1dbfc55448ced4f2bb8696394500f166c0f27982b49803846",
     "result": "No advisory records were returned for these exact package versions by OSV, GitHub Advisory Database, deps.dev, or PyPI at retrieval time.",
-    "retrieved_at_utc": "2026-10-21T09:12:55.211479+00:00",
+    "retrieved_at_utc": "2026-10-22T03:13:27.879942+00:00",
     "scope": "All 51 exact PyPI registry package versions in uv.lock, plus the exact setuptools and wheel versions resolved for the build-system requirements.",
     "sources": [
       {
         "advisory_hits": 0,
         "endpoint": "https://api.osv.dev/v1/querybatch",
         "http_status_counts": {
-          "200": 2
+          "200": 1
         },
         "independence_class": "A",
         "name": "OSV",
         "package_version_queries": 53,
-        "requests": 2,
-        "retrieved_at_utc": "2026-10-21T09:12:55.211479+00:00"
+        "requests": 1,
+        "retrieved_at_utc": "2026-10-22T03:13:27.879942+00:00"
       },
       {
         "advisory_hits": 0,
         "endpoint": "https://api.github.com/advisories?ecosystem=pip&affects=PACKAGE%40VERSION",
         "http_status_counts": {
-          "200": 54
+          "200": 6
         },
         "independence_class": "B",
         "name": "GitHub Advisory Database",
         "package_version_queries": 53,
-        "retrieved_at_utc": "2026-10-21T09:12:55.211479+00:00",
-        "requests": 54
+        "retrieved_at_utc": "2026-10-22T03:13:27.879942+00:00",
+        "requests": 6
       },
       {
         "advisory_hits": 0,
         "endpoint": "https://api.deps.dev/v3/systems/pypi/packages/PACKAGE/versions/VERSION",
         "http_status_counts": {
-          "200": 54
+          "200": 53
         },
         "independence_class": "E",
         "name": "deps.dev",
         "package_version_queries": 53,
-        "retrieved_at_utc": "2026-10-21T09:12:55.211479+00:00",
-        "requests": 54
+        "retrieved_at_utc": "2026-10-22T03:13:27.879942+00:00",
+        "requests": 53
       },
       {
         "advisory_hits": 0,
         "endpoint": "https://pypi.org/pypi/PACKAGE/VERSION/json",
         "http_status_counts": {
-          "200": 54
+          "200": 53
         },
         "independence_class": "E",
         "name": "PyPI JSON API",
         "package_version_queries": 53,
-        "retrieved_at_utc": "2026-10-21T09:12:55.211479+00:00",
-        "requests": 54
+        "retrieved_at_utc": "2026-10-22T03:13:27.879942+00:00",
+        "requests": 53
       }
     ],
     "remediation": {
@@ -80,10 +80,10 @@
     }
   },
   "lockfile": {
-    "local_project_version": "2.0.4",
+    "local_project_version": "2.0.5",
     "locked_pypi_packages": 51,
     "path": "uv.lock",
-    "sha256": "d1163858fc14e6aa811e96ca6ae2136def3482b681bfe08434254b112203d6e9"
+    "sha256": "b96e18305ab40567f2df3894c29d05b32809ed3b5f344fb2a7f72d03ca2e2269"
   },
   "package_versions": [
     {
@@ -300,8 +300,8 @@
     }
   ],
   "release": {
-    "release_date_utc": "2026-10-21",
-    "version": "2.0.4"
+    "release_date_utc": "2026-10-22",
+    "version": "2.0.5"
   },
   "schema_version": 1,
   "external_build_tools": {
@@ -327,7 +327,8 @@
         "advisory": "GHSA-hq85-5cpj-mr62",
         "result": "No advisory records returned for the exact uv 0.13.4 version by OSV, GitHub Advisory Database, deps.dev, or the PyPI JSON API.",
         "exact_version_only": true,
-        "raw_evidence_sha256": "d5f443900b224786589136f8447b405d25142b2355790f5bb97e0c3ec1082135"
+        "raw_evidence_sha256": "8ef56a29304e58e5ac937a498eece98dbcab380a59b07362f3b60ee3a12eba85",
+        "retrieved_at_utc": "2026-10-22T03:14:58.250134+00:00"
       }
     },
     "restic": {

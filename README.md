@@ -4,7 +4,7 @@
 
 bbackup is an encrypted, restic-based backup tool for Linux system administrators, homelab and self-hosted operators, and small infrastructure teams. It brings local file backups, selected database workflows, verified file restores, and observable scheduled jobs into one operator workflow.
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE) [![Version 2.0.4](https://img.shields.io/badge/version-2.0.4-22c55e?style=flat-square)](https://github.com/CruxExperts/BestBackup/releases/latest)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE) [![Version 2.0.5](https://img.shields.io/badge/version-2.0.5-22c55e?style=flat-square)](https://github.com/CruxExperts/BestBackup/releases/latest)
 
 ![bbackup: encrypted snapshot layers, an additional copy, and a restored document](docs/assets/bbackup-banner-v2.png)
 
@@ -22,9 +22,9 @@ Use bbackup when you want to know what a job captured, whether each repository c
 
 ![Real bbackup dashboard with disposable example data and illustrative capacity](docs/assets/bbackup-dashboard-preview.svg)
 
-## v2.0.4 tested scope
+## v2.0.5 tested scope
 
-The qualified scope covers local file capture and restore; live capture and restore for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB 11.8.9; headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04 packages. A separate real-guest user-timer reboot drill covers only the components and conditions recorded in the [qualification evidence](docs/development/version-2.md#development-candidate-rebootable-systemd-qualification).
+The qualified scope is unchanged from v2.0.4: local file capture and restore; live capture and restore for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB 11.8.9; headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04 packages. A separate real-guest user-timer reboot drill covers only the components and conditions recorded in the [qualification evidence](docs/development/version-2.md#development-candidate-rebootable-systemd-qualification).
 
 B2/AWS, native Docker, ARM64 backup/restore, cross-application-version upgrades and rollback, root-owned systemd package templates, and cloud or off-host protection remain unqualified. ARM64 packages may be built, but build or package-install smoke checks alone do not qualify backup/restore. Keep an independently retrievable copy of repository passwords; a second repository on the same host does not protect against host loss. See [installation](INSTALL.md) for prerequisites and release install instructions.
 
@@ -32,16 +32,18 @@ Recent live B2 evidence covers a small interrupted maintenance run
 whose prune outcome remained uncertain, and a separate lifecycle-overlap guard
 that made central retention refuse the configured bucket. Neither test proves
 prune completion, elapsed lifecycle expiry, physical reclamation, or provider
-protection. These workflows ship in v2.0.4 as experimental and remain
+protection. These workflows ship in v2.0.5 as experimental and remain
 unqualified. See the [maintenance interruption record](docs/development/version-2.md#live-b2-central-maintenance-interruption-trial)
 and [lifecycle guard evidence](docs/cloud-storage.md#b2-lifecycle-overlap-guard-experimental).
-Requests #23–#26 were canceled and closed as not planned. Cancellation does not qualify
-the experimental B2 workflow; the qualified core scope is unchanged from v2.0.3.
+Issues #23–#26 were canceled and closed as not planned. Cancellation does not
+qualify the experimental B2 workflow. This release adds no new live provider
+qualification; the existing workstation results remain historical.
+The qualified core scope is unchanged from v2.0.4.
 
 ## Start with the guided workflow
 
 Experimental restricted cloud credentials, central recovery and retention,
-bounded remote-primary capture, and reviewed Linux coverage ship in v2.0.4 and
+bounded remote-primary capture, and reviewed Linux coverage ship in v2.0.5 and
 are [documented with their limits](docs/development/version-2.md#experimental-cloud-and-machine-recovery-features).
 The reviewed Linux coverage work includes an experimental manual PostgreSQL
 path. These features do not expand the tested stable scope.

@@ -1,6 +1,6 @@
 # Versioning
 
-`VERSION` is the canonical release version. The current version is `2.0.4`.
+`VERSION` is the canonical release version. The current version is `2.0.5`.
 The earlier `v2.0.0` and `v2.0.1` tags did not produce release artifacts; the
 retained legacy line is `1.8.6`. Stable support is limited to the tested scope
 in [`docs/development/version-2.md`](development/version-2.md).
@@ -17,7 +17,7 @@ Release-facing references must match it before publishing:
 
 The release workflow accepts alpha, beta, and release-candidate suffixes. A
 prerelease tag such as `v2.0.0-alpha.1` is marked as a GitHub prerelease; a
-stable tag such as `v2.0.4` is not. Every tag must match `VERSION`, its dated
+stable tag such as `v2.0.5` is not. Every tag must match `VERSION`, its dated
 changelog section, and generated schemas before release validation.
 
 Normal release batches use a patch bump by default, including commits with

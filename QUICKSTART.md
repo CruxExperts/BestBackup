@@ -1,6 +1,6 @@
 # Your first backup and verified restore
 
-This guide covers v2.0.4 and its schema-3 policy. For an older v2.0.2 installation, use its [versioned quick start](https://github.com/CruxExperts/BestBackup/blob/v2.0.2/QUICKSTART.md) until you migrate. Keep an independently retrievable copy of each repository password.
+This guide covers v2.0.5 and its schema-3 policy. For an older v2.0.2 installation, use its [versioned quick start](https://github.com/CruxExperts/BestBackup/blob/v2.0.2/QUICKSTART.md) until you migrate. Keep an independently retrievable copy of each repository password.
 
 ## Start with the guided dashboard
 

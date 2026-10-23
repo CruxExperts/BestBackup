@@ -4,6 +4,89 @@
 > below. Experimental additions remain unqualified. The dated records retain
 > historical evidence and limits without expanding that scope.
 
+## Unreleased layout and dependency maintenance
+
+The source checkout includes compact-terminal layout repairs for the production
+dashboard, guided setup and retained Rich dashboard. Forms scroll within the
+available viewport, setup navigation stays reachable, and compact status gives
+failures and cancel hints priority. Resource summaries retain each resource
+category when individual names cannot all fit. The README and documentation
+index put task navigation ahead of detailed support history.
+
+The maintenance batch also reviews the Python updates proposed in
+[#28](https://github.com/CruxExperts/BestBackup/pull/28) and pinned GitHub Actions
+updates in [#20](https://github.com/CruxExperts/BestBackup/pull/20). Ruff's prior
+rule profile is explicit so a tool upgrade does not silently change the
+repository's lint policy. The [dependency evidence](release-dependencies.json)
+binds the reviewed source dependency graph and records advisory-query limits.
+The published v2.0.5 report remains available in its
+[versioned source](https://github.com/CruxExperts/BestBackup/blob/v2.0.5/docs/development/release-dependencies.json).
+
+The B2 SDK update honors a server's `Retry-After` delay on 5xx service errors.
+The retry regression covers both 429 and 503 responses, including the fallback
+when that header is absent. Inspection deadlines and cancellation still bound
+the SDK subprocess; this offline check adds no live provider qualification.
+
+These are unreleased source changes. They do not publish new artifacts or
+expand Docker, cloud-provider, off-host recovery or complete-machine support.
+
+On 2026-10-23, the final local maintenance candidate passed 1,295 tests with
+one skipped test in 114.24 seconds using three workers. This includes the
+47 dashboard and TUI cases and the 45 B2 cases covering the upgraded SDK.
+Headless captures confirmed the populated/error-state Rich layout at 60x20
+and 80x24, narrow dashboard navigation and restore controls at 60x20, and the
+normal 112x36 dashboard preview. Documentation previews were inspected at
+narrow and wide widths. Independent review found no remaining blocking issues.
+The skipped legacy Docker volume roundtrip still does not qualify that path.
+Ruff, Python compilation, version synchronization, generated CLI/schema checks,
+Markdown, artwork provenance, publishing readiness and whitespace checks passed.
+The wheel and source archive built and passed isolated installed-artifact smoke
+checks. These checks validate the source candidate without publishing a release.
+
+## Unreleased maintenance (issue #30)
+
+The source checkout implements the reviewed portions of
+[#30](https://github.com/CruxExperts/BestBackup/issues/30): bounded repository
+lock inspection and explicitly approved stale unlock, optional `local_last`
+and `local_weekly` counts, strict parsing of valid Restic keep-all output,
+read-only B2 lifecycle capability compatibility, and consistent cache policy
+for nested Restic commands in minimal environments.
+
+These changes use the existing enrolled production dispatcher, leases and
+reconciliation barriers. Unlock is limited to the reviewed own-host, same-user
+dead-process lock set and requires an externally coordinated quiet window.
+Local retention preserves recorded required-replica obligations and replans
+before applying exact snapshot IDs. See the
+[maintenance quick start](../../QUICKSTART.md#review-local-retention-and-stale-locks-unreleased)
+for configuration and commands.
+
+On 2026-10-23, the local Python 3.12 suite passed with 1,287 tests and one
+skipped test, including integration tests with Restic 0.19.1 and an available
+Docker daemon. The disposable lock drill preserved an existing snapshot,
+planned keep-all retention with 12 last/14 daily/8 weekly counts, refused a live
+lock, and removed its reviewed stale lock after the owned process was killed.
+Ruff, compilation, version and generated-command checks, Markdown, artwork
+provenance, publishing readiness and whitespace checks passed. The wheel and
+source archive built and passed installed-artifact smoke checks. Independent
+review found no remaining blocking correctness findings. These are development
+results, not new published-artifact or production qualification.
+
+The existing legacy Docker volume restore roundtrip skipped after its backup
+step returned failure. A focused rerun confirmed that skip; this validation
+does not qualify that restore path.
+
+The live-lock integration fixture waits for a stable inventory containing its
+owned Restic process. It tolerates only the explicit inventory-change refusal
+during bounded startup; the production inspector still rejects changing lock
+sets, and uncertain unlocks are never retried. This covers slower hosted lock
+acquisition without weakening the maintenance safety checks.
+
+This is unreleased source work, not acceptance of private candidate builds or
+permission to modify deployed installations. The package version remains
+2.0.5 until a separate release. No B2/AWS protection, off-host custody,
+thirty-day recovery window or complete-machine recovery qualification is added;
+the canceled scopes of #23-#26 remain canceled and unqualified.
+
 ## v2.0.5 release scope and known limits
 
 The v2.0.5 stable qualified scope is unchanged from v2.0.4: local file capture
@@ -1708,6 +1791,11 @@ teams. They retain the recorded cloud, Docker, ARM64, upgrade, and off-host
 recovery limits rather than treating discoverability as additional qualification.
 
 ## Dependency evidence
+
+The entries below record earlier candidates and released 2.0.x inputs. They
+remain historical evidence. For the current unreleased dependency graph, use
+the [source maintenance record](#unreleased-layout-and-dependency-maintenance)
+and [exact lockfile review](release-dependencies.json).
 
 The optional Google Drive client uses oauthlib 4.0.0 to incorporate upstream
 fixes for CVE-2026-49264 and CVE-2026-49265. Exact-version OSV, GitHub advisory,

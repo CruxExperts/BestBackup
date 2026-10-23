@@ -70,6 +70,36 @@ def test_schema_and_sanitized_listing(service):
     assert help_data["ui"]["activate"]["help"].startswith("Enable and start")
 
 
+def test_repository_lock_commands_use_reviewed_inputs(service, monkeypatch):
+    from bbackup.service import BackupService
+
+    calls = []
+    monkeypatch.setattr(BackupService, "repository_locks", lambda self, name, *, cancel=None:
+                        calls.append(("locks", name)) or {"read_only": True})
+    monkeypatch.setattr(
+        BackupService, "repository_unlock_stale",
+        lambda self, name, token, approved, *, quiescent_window_confirmed, cancel=None:
+        calls.append(("unlock", name, token, approved, quiescent_window_confirmed))
+        or {"replayed": False},
+    )
+
+    reviewed = invoke(service, ["repositories", "locks", "--name", "local"])
+    assert reviewed.exit_code == 0, reviewed.output
+    unlocked = invoke(service, [
+        "repositories", "unlock-stale", "--name", "local",
+        "--plan-token", "a" * 64, "--approved", "--quiescent-window-confirmed",
+    ])
+    assert unlocked.exit_code == 0, unlocked.output
+    assert calls == [
+        ("locks", "local"),
+        ("unlock", "local", "a" * 64, True, True),
+    ]
+    schema = json.loads(invoke(service, ["repositories", "unlock-stale", "--schema"]).output)["data"]
+    assert {"name", "plan_token"} <= set(schema["required"])
+    assert schema["properties"]["approved"]["default"] is False
+    assert schema["properties"]["quiescent_window_confirmed"]["default"] is False
+
+
 def test_manual_postgresql_window_flag_is_explicit_and_defaults_false(service, monkeypatch):
     from bbackup.service import BackupService
     observed = []

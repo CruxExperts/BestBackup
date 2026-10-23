@@ -8,6 +8,9 @@ Active README artwork follows the bbackup forest-green identity and keeps all pr
 - `bbackup-social-v3.jpg`: current GitHub social upload, generated with OpenAI's built-in image generation tool on 2026-10-19 using the README banner as a brand reference. Center-cropped and resized to GitHub's recommended 1280×640 dimensions; 154,877 bytes, under 1 MB. EXIF and XMP retain ownership and usage terms.
 - `bbackup-dashboard-preview.svg`: Textual headless dashboard capture, using fixture data only and illustrative capacity. Regenerate with
   `uv run python scripts/generate_dashboard_preview.py` (requires restic).
+  The current capture uses a 112-column by 36-row terminal. Compact-layout
+  checks use separate disposable fixtures; this overview image is a readable
+  example rather than proof of every screen or a live host's recovery status.
 
 [provenance.json](provenance.json) records generation briefs, references, dimensions, original hashes, final hashes, and ownership for the generated images and delivery encoding. Copyright, company URL, creator, usage terms, and generator are embedded in PNG metadata. Metadata insertion preserves the generated pixel data.
 

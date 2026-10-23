@@ -10,6 +10,41 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+### Added
+
+- Reviewed repository lock inspection and stale-lock removal through the native
+  production dispatcher. Unlock requires an exact review token, explicit
+  approval, a confirmed quiet window, and only own-host, same-user locks whose
+  processes are absent. Changed or uncertain lock inventories block removal.
+- Optional `local_last` and `local_weekly` retention counts, disabled by default,
+  alongside daily retention. Counts are part of the reviewed retention policy.
+
+### Fixed
+
+- Keep dashboard forms and setup navigation reachable in short terminals, and
+  preserve resource summaries, failure status and cancel hints in the compact
+  legacy dashboard.
+- Put getting-started instructions before detailed support history and keep
+  the documentation index readable on narrow screens.
+- Accept Restic's explicit `remove: null` keep-all selection only when its keep
+  group contains valid full snapshot IDs; malformed selections remain errors.
+- Recognize B2's read-only `readBucketLifecycleRules` capability without allowing
+  administrative or unknown permissions or qualifying a permanent-delete key as
+  a restricted source writer.
+- Preserve the resolved Restic cache policy in nested repository queries,
+  including execution without `HOME` or `XDG_CACHE_HOME`.
+
+These source changes address issue [#30](https://github.com/CruxExperts/BestBackup/issues/30).
+They do not publish a new release or expand cloud or machine-recovery qualification.
+
+### Changed
+
+- Refresh the reviewed Python maintenance dependencies from pull request #28
+  and the immutable GitHub Actions references from #20. Keep the established
+  Ruff rule profile explicit across its default-rule migration. See the
+  [dependency evidence](docs/development/release-dependencies.json) for exact
+  versions, source timestamps and limits.
+
 ## [2.0.5] - 2026-10-22
 
 ### Fixed

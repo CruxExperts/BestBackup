@@ -103,6 +103,14 @@ bbackup production \
 
 Allowed outcomes are `succeeded`, `failed`, and `abandoned`. Review the destination before recording one. Use one shared state directory for all bbackup processes that coordinate a repository; local locking cannot coordinate another host or an external restic writer.
 
+The unreleased `repositories locks` command returns a bounded inspection and an
+exact review token. `repositories unlock-stale` requires that token,
+`approved: true`, and `quiescent_window_confirmed: true`. It reinspects under the mutation
+lease and refuses foreign/live processes, changed inventories and incomplete
+reads. An uncertain unlock uses the same reconciliation barrier above; agents
+must never retry it automatically. Keep external writers stopped throughout
+the operation. See the [maintenance quick start](../QUICKSTART.md#review-local-retention-and-stale-locks-unreleased).
+
 ## Recovery checkpoints
 
 The cloud recovery commands require explicit storage identity, full repository and snapshot IDs, trusted signing fingerprints, and independent password custody. A checkpoint additionally requires a full repository check and an administrator-coordinated quiescent window across every writer. Lifecycle inspection reports configuration; it does not establish provider protection. See [cloud storage](cloud-storage.md) and [the recovery limits](development/version-2.md#independent-recovery-artifacts).

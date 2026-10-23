@@ -198,23 +198,105 @@ class BackupTUI:
             border_style="cyan",
         )
         self.console.print(header)
+
+    @staticmethod
+    def _item_progress(status_info: Any) -> tuple[str, str]:
+        if isinstance(status_info, dict):
+            status = str(status_info.get("status", "unknown"))
+            size = status_info.get("size", "-")
+            speed = status_info.get("speed", "")
+        else:
+            status = str(status_info)
+            size = "-"
+            speed = ""
+        progress = str(size if size != "-" else speed if speed else status)
+        return status, progress
+
+    def _resource_panel(self, title: str, heading: str, values: dict[str, Any]) -> Panel:
+        """Build one status panel sized for its share of the terminal width."""
+        table = Table(show_header=True, box=box.SIMPLE, show_edge=False, expand=True)
+        name_width = 12
+        status_width = 7
+        progress_width = 10
+        table.add_column(heading, style="cyan", width=name_width,
+                         no_wrap=True, overflow="ellipsis")
+        table.add_column("Status", width=status_width, no_wrap=True, overflow="ellipsis")
+        table.add_column("Progress", style="dim", width=progress_width,
+                         no_wrap=True, overflow="ellipsis")
+
+        for name, status_info in list(values.items())[:10]:
+            status, progress = self._item_progress(status_info)
+            color = "green" if status == "success" else "red" if status == "failed" else "yellow"
+            table.add_row(
+                name,
+                f"[{color}]{status}[/{color}]",
+                progress,
+            )
+
+        if not values:
+            table.add_row("No items", "", "")
+
+        return Panel(table, title=title, border_style="green" if title == "Containers" else
+                     "yellow" if title == "Volumes" else "cyan", box=box.ROUNDED)
+
+    def _compact_resources_panel(self, resources: list[tuple[str, dict[str, Any]]]) -> Panel:
+        """Summarize every resource type without letting one group fill the screen."""
+        table = Table(show_header=True, box=box.SIMPLE, show_edge=False, expand=True)
+        item_width = max(14, (self.console.size.width - 8) // 2)
+        detail_width = max(10, self.console.size.width - 8 - item_width)
+        table.add_column("Type (count)", style="cyan", width=item_width,
+                         no_wrap=True, overflow="ellipsis")
+        table.add_column("Sample / status", width=detail_width,
+                         no_wrap=True, overflow="ellipsis")
+
+        for category, values in resources:
+            if not values:
+                table.add_row(f"{category} (0)", "No items")
+                continue
+            name, status_info = next(iter(values.items()))
+            status, progress = self._item_progress(status_info)
+            color = "green" if status == "success" else "red" if status == "failed" else "yellow"
+            detail = status if progress == status else f"{status} · {progress}"
+            remaining = len(values) - 1
+            if remaining:
+                detail += f" · +{remaining} more"
+            table.add_row(
+                f"{category} ({len(values)})",
+                f"[{color}]{name}: {detail}[/{color}]",
+            )
+
+        return Panel(table, title="Backup resources", border_style="cyan", box=box.ROUNDED)
     
     def create_live_dashboard(self) -> Layout:
         """Create live-updating dashboard layout (BTOP-like)."""
         layout = Layout()
-        layout.split_column(
-            Layout(name="header", size=5),
-            Layout(name="main", ratio=2),
-            Layout(name="progress", size=8),
-            Layout(name="status", size=6),
-            Layout(name="footer", size=3),
-        )
-        
-        layout["main"].split_row(
-            Layout(name="containers", ratio=1),
-            Layout(name="volumes", ratio=1),
-            Layout(name="filesystems", ratio=1),
-        )
+        compact_height = self.console.size.height < 32
+        compact_width = self.console.size.width < 120
+        if compact_height:
+            layout.split_column(
+                Layout(name="header", size=2),
+                Layout(name="main", ratio=1),
+                Layout(name="progress", size=2),
+                Layout(name="status", size=2),
+                Layout(name="footer", size=1),
+            )
+        else:
+            layout.split_column(
+                Layout(name="header", size=5),
+                Layout(name="main", ratio=2),
+                Layout(name="progress", size=8),
+                Layout(name="status", size=6),
+                Layout(name="footer", size=3),
+            )
+
+        if compact_width:
+            layout["main"].split_column(Layout(name="resources", ratio=1))
+        else:
+            layout["main"].split_row(
+                Layout(name="containers", ratio=1),
+                Layout(name="volumes", ratio=1),
+                Layout(name="filesystems", ratio=1),
+            )
         
         # Header
         current_status = self.status.get_status()
@@ -270,16 +352,31 @@ Status: [{status_color}]{current_status.upper()}[/{status_color}]{elapsed}{eta_s
 [bold]Item:[/bold] {self.status.current_item if self.status.current_item else 'N/A'}
 {('[bold]File:[/bold] ' + self.status.current_file[:60]) if self.status.current_file else ''}
 """
-        layout["header"].update(Panel(header_content.strip(), border_style="cyan", box=box.ROUNDED))
+        if compact_height:
+            action_limit = min(24, max(8, (self.console.size.width - 21) // 2))
+            item_limit = max(8, self.console.size.width - action_limit - 21)
+            current_line = (
+                f"[bold]Current:[/bold] {self.status.current_action[:action_limit]} · "
+                f"[bold]Item:[/bold] {(self.status.current_item or 'N/A')[:item_limit]}"
+            )
+            compact_header = (
+                f"[bold cyan]bbackup[/bold cyan] [dim]v{__version__}[/dim] · "
+                f"Status: [{status_color}]{current_status.upper()}[/{status_color}]\n"
+                f"{current_line}"
+            )
+            layout["header"].update(compact_header)
+        else:
+            layout["header"].update(Panel(header_content.strip(), border_style="cyan", box=box.ROUNDED))
         
         # Progress bar with enhanced metrics
         # Use bytes-based progress if available, otherwise use item-based
         if self.status.total_bytes > 0:
             # Bytes-based progress (more accurate for file transfers)
+            bar_width = max(8, min(40, self.console.size.width - 48)) if compact_width else 40
             progress_bar = Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
-                BarColumn(bar_width=40),
+                BarColumn(bar_width=bar_width),
                 TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
                 TextColumn("•"),
                 TextColumn("[cyan]{task.completed:>10}[/cyan]/[dim]{task.total:>10}[/dim]"),
@@ -293,10 +390,11 @@ Status: [{status_color}]{current_status.upper()}[/{status_color}]{elapsed}{eta_s
             completed = self.status.bytes_transferred
         else:
             # Item-based progress (fallback)
+            bar_width = max(8, min(40, self.console.size.width - 48)) if compact_width else 40
             progress_bar = Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
-                BarColumn(bar_width=40),
+                BarColumn(bar_width=bar_width),
                 TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
                 TextColumn("•"),
                 MofNCompleteColumn(),
@@ -309,7 +407,7 @@ Status: [{status_color}]{current_status.upper()}[/{status_color}]{elapsed}{eta_s
                 progress_bar.columns = (
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
-                    BarColumn(bar_width=40),
+                    BarColumn(bar_width=bar_width),
                     TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
                     TextColumn("•"),
                     MofNCompleteColumn(),
@@ -322,115 +420,75 @@ Status: [{status_color}]{current_status.upper()}[/{status_color}]{elapsed}{eta_s
             completed = self.status.completed_items
         
         progress_bar.add_task(
-            self.status.current_action[:50] if self.status.current_action else "Processing...",
+            self.status.current_action[:max(12, self.console.size.width - 36)] if self.status.current_action else "Processing...",
             total=total,
             completed=completed,
         )
-        
-        layout["progress"].update(
-            Panel(progress_bar, title="Progress", border_style="blue", box=box.ROUNDED)
-        )
+
+        if compact_height:
+            layout["progress"].update(progress_bar)
+        else:
+            layout["progress"].update(
+                Panel(progress_bar, title="Progress", border_style="blue", box=box.ROUNDED)
+            )
         
         containers_status = self.status.item_statuses("containers")
         volumes_status = self.status.item_statuses("volumes")
         filesystems_status = self.status.item_statuses("filesystems")
         errors, warnings = self.status.messages()
 
-        # Containers panel with enhanced info
-        containers_table = Table(show_header=True, box=box.SIMPLE, show_edge=False)
-        containers_table.add_column("Container", style="cyan", width=22)
-        containers_table.add_column("Status", width=10)
-        containers_table.add_column("Progress", style="dim", width=12)
-        
-        for name, status_info in list(containers_status.items())[:10]:
-            # Handle both dict and string status
-            if isinstance(status_info, dict):
-                status = status_info.get("status", "unknown")
-                size = status_info.get("size", "-")
-                speed = status_info.get("speed", "")
-            else:
-                status = status_info
-                size = "-"
-                speed = ""
-            
-            status_color = "green" if status == "success" else "red" if status == "failed" else "yellow"
-            progress_display = size if size != "-" else speed if speed else status
-            containers_table.add_row(
-                name[:22],
-                f"[{status_color}]{status[:8]}[/{status_color}]",
-                progress_display[:12],
-            )
-        
-        if len(containers_status) == 0:
-            containers_table.add_row("[dim]No containers backed up yet[/dim]", "", "")
-        
-        layout["containers"].update(
-            Panel(containers_table, title="Containers", border_style="green", box=box.ROUNDED)
-        )
-        
-        # Volumes panel with enhanced info
-        volumes_table = Table(show_header=True, box=box.SIMPLE, show_edge=False)
-        volumes_table.add_column("Volume", style="cyan", width=22)
-        volumes_table.add_column("Status", width=10)
-        volumes_table.add_column("Progress", style="dim", width=12)
-        
-        for name, status_info in list(volumes_status.items())[:10]:
-            # Handle both dict and string status
-            if isinstance(status_info, dict):
-                status = status_info.get("status", "unknown")
-                size = status_info.get("size", "-")
-                speed = status_info.get("speed", "")
-            else:
-                status = status_info
-                size = "-"
-                speed = ""
-            
-            status_color = "green" if status == "success" else "red" if status == "failed" else "yellow"
-            progress_display = size if size != "-" else speed if speed else status
-            volumes_table.add_row(
-                name[:22],
-                f"[{status_color}]{status[:8]}[/{status_color}]",
-                progress_display[:12],
-            )
-        
-        if len(volumes_status) == 0:
-            volumes_table.add_row("[dim]No volumes backed up yet[/dim]", "", "")
-        
-        layout["volumes"].update(
-            Panel(volumes_table, title="Volumes", border_style="yellow", box=box.ROUNDED)
-        )
+        resources = [("Containers", containers_status), ("Volumes", volumes_status),
+                     ("Filesystems", filesystems_status)]
+        if compact_width:
+            layout["resources"].update(self._compact_resources_panel(resources))
+        else:
+            layout["containers"].update(self._resource_panel("Containers", "Container", containers_status))
+            layout["volumes"].update(self._resource_panel("Volumes", "Volume", volumes_status))
+            layout["filesystems"].update(self._resource_panel("Filesystems", "Path", filesystems_status))
 
-        # Filesystems panel
-        filesystems_table = Table(show_header=True, box=box.SIMPLE, show_edge=False)
-        filesystems_table.add_column("Path", style="cyan", width=22)
-        filesystems_table.add_column("Status", width=10)
-        filesystems_table.add_column("Progress", style="dim", width=12)
+        if compact_height:
+            priority = []
+            if errors:
+                priority.append(f"[red]Errors: {len(errors)}[/red]")
+            if self.status.encryption_status == "failed":
+                priority.append("[red]Encryption failed[/red]")
+            if warnings:
+                priority.append(f"[yellow]Warnings: {len(warnings)}[/yellow]")
+            if not priority:
+                priority.append("[green]No errors or warnings[/green]")
 
-        for name, status_info in list(filesystems_status.items())[:10]:
-            if isinstance(status_info, dict):
-                fs_status = status_info.get("status", "unknown")
-                size = status_info.get("size", "-")
-                speed = status_info.get("speed", "")
+            if errors:
+                detail = errors[-1]
+            elif self.status.encryption_status == "failed":
+                detail = "Check the retained operation result before retrying."
+            elif warnings:
+                detail = warnings[-1]
+            elif self.status.encryption_status == "encrypting":
+                detail = "Encryption in progress"
+            elif self.status.encryption_status == "encrypted":
+                detail = "Backup encrypted"
             else:
-                fs_status = status_info
-                size = "-"
-                speed = ""
-            color = "green" if fs_status == "success" else "red" if fs_status == "failed" else "yellow"
-            progress_display = size if size != "-" else speed if speed else fs_status
-            filesystems_table.add_row(
-                name[:22],
-                f"[{color}]{fs_status[:8]}[/{color}]",
-                progress_display[:12],
+                detail = f"{self.status.transfer_speed:.2f} MB/s" if self.status.transfer_speed else "Ready"
+            detail = detail[:max(12, self.console.size.width - 4)]
+            layout["status"].update(" · ".join(priority) + "\n" + detail)
+        else:
+            self._update_expanded_status(layout, errors, warnings)
+
+        # Footer with controls
+        if compact_height:
+            layout["footer"].update("[dim]Q quit/cancel · P pause · S skip · H help[/dim]")
+        else:
+            footer_content = """
+[dim]Controls:[/dim] [bold]Q[/bold] = Quit/Cancel  [bold]P[/bold] = Pause  [bold]S[/bold] = Skip Current  [bold]H[/bold] = Help
+"""
+            layout["footer"].update(
+                Panel(footer_content.strip(), border_style="dim", box=box.SIMPLE)
             )
 
-        if not filesystems_status:
-            filesystems_table.add_row("[dim]No paths backed up yet[/dim]", "", "")
+        return layout
 
-        layout["filesystems"].update(
-            Panel(filesystems_table, title="Filesystems", border_style="cyan", box=box.ROUNDED)
-        )
-
-        # Status panel with encryption info and metrics
+    def _update_expanded_status(self, layout: Layout, errors: list[str], warnings: list[str]) -> None:
+        """Render the full status detail when the terminal has vertical space."""
         status_lines = []
         
         # Show transfer metrics if available
@@ -478,16 +536,6 @@ Status: [{status_color}]{current_status.upper()}[/{status_color}]{elapsed}{eta_s
         layout["status"].update(
             Panel("\n".join(status_lines), title="Status", border_style="magenta", box=box.ROUNDED)
         )
-        
-        # Footer with controls
-        footer_content = """
-[dim]Controls:[/dim] [bold]Q[/bold] = Quit/Cancel  [bold]P[/bold] = Pause  [bold]S[/bold] = Skip Current  [bold]H[/bold] = Help
-"""
-        layout["footer"].update(
-            Panel(footer_content.strip(), border_style="dim", box=box.SIMPLE)
-        )
-        
-        return layout
     
     @staticmethod
     def _set_terminal_cbreak(stream: Any) -> Any:

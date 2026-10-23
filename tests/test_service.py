@@ -1538,6 +1538,9 @@ def test_unknown_repository_identity_is_a_service_error(service):
 
 
 def test_copy_uses_capture_tag_and_latest_to_bound_large_listing(service, monkeypatch):
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.delenv("RESTIC_CACHE_DIR", raising=False)
     source_snapshot = "a" * 64
     destination_snapshot = "b" * 64
     capture_token = "c" * 32
@@ -1574,6 +1577,7 @@ def test_copy_uses_capture_tag_and_latest_to_bound_large_listing(service, monkey
 
     assert result["destination_snapshot_id"] == destination_snapshot
     assert len(plans) == 2 and len(inspected) == 1
+    assert all("--no-cache" in plan.argv for plan in plans)
     with service._receipts() as db:
         row = db.execute(
             "SELECT capture_token FROM copies WHERE source_snapshot = ?",
@@ -1695,7 +1699,8 @@ def _record_retention_copy(service, snapshot_id, *, destination="copy", capture_
 
 
 def _mock_retention_restic(service, monkeypatch, snapshots, selected, *, apply_status=None):
-    state = {"snapshots": list(snapshots), "apply_args": [], "apply_operation_id": None,
+    state = {"snapshots": list(snapshots), "apply_args": [], "selection_args": [],
+             "apply_operation_id": None,
              "replica_snapshots": [{"id": "d" * 64, "original": item["id"],
                                     "tags": ["bbackup-capture=capture-token"]} for item in snapshots]}
 
@@ -1706,6 +1711,7 @@ def _mock_retention_restic(service, monkeypatch, snapshots, selected, *, apply_s
                 return _run(plan, stdout=json.dumps(state["replica_snapshots"]).encode())
             return _run(plan, stdout=json.dumps(state["snapshots"]).encode())
         if "forget" in argv and "--dry-run" in argv:
+            state["selection_args"].append(argv)
             payload = [{"remove": [{"id": snapshot_id} for snapshot_id in selected]}]
             return _run(plan, stdout=json.dumps(payload).encode())
         if "forget" in argv:
@@ -1831,6 +1837,40 @@ def test_retention_policy_change_invalidates_approval(service, monkeypatch):
     with pytest.raises(ServiceError, match="approval is stale"):
         service.retention_apply("daily", plan["plan_token"], True)
     assert state["apply_args"] == []
+
+
+@pytest.mark.parametrize("field", ["local_last", "local_weekly"])
+def test_retention_local_last_and_weekly_are_in_selection_and_review_token(
+        service, monkeypatch, field):
+    state = _mock_retention_restic(service, monkeypatch, [], [])
+    reviewed = service.retention_plan("daily")
+    selection = state["selection_args"][0]
+    assert selection[selection.index("--keep-last") + 1] == "0"
+    assert selection[selection.index("--keep-weekly") + 1] == "0"
+    changed_job = replace(
+        service.config.jobs[0],
+        retention=replace(service.config.jobs[0].retention, **{field: 2}),
+    )
+    service.config = replace(service.config, jobs=(changed_job,))
+    changed = service.retention_plan("daily")
+    assert changed["plan_token"] != reviewed["plan_token"]
+    changed_selection = state["selection_args"][1]
+    assert changed_selection[changed_selection.index(f"--keep-{field.removeprefix('local_')}") + 1] == "2"
+    with pytest.raises(ServiceError, match="approval is stale"):
+        service.retention_apply("daily", reviewed["plan_token"], True)
+
+
+def test_restic_null_remove_requires_a_nonempty_valid_keep_array():
+    valid = json.dumps([{"remove": None, "keep": [{"id": "a" * 64}]}]).encode()
+    assert BackupService._forget_snapshot_ids(valid) == set()
+    for payload in (
+        [{"remove": None}],
+        [{"remove": None, "keep": []}],
+        [{"remove": None, "keep": [{"id": "short"}]}],
+        [{"remove": None, "keep": ["a" * 64]}],
+    ):
+        with pytest.raises(ServiceError):
+            BackupService._forget_snapshot_ids(json.dumps(payload).encode())
 
 
 def test_lost_replica_invalidates_approval_and_holds_remaining_local_snapshot(service, monkeypatch):

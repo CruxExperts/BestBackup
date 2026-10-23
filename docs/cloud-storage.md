@@ -74,6 +74,12 @@ identity; the source key does not need it. Do not add
 `writeBucketLifecycleRules` for a read-only inspection. See
 [Backblaze's S3-compatible app-key capabilities](https://www.backblaze.com/docs/cloud-storage-s3-compatible-app-keys).
 
+The unreleased source recognizes `readBucketLifecycleRules` as a safe read-only
+capability during native inspection. This compatibility change does not grant
+the permission, bypass bucket/prefix checks, or establish provider protection.
+A checkpoint or maintenance key with `deleteFiles` still fails the restricted
+source-writer profile; keep that authority separate from source credentials.
+
 ### Restricted source profile (experimental)
 
 The `restricted_source_profile` result is a versioned assessment of the SDK's

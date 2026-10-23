@@ -2,39 +2,54 @@
 
 bbackup is for Linux administrators, homelab and self-hosted operators, and small infrastructure teams who need encrypted local backups, verified file restores, and visible scheduled jobs. Choose a guide by the work you are doing.
 
-These guides describe v2.0.5. The [qualification record](development/version-2.md) is the authority for the exact qualified scope, version-specific evidence, and remaining limits; an implemented path alone does not establish support. The v2.0.5 release retains the v2.0.4 tested core scope, while new cloud and Linux workflows are experimental and unqualified. Operators still using v2.0.2 can follow its [versioned documentation](https://github.com/CruxExperts/BestBackup/tree/v2.0.2/docs) until they migrate.
-
-The [release dependency evidence](development/release-dependencies.json) records the reviewed versions, source timestamps, lock hash, and audit limits.
+These guides describe published v2.0.5 and clearly marked unreleased source
+changes. Check the [qualification record](development/version-2.md) for the exact
+supported scope before selecting a workflow.
 
 ## Choose a starting point
 
-| If you need to... | Start here |
-|:--|:--|
-| Install bbackup and run your first backup | [Installation](../INSTALL.md) and the [quick start](../QUICKSTART.md) |
-| Migrate an existing schema-2 setup | [Quick start: migrate an existing configuration](../QUICKSTART.md#migrate-an-existing-schema-2-configuration) |
-| Maintain an older Docker/YAML workflow | [Legacy management](management.md) and [encryption compatibility](encryption.md) |
-| Schedule jobs or integrate with scripts and agents | [Quick start: apply a schedule](../QUICKSTART.md#apply-a-schedule-deliberately), [agent integration](AGENT_INTEGRATION.md), and the [production command reference](production-cli.md) |
-| Check v2.0.5 scope and issue status | [Version 2 qualification record](development/version-2.md) (issues #23–#26 were canceled and closed as not planned; they remain unqualified) |
-| Evaluate experimental cloud recovery, retention or Linux coverage | [Experimental program and limits](development/version-2.md#experimental-cloud-and-machine-recovery-features) and [cloud storage](cloud-storage.md) |
+- **Install and run a first backup:** [installation](../INSTALL.md) and the [quick start](../QUICKSTART.md).
+- **Migrate a schema-2 setup:** [migration steps](../QUICKSTART.md#migrate-an-existing-schema-2-configuration).
+- **Schedule jobs:** [apply a schedule deliberately](../QUICKSTART.md#apply-a-schedule-deliberately).
+- **Automate commands:** [agent integration](AGENT_INTEGRATION.md) and the [production command reference](production-cli.md).
+- **Maintain older Docker/YAML workflows:** [legacy management](management.md) and [encryption compatibility](encryption.md).
+- **Evaluate cloud recovery or Linux coverage:** [experimental limits](development/version-2.md#experimental-cloud-and-machine-recovery-features) and [cloud storage](cloud-storage.md).
 
 ## Operator references
 
-| Reference | Use it for |
-|:--|:--|
-| [architecture.md](architecture.md) | Shared operations, durable state, and safety boundaries |
-| [cloud-storage.md](cloud-storage.md) | Implemented B2/AWS paths and their qualification limits |
-| [encryption.md](encryption.md) | Restic password custody, deferred off-host custody, and legacy file encryption |
-| [cli-skills.md](cli-skills.md) | Generated command and agent-skills catalog |
+- [Architecture](architecture.md): shared operations, durable state and safety boundaries.
+- [Cloud storage](cloud-storage.md): B2/AWS paths and their qualification limits.
+- [Encryption](encryption.md): Restic password custody and legacy file encryption.
+- [CLI skills](cli-skills.md): generated command and agent-skills catalog.
+
+## Version and support boundaries
+
+v2.0.5 retains the v2.0.4 tested core scope. Experimental cloud and Linux
+workflows remain unqualified; issues #23–#26 were canceled and closed as not
+planned. An implemented path or a closed issue does not establish support.
+The [qualification record](development/version-2.md) retains the dated evidence.
+
+Current source includes [unreleased issue #30 maintenance](development/version-2.md#unreleased-maintenance-issue-30)
+for reviewed stale locks, local retention counts, strict Restic parsing, B2
+lifecycle-read compatibility and nested cache policy. Follow the
+[maintenance quick start](../QUICKSTART.md#review-local-retention-and-stale-locks-unreleased)
+before using those commands; they are separate from published v2.0.5.
+
+The [current layout and dependency batch](development/version-2.md#unreleased-layout-and-dependency-maintenance)
+is also unreleased. It covers compact terminal forms, documentation navigation,
+and reviewed Python and GitHub Actions maintenance.
+
+Operators still using v2.0.2 can follow its
+[versioned documentation](https://github.com/CruxExperts/BestBackup/tree/v2.0.2/docs)
+until they migrate.
 
 ## Maintainer references
 
-| Reference | Use it for |
-|:--|:--|
-| [VERSIONING.md](VERSIONING.md) | Canonical package version, release tags, and validation |
-| [PUBLISHING_CHECKLIST.md](PUBLISHING_CHECKLIST.md) | Community files and release readiness checks |
-| [development/version-2.md](development/version-2.md) | Qualification evidence, candidate results, and deferred assurance |
-| [development/release-dependencies.json](development/release-dependencies.json) | Reviewed package versions and dependency audit evidence |
-| [assets/README.md](assets/README.md) | Documentation asset inventory and visual standards |
+- [Versioning](VERSIONING.md): canonical package version, release tags and validation.
+- [Publishing checklist](PUBLISHING_CHECKLIST.md): community files and release readiness.
+- [Qualification record](development/version-2.md): candidate results and deferred assurance.
+- [Release dependency evidence](development/release-dependencies.json): reviewed versions, source timestamps, lock hash and audit limits.
+- [Documentation assets](assets/README.md): asset inventory and visual standards.
 
 ## Documentation standards
 

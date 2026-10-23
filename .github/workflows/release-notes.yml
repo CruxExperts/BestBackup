@@ -37,7 +37,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: "3.12"
 
@@ -154,7 +154,7 @@ jobs:
           fetch-depth: 1
 
       - name: Download validated source wheel
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: release-source
           path: source
@@ -254,13 +254,13 @@ jobs:
           persist-credentials: false
 
       - name: Download source archives
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: release-source
           path: release-inputs
 
       - name: Download target package outputs
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: "bbackup-deb-*"
           merge-multiple: true
@@ -342,7 +342,7 @@ jobs:
           actual_sha="$(jq -r '.head_sha' "$RUNNER_TEMP/build-run.json")"
           test "$actual_sha" = "$expected_sha"
       - name: Download exact successful build artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: release-inputs
           run-id: ${{ inputs.build_run_id }}

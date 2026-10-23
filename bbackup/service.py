@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import ExitStack
 from collections.abc import Callable
 from datetime import datetime, timezone
+import errno
 import gzip
 import hashlib
 import json
@@ -11,10 +12,12 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import sqlite3
 import stat
 import sys
 import tempfile
+import time
 import uuid
 from urllib.parse import urlsplit
 
@@ -26,7 +29,7 @@ from .docker_recovery import DockerRecoveryError, DockerRecoveryUncertainError, 
 from .snapshot import ResticRunner
 from .resource_limits import ResourceLimitError, ResourceMonitor
 from .progress import stdout_progress_handler
-from .enrollment import _read_regular
+from .enrollment import _read_regular, machine_identity
 from .operations import (
     OperationLedger,
     OperationPlan,
@@ -56,6 +59,14 @@ class ResourceBudgetExceeded(ServiceError):
     def __init__(self, result: dict):
         self.result = result
         super().__init__("Remote-primary resource budget was exceeded or cannot be verified")
+
+
+_MAX_RESTIC_LOCKS = 128
+_MAX_RESTIC_LOCK_LIST_BYTES = 64 * 1024
+_MAX_RESTIC_LOCK_PAYLOAD_BYTES = 16 * 1024
+_RESTIC_LOCK_INSPECTION_SECONDS = 120
+_RESTIC_LOCK_QUERY_SECONDS = 30
+_RESTIC_LOCK_ID = re.compile(r"[0-9a-f]{64}\Z")
 
 
 class _RemoteResticRunner(ResticRunner):
@@ -425,6 +436,30 @@ class BackupService:
             value = str(Path(value).resolve())
         return value
 
+    def _restic_cache_args(self, name, argv, env, *, force_no_cache=False):
+        """Apply one cache policy to direct and nested Restic commands."""
+        args = tuple(argv)
+        if not args or args[0] != "restic":
+            return args
+        has_explicit_cache = any(
+            argument == "--no-cache" or argument == "--cache-dir"
+            or argument.startswith("--cache-dir=")
+            for argument in args[1:]
+        )
+        has_cache_environment = any(
+            (env or {}).get(variable)
+            for variable in ("HOME", "XDG_CACHE_HOME", "RESTIC_CACHE_DIR")
+        )
+        binding = self.bindings.repositories[name]
+        remote_backend = (self.repository_roles[name] == "remote-primary"
+                          or not binding.repository.startswith("/"))
+        if force_no_cache or remote_backend:
+            if "--no-cache" not in args:
+                return (args[0], "--no-cache", *args[1:])
+        elif not has_explicit_cache and not has_cache_environment:
+            return (args[0], "--no-cache", *args[1:])
+        return args
+
     def _maintenance_bindings(self, path, adapter):
         """Resolve the separate Restic pair from one bounded private declaration."""
         try:
@@ -684,20 +719,15 @@ class BackupService:
         repositories = sorted(set((name, *other)), key=self._identity)
         remote_participants = [repository for repository in repositories
                                if self.repository_roles[repository] == "remote-primary"]
+        remote_cache_participants = [
+            repository for repository in repositories
+            if (self.repository_roles[repository] == "remote-primary"
+                or not self.bindings.repositories[repository].repository.startswith("/"))
+        ]
         env = self._operation_environment(remote_participants[0] if remote_participants else name)
-        if remote_participants and argv and argv[0] == "restic" and "--no-cache" not in argv:
-            argv = (argv[0], "--no-cache", *argv[1:])
-        elif argv and argv[0] == "restic":
-            has_explicit_cache = any(
-                argument == "--no-cache" or argument == "--cache-dir"
-                or argument.startswith("--cache-dir=")
-                for argument in argv[1:]
-            )
-            has_cache_environment = any(
-                env.get(variable) for variable in ("HOME", "XDG_CACHE_HOME", "RESTIC_CACHE_DIR")
-            )
-            if not has_explicit_cache and not has_cache_environment:
-                argv = (argv[0], "--no-cache", *argv[1:])
+        argv = self._restic_cache_args(
+            name, argv, env, force_no_cache=bool(remote_cache_participants)
+        )
         plans = {}
         for repository in repositories:
             identity = self._identity(repository)
@@ -1368,7 +1398,11 @@ class BackupService:
         def finalize_copy(plan, _copy_result):
             # The source tag is unique to this capture, so --latest bounds the
             # listing even when unrelated repository history is large.
-            inspect_args = [*dst.base_args(), "snapshots", "--tag", capture_tag, "--latest", "1"]
+            inspect_args = self._restic_cache_args(
+                destination,
+                [*dst.base_args(), "snapshots", "--tag", capture_tag, "--latest", "1"],
+                plan.env,
+            )
             inspect_plan = OperationPlan.create(
                 self._identity(destination), "inspect", inspect_args, env=plan.env
             )
@@ -1423,6 +1457,302 @@ class BackupService:
         plan, _ = self._execute(repository, [*engine.check_args(), "--read-data"], label="check", cancel=cancel)
         return {"operation_id": plan.operation_id, "repository": repository, "repository_verified": True,
                 "recovery_demonstrated": False}
+
+    @staticmethod
+    def _restic_pid_state(pid):
+        try:
+            os.kill(pid, 0)
+        except OSError as exc:
+            if exc.errno == errno.ESRCH:
+                return "absent"
+            if exc.errno == errno.EPERM:
+                return "present"
+            return "unknown"
+        return "present"
+
+    @staticmethod
+    def _parse_restic_lock_payload(raw):
+        try:
+            payload = strict_json(raw.decode("utf-8"))
+            required = {"time", "exclusive", "hostname", "username", "pid"}
+            allowed = required | {"uid", "gid"}
+            if (not isinstance(payload, dict) or not required <= set(payload)
+                    or set(payload) - allowed):
+                raise ValueError()
+            lock_time = payload["time"]
+            if (not isinstance(lock_time, str) or not lock_time
+                    or any(character in lock_time for character in "\0\r\n")):
+                raise ValueError()
+            parsed_time = datetime.fromisoformat(lock_time.replace("Z", "+00:00"))
+            if parsed_time.tzinfo is None:
+                raise ValueError()
+            if type(payload["exclusive"]) is not bool:
+                raise ValueError()
+            for field in ("hostname", "username"):
+                value = payload[field]
+                if (not isinstance(value, str) or not value or len(value) > 255
+                        or any(character in value for character in "\0\r\n")):
+                    raise ValueError()
+            if (type(payload["pid"]) is not int or not 1 <= payload["pid"] <= 2**31 - 1
+                    or type(payload.get("uid", 0)) is not int or payload.get("uid", 0) < 0
+                    or type(payload.get("gid", 0)) is not int or payload.get("gid", 0) < 0):
+                raise ValueError()
+            payload.setdefault("uid", 0)
+            payload.setdefault("gid", 0)
+            return payload
+        except (UnicodeError, ValueError, TypeError, RecursionError):
+            raise ServiceError("Restic lock payload is malformed") from None
+
+    @staticmethod
+    def _restic_lock_ids(raw):
+        if len(raw) > _MAX_RESTIC_LOCK_LIST_BYTES:
+            raise ServiceError("Restic lock inventory exceeds the supported bound")
+        try:
+            text = raw.decode("ascii")
+        except UnicodeDecodeError:
+            raise ServiceError("Restic lock inventory is invalid") from None
+        if not text:
+            return []
+        if text.strip() == "[]":
+            return []
+        if text.lstrip().startswith("["):
+            try:
+                listed = strict_json(text)
+            except ValueError:
+                raise ServiceError("Restic lock inventory is invalid") from None
+            if not isinstance(listed, list) or any(
+                    not isinstance(lock_id, str) for lock_id in listed):
+                raise ServiceError("Restic lock inventory is invalid")
+            ids = listed
+        else:
+            ids = text.splitlines()
+        if (len(ids) > _MAX_RESTIC_LOCKS
+                or any(not _RESTIC_LOCK_ID.fullmatch(lock_id) for lock_id in ids)
+                or len(ids) != len(set(ids))):
+            raise ServiceError("Restic lock inventory is invalid or excessive")
+        return sorted(ids)
+
+    def _run_lock_query(self, repository, operation_plan, argv, environment, deadline, *,
+                        cancel, resource_monitor, max_output_bytes):
+        if cancel is not None and cancel.is_set():
+            raise ServiceError("Repository lock operation cancelled before dispatch")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ServiceError("Restic lock inspection exceeded its time bound")
+        if resource_monitor is not None:
+            resource_monitor.check()
+        query_plan = OperationPlan(
+            operation_id=operation_plan.operation_id,
+            repository_id=operation_plan.repository_id,
+            label=operation_plan.label,
+            argv=tuple(self._restic_cache_args(
+                repository, argv, environment,
+            )),
+            env=environment,
+            timeout_seconds=min(_RESTIC_LOCK_QUERY_SECONDS, remaining),
+        )
+        result = self.runner.run(
+            query_plan, cancel_event=cancel,
+            **({"on_tick": resource_monitor.check} if resource_monitor is not None else {}),
+        )
+        if (result.status is not OperationStatus.SUCCEEDED or result.exit_code != 0
+                or result.stdout_bytes != len(result.stdout_tail)
+                or result.stdout_bytes > max_output_bytes):
+            raise ServiceError("Restic lock inspection was incomplete")
+        return result.stdout_tail
+
+    def _collect_repository_locks(self, repository, operation_plan, engine, environment,
+                                  deadline, *, cancel, resource_monitor):
+        base = tuple(engine.base_args())
+
+        def run(args, max_output_bytes):
+            return self._run_lock_query(
+                repository, operation_plan, [*base, *args], environment, deadline,
+                cancel=cancel, resource_monitor=resource_monitor,
+                max_output_bytes=max_output_bytes,
+            )
+
+        lock_ids = self._restic_lock_ids(run(("--no-lock", "list", "locks"),
+                                             _MAX_RESTIC_LOCK_LIST_BYTES))
+        try:
+            host_digest, uid = machine_identity()
+            hostname = socket.gethostname()
+        except (OSError, ValueError):
+            raise ServiceError("Local machine identity is unavailable for lock inspection") from None
+        if (not isinstance(hostname, str) or not hostname or "\0" in hostname
+                or type(uid) is not int or uid != os.geteuid()):
+            raise ServiceError("Local machine identity is unavailable for lock inspection")
+
+        locks = []
+        for lock_id in lock_ids:
+            raw = run(("--no-lock", "cat", "lock", lock_id),
+                      _MAX_RESTIC_LOCK_PAYLOAD_BYTES)
+            payload = self._parse_restic_lock_payload(raw)
+            own_host = payload["hostname"] == hostname
+            own_uid = payload["uid"] == uid
+            pid_state = (self._restic_pid_state(payload["pid"])
+                         if own_host and own_uid else "not_checked")
+            eligible = own_host and own_uid and pid_state == "absent"
+            locks.append({
+                "id": lock_id,
+                "hostname": payload["hostname"],
+                "uid": payload["uid"],
+                "pid": payload["pid"],
+                "time": payload["time"],
+                "exclusive": payload["exclusive"],
+                "payload_sha256": hashlib.sha256(raw).hexdigest(),
+                "pid_state": pid_state,
+                "unlock_eligible": eligible,
+            })
+        if self._restic_lock_ids(run(("--no-lock", "list", "locks"),
+                                     _MAX_RESTIC_LOCK_LIST_BYTES)) != lock_ids:
+            raise ServiceError("Repository lock inventory changed during inspection")
+
+        approval = {
+            "schema_version": 1,
+            "repository_id": repository_key(self._identity(repository)),
+            "host_identity": host_digest,
+            "hostname": hostname,
+            "uid": uid,
+            "locks": [
+                {key: lock[key] for key in
+                 ("id", "payload_sha256", "hostname", "uid", "pid", "pid_state", "unlock_eligible")}
+                for lock in locks
+            ],
+        }
+        plan_token = hashlib.sha256(json.dumps(
+            approval, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        return {
+            "plan_token": plan_token,
+            "repository": repository,
+            "host": hostname,
+            "uid": uid,
+            "lock_count": len(locks),
+            "unlock_eligible": bool(locks) and all(lock["unlock_eligible"] for lock in locks),
+            "locks": locks,
+            "read_only": True,
+        }
+
+    def repository_locks(self, repository, *, cancel=None):
+        """Inspect a bounded Restic lock inventory without changing the repository."""
+        engine = self._engine(repository)
+        environment = self._operation_environment(repository)
+        argv = self._restic_cache_args(
+            repository, [*engine.base_args(), "--no-lock", "list", "locks"], environment,
+        )
+        operation_plan = OperationPlan.create(
+            self._identity(repository), "repository-locks", argv,
+            env=environment, timeout_seconds=_RESTIC_LOCK_INSPECTION_SECONDS,
+        )
+        deadline = time.monotonic() + _RESTIC_LOCK_INSPECTION_SECONDS
+        resource_monitor = self._resource_monitor(repository)
+        try:
+            with self.ledger.begin(operation_plan) as lease:
+                finished = False
+                try:
+                    result = self._collect_repository_locks(
+                        repository, operation_plan, engine, environment, deadline,
+                        cancel=cancel, resource_monitor=resource_monitor,
+                    )
+                    lease.finish(OperationStatus.SUCCEEDED, 0)
+                    finished = True
+                    return result
+                except BaseException:
+                    if not finished:
+                        lease.finish(OperationStatus.FAILED, None)
+                    raise
+        finally:
+            if resource_monitor is not None:
+                resource_monitor.close()
+
+    def repository_unlock_stale(self, repository, plan_token, approved, *,
+                                quiescent_window_confirmed, cancel=None):
+        """Unlock only the exact reviewed set of this user's demonstrably dead locks."""
+        if approved is not True or quiescent_window_confirmed is not True:
+            raise ServiceError("Stale lock removal requires explicit approval and a confirmed quiet window")
+        if not isinstance(plan_token, str) or not re.fullmatch(r"[0-9a-f]{64}", plan_token):
+            raise ServiceError("A complete Restic lock review token is required")
+        engine = self._engine(repository)
+        environment = self._operation_environment(repository)
+        unlock_argv = self._restic_cache_args(
+            repository, [*engine.base_args(), "unlock"], environment,
+        )
+        operation_plan = OperationPlan.create(
+            self._identity(repository), "repository-unlock-stale", unlock_argv,
+            env=environment, timeout_seconds=_RESTIC_LOCK_INSPECTION_SECONDS,
+            destructive=True,
+        )
+        deadline = time.monotonic() + _RESTIC_LOCK_INSPECTION_SECONDS
+        resource_monitor = self._resource_monitor(repository)
+        mutation_started = False
+        finished = False
+        try:
+            with self.ledger.begin(operation_plan) as lease:
+                try:
+                    current = self._collect_repository_locks(
+                        repository, operation_plan, engine, environment, deadline,
+                        cancel=cancel, resource_monitor=resource_monitor,
+                    )
+                    if current["plan_token"] != plan_token:
+                        raise ServiceError("Restic lock review is stale; inspect the current lock inventory")
+                    if not current["unlock_eligible"]:
+                        raise ServiceError("Every Restic lock must belong to this host and user with an absent PID")
+                    if cancel is not None and cancel.is_set():
+                        raise ServiceError("Repository lock operation cancelled before unlock dispatch")
+                    if resource_monitor is not None:
+                        resource_monitor.check()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise ServiceError("Restic lock inspection exceeded its time bound")
+                    mutation_started = True
+                    result = self.runner.run(
+                        OperationPlan(
+                            operation_id=operation_plan.operation_id,
+                            repository_id=operation_plan.repository_id,
+                            label=operation_plan.label,
+                            argv=operation_plan.argv,
+                            env=operation_plan.env,
+                            timeout_seconds=min(_RESTIC_LOCK_QUERY_SECONDS, remaining),
+                            destructive=True,
+                        ), cancel_event=cancel,
+                        **({"on_tick": resource_monitor.check}
+                           if resource_monitor is not None else {}),
+                    )
+                    if (result.status is not OperationStatus.SUCCEEDED
+                            or result.exit_code != 0
+                            or result.stdout_bytes != len(result.stdout_tail)
+                            or result.stdout_bytes > _MAX_RESTIC_LOCK_PAYLOAD_BYTES):
+                        raise ServiceError("Restic unlock outcome is uncertain; inspect locks before retrying")
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise ServiceError("Restic unlock outcome is uncertain; lock verification timed out")
+                    output = self._run_lock_query(
+                        repository, operation_plan,
+                        [*engine.base_args(), "--no-lock", "list", "locks"],
+                        environment, deadline, cancel=cancel,
+                        resource_monitor=resource_monitor,
+                        max_output_bytes=_MAX_RESTIC_LOCK_LIST_BYTES,
+                    )
+                    if self._restic_lock_ids(output):
+                        raise ServiceError("Restic unlock outcome is uncertain; locks remain")
+                    lease.finish(OperationStatus.SUCCEEDED, 0)
+                    finished = True
+                except BaseException:
+                    if not mutation_started and not finished:
+                        lease.finish(OperationStatus.FAILED, None)
+                    raise
+        finally:
+            if resource_monitor is not None:
+                resource_monitor.close()
+        return {
+            "operation_id": operation_plan.operation_id,
+            "repository": repository,
+            "unlocked_lock_ids": [lock["id"] for lock in current["locks"]],
+            "unlocked_count": len(current["locks"]),
+            "plan_token": plan_token,
+            "replayed": False,
+        }
 
     def restore(self, repository, snapshot, target: Path, *, cancel=None):
         snapshot = _snapshot_id(snapshot)
@@ -1607,12 +1937,16 @@ class BackupService:
         }
 
     def _retention_snapshot_plan(self, job, operation_plan, cancel):
-        """Inspect snapshots and restic's daily forget selection under one lease."""
+        """Inspect snapshots and Restic's local forget selection under one lease."""
         engine = self._engine(job.repository)
+        environment = operation_plan.env
         tag = f"bbackup-job={job.name}"
         forget_args = [
-            *engine.base_args(), "forget", "--dry-run",
+            *self._restic_cache_args(job.repository, [*engine.base_args()], environment),
+            "forget", "--dry-run",
+            "--keep-last", str(job.retention.local_last),
             "--keep-daily", str(job.retention.local_daily),
+            "--keep-weekly", str(job.retention.local_weekly),
             "--group-by", "host", "--tag", tag,
         ]
 
@@ -1633,7 +1967,9 @@ class BackupService:
             return result.stdout_tail
 
         snapshots_json = run_read(
-            [*engine.base_args(), "snapshots"],
+            [*self._restic_cache_args(
+                job.repository, [*engine.base_args(), "snapshots"], environment,
+            )],
             "Repository snapshot inventory could not be verified",
         )
         forget_json = run_read(forget_args, "Restic retention selection could not be verified")
@@ -1652,7 +1988,11 @@ class BackupService:
             operation_id=operation_plan.operation_id,
             repository_id=repository_key(self._identity(destination)),
             label=operation_plan.label,
-            argv=tuple([*engine.base_args(), "snapshots", "--tag", tag, "--", snapshot]),
+            argv=self._restic_cache_args(
+                destination,
+                [*engine.base_args(), "snapshots", "--tag", tag, "--", snapshot],
+                operation_plan.env,
+            ),
             env=operation_plan.env,
             timeout_seconds=operation_plan.timeout_seconds,
         )
@@ -1708,10 +2048,10 @@ class BackupService:
             raise ServiceError("Restic retention selection is invalid") from None
         payloads = []
         try:
-            payloads.append(json.loads(text))
+            payloads.append(strict_json(text))
         except ValueError:
             try:
-                payloads.extend(json.loads(line) for line in text.splitlines() if line.strip())
+                payloads.extend(strict_json(line) for line in text.splitlines() if line.strip())
             except ValueError:
                 raise ServiceError("Restic retention selection is invalid") from None
         if not payloads:
@@ -1729,6 +2069,15 @@ class BackupService:
                         continue
                     raise ServiceError("Restic retention selection is incomplete")
                 snapshots = group["remove"]
+                if snapshots is None:
+                    keep = group.get("keep")
+                    if not isinstance(keep, list) or not keep:
+                        raise ServiceError("Restic retention selection is incomplete")
+                    for item in keep:
+                        if not isinstance(item, dict):
+                            raise ServiceError("Restic retention selection is invalid")
+                        _snapshot_id(item.get("id"))
+                    continue
                 if not isinstance(snapshots, list):
                     raise ServiceError("Restic retention selection is invalid")
                 for item in snapshots:
@@ -1829,7 +2178,9 @@ class BackupService:
             targets.append(snapshot_id)
 
         policy = {
+            "local_last": job.retention.local_last,
             "local_daily": job.retention.local_daily,
+            "local_weekly": job.retention.local_weekly,
             "group_by": "host",
             "job_tag": job_tag,
         }
@@ -1864,11 +2215,13 @@ class BackupService:
         if not self.bindings.repositories[job.repository].repository.startswith("/"):
             raise ServiceError("Local retention requires an absolute local repository path")
         engine = self._engine(job.repository)
-        env = {key: value for key, value in os.environ.items()
-               if not key.startswith("RESTIC_")}
+        env = self._operation_environment(job.repository)
+        snapshots_args = self._restic_cache_args(
+            job.repository, [*engine.base_args(), "snapshots"], env,
+        )
         plan = OperationPlan.create(
             self._identity(job.repository), "retention-plan",
-            [*engine.base_args(), "snapshots"], env=env,
+            snapshots_args, env=env,
         )
         with self.ledger.begin(plan) as lease:
             finished = False
@@ -1901,9 +2254,10 @@ class BackupService:
             }
 
         engine = self._engine(job.repository)
-        env = {key: value for key, value in os.environ.items()
-               if not key.startswith("RESTIC_")}
-        forget_args = [*engine.base_args(), "forget", "--", *target_ids]
+        env = self._operation_environment(job.repository)
+        forget_args = self._restic_cache_args(
+            job.repository, [*engine.base_args(), "forget", "--", *target_ids], env,
+        )
         plan = OperationPlan.create(
             self._identity(job.repository), "retention-apply", forget_args,
             env=env, destructive=True,
@@ -1959,7 +2313,9 @@ class BackupService:
             operation_id=operation_plan.operation_id,
             repository_id=operation_plan.repository_id,
             label=operation_plan.label,
-            argv=tuple([*engine.base_args(), "snapshots"]),
+            argv=self._restic_cache_args(
+                job.repository, [*engine.base_args(), "snapshots"], operation_plan.env,
+            ),
             env=operation_plan.env,
             timeout_seconds=operation_plan.timeout_seconds,
         )

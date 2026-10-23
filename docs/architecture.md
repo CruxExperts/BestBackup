@@ -1,6 +1,6 @@
 # Architecture
 
-This page describes the selected stable v2.0.3 tested scope and the retained 1.x implementation. The v2 command is `bbackup production`; legacy 1.x Docker/YAML commands remain available.
+This page describes the stable v2.0.5 tested scope, current source changes, and the retained 1.x implementation. The v2 command is `bbackup production`; legacy 1.x Docker/YAML commands remain available.
 
 ## Version 2 architecture
 
@@ -16,15 +16,28 @@ Restic encrypts repository content using the password file bound to that reposit
 
 CLI and dashboard requests pass through a shared service, bounded subprocess runner, SQLite operation ledger, and cross-process repository lock. The ledger stores sanitized lifecycle events, not command lines, environment values, raw output, or secrets. Interrupted mutations stay uncertain and require administrator reconciliation; bbackup never automatically replays them.
 
+Unreleased repository maintenance uses that same dispatcher and ledger. Lock
+inspection bounds the encrypted inventory and binds review to repository,
+host/user identity, payloads and process observations. Stale unlock requires
+explicit review and a quiet window across every repository user, repeats the
+inspection under the mutation lease, uses ordinary Restic unlock, and verifies
+the lock set is empty. Incomplete outcomes retain uncertainty. Nested queries
+reuse the operation's resolved cache policy, including cache-free execution.
+
+Local retention combines daily rules with optional last/weekly counts using
+Restic's union semantics. The approval token binds the policy and exact snapshot
+and replica evidence; applying it replans before forgetting exact snapshot IDs.
+It does not physically prune repository data or replace cloud retention.
+
 File restore requires a new directory and asks restic to verify restored data. PostgreSQL restore creates a new database from a trusted custom archive and snapshot-time locale metadata. MySQL and MariaDB restores are implemented with their separate empty-recovery-server safeguards. File or database verification does not prove application startup or application-level correctness.
 
 Cloud recovery kits inventory exact object versions, bind the provider endpoint and complete repository/snapshot identities, and use detached OpenPGP signing plus encryption. Checkpoint creation requires a full restic check and an administrator-coordinated quiet window across every writer. Lifecycle inspection is read-only and does not establish thirty-day cloud protection; off-host custody remains unqualified.
 
 ### Interfaces and scope
 
-The `bbackup production` CLI is strict and schema-discoverable; the Textual dashboard provides mouse and keyboard job operation. Headless dashboard happy paths are tested. The stable v2.0.3 release scope is local/file capture and restore, the listed live database drills, dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages. User-timer reboot evidence is limited to the recorded guest drills. B2/AWS, native Docker, ARM64 backup/restore, root system units and off-host recovery remain unqualified or deferred. See [version 2 development](development/version-2.md) for release boundaries, [agent integration](AGENT_INTEGRATION.md) for the JSON contract, and [cloud storage](cloud-storage.md) for B2/S3 limits.
+The `bbackup production` CLI is strict and schema-discoverable; the Textual dashboard provides mouse and keyboard job operation. Headless dashboard happy paths are tested. The stable v2.0.5 release scope is local/file capture and restore, the listed live database drills, dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages. User-timer reboot evidence is limited to the recorded guest drills. B2/AWS, native Docker, ARM64 backup/restore, root system units and off-host recovery remain unqualified or deferred. See [version 2 development](development/version-2.md) for release boundaries, [agent integration](AGENT_INTEGRATION.md) for the JSON contract, and [cloud storage](cloud-storage.md) for B2/S3 limits.
 
-Unreleased work adds restricted B2 source-key assessment, independent central
+The v2.0.4 and v2.0.5 experimental implementations include restricted B2 source-key assessment, independent central
 acceptance of signed historical checkpoints, centrally authorized noncurrent
 version reclamation, remote-primary capture with bounded staging, and reviewed
 Linux file and transactional SQLite coverage. These paths use the same operation boundary and existing
@@ -39,15 +52,18 @@ The remaining module and configuration sections below describe the retained 1.x 
 
 ## Technology stack
 
+These minimums describe the current source checkout. Published v2.0.5 retains
+its [versioned requirements](https://github.com/CruxExperts/BestBackup/blob/v2.0.5/pyproject.toml).
+
 | Component | Library / tool | Version |
 |---|---|---|
 | Language | Python | 3.12+ |
-| CLI framework | Click | 8.1.7+ |
+| CLI framework | Click | 8.5.0+ |
 | Terminal UI | Rich | 13.7.0+ |
-| Docker integration | docker-py SDK | 7.0.0+ |
+| Docker integration | docker-py SDK | 7.2.0+ |
 | Config format | PyYAML | 6.0.1+ |
-| SFTP | paramiko | 3.4.0+ |
-| Encryption | cryptography | 50.0.0+ |
+| SFTP | paramiko | 5.1.0+ |
+| Encryption | cryptography | 50.0.2+ |
 | HTTP (key fetching) | requests | 2.31.0+ |
 | Volume backup | rsync | system |
 | Metadata/archive handling | tar | system |

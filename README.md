@@ -4,7 +4,7 @@
 
 bbackup is an encrypted, restic-based backup tool for Linux system administrators, homelab and self-hosted operators, and small infrastructure teams. It brings local file backups, selected database workflows, verified file restores, and observable scheduled jobs into one operator workflow.
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE) [![Version 2.0.5](https://img.shields.io/badge/version-2.0.5-22c55e?style=flat-square)](https://github.com/CruxExperts/BestBackup/releases/latest)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE) [![Version 2.0.6](https://img.shields.io/badge/version-2.0.6-22c55e?style=flat-square)](https://github.com/CruxExperts/BestBackup/releases/latest)
 
 ![bbackup: encrypted snapshot layers, an additional copy, and a restored document](docs/assets/bbackup-banner-v2.png)
 
@@ -40,9 +40,11 @@ uv run bbackup production tui
 
 Choose a source folder, encrypted storage, and a schedule. Review and enroll once. The dashboard then guides you through initializing storage, running the first backup, and restoring into a new folder. Advanced settings and the command line remain available. The [quick start](QUICKSTART.md) covers migration, password custody, replica setup, and deliberate schedule activation.
 
-## v2.0.5 tested scope
+<a id="v205-tested-scope"></a>
 
-The qualified scope is unchanged from v2.0.4: local file capture and restore;
+## v2.0.6 tested scope
+
+The qualified scope is unchanged from v2.0.5 and v2.0.4: local file capture and restore;
 live capture and restore for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB 11.8.9;
 headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04 packages. User-timer
 reboot qualification covers only the components and conditions in the
@@ -64,18 +66,21 @@ trials do not prove prune completion, elapsed expiry, physical reclamation or
 provider protection. The [qualification record](docs/development/version-2.md)
 owns the complete evidence and support limits.
 
-### Current source changes
+### Maintenance in v2.0.6
 
-The source checkout also includes [unreleased issue #30 maintenance](docs/development/version-2.md#unreleased-maintenance-issue-30):
+v2.0.6 includes [issue #30 maintenance](docs/development/version-2.md#unreleased-maintenance-issue-30):
 reviewed stale-lock handling, optional local last/weekly retention, strict
 keep-all parsing, B2 lifecycle-read compatibility and nested cache handling.
-These changes are separate from the v2.0.5 downloads. Follow the
+Follow the
 [maintenance quick start](QUICKSTART.md#review-local-retention-and-stale-locks-unreleased)
 for the new commands.
 
 The [current maintenance batch](docs/development/version-2.md#unreleased-layout-and-dependency-maintenance)
 also repairs compact-terminal layouts and refreshes reviewed Python and CI
-dependencies. Those changes are likewise unreleased.
+dependencies. Release preparation uses the official Release Please CLI with
+a reviewed lockfile and patched Node runtime; publication still requires the
+signed candidate, tag, checksums and artifact verification described in
+[versioning](docs/VERSIONING.md).
 
 ## Choose a guide
 

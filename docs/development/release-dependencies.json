@@ -118,10 +118,10 @@
     }
   },
   "lockfile": {
-    "local_project_version": "2.0.5",
+    "local_project_version": "2.0.6",
     "locked_pypi_packages": 51,
     "path": "uv.lock",
-    "sha256": "f7aab4b971fb2bcc92889928d61f83fbe65f315fb590910b4a9cbbb89df8a4a4"
+    "sha256": "d55dea5727136d838fc42d93d94fd7ef967caf602b935d0651dc3c767214b5fa"
   },
   "package_versions": [
     {
@@ -330,8 +330,8 @@
     }
   ],
   "release": {
-    "release_date_utc": "2026-10-22",
-    "version": "2.0.5"
+    "release_date_utc": "2026-10-23",
+    "version": "2.0.6"
   },
   "schema_version": 1,
   "external_build_tools": {
@@ -376,7 +376,7 @@
     }
   },
   "source_checkout": {
-    "status": "unreleased",
+    "status": "release-source",
     "maintenance_pull_requests": [
       20,
       28
@@ -385,8 +385,11 @@
     "published_release_evidence": {
       "tag": "v2.0.5",
       "sha256": "3e3b833f1882a21365c286ddac2961cc11cb279e6c8a3eb1362be6f415a55739",
-      "url": "https://github.com/CruxExperts/BestBackup/blob/v2.0.5/docs/development/release-dependencies.json"
-    }
+      "url": "https://github.com/CruxExperts/BestBackup/blob/v2.0.5/docs/development/release-dependencies.json",
+      "note": "Historical evidence for the previous v2.0.5 release. This report binds v2.0.6 source; its release-provenance asset records the exact source, CI and build bindings."
+    },
+    "qualification": "Maintenance release; historical provider, machine-recovery and platform qualification limits are unchanged.",
+    "version": "2.0.6"
   },
   "github_actions_maintenance": {
     "status": "unreleased",

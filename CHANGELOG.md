@@ -10,6 +10,8 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+## [2.0.6] - 2026-10-23
+
 ### Added
 
 - Release Please draft PRs using the official CLI with a reviewed, integrity-
@@ -39,7 +41,7 @@ current uv-based install, development, and release instructions.
   including execution without `HOME` or `XDG_CACHE_HOME`.
 
 These source changes address issue [#30](https://github.com/CruxExperts/BestBackup/issues/30).
-They do not publish a new release or expand cloud or machine-recovery qualification.
+This maintenance release does not expand cloud or machine-recovery qualification.
 
 ### Changed
 
@@ -710,7 +712,8 @@ are still under development. See [implementation status](docs/development/versio
 
 The `Unreleased` comparison is a live `HEAD` link for navigation, not an immutable historical citation.
 
-[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.5...HEAD
+[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.6...HEAD
+[2.0.6]: https://github.com/CruxExperts/BestBackup/compare/v2.0.5...v2.0.6
 [2.0.5]: https://github.com/CruxExperts/BestBackup/compare/v2.0.4...v2.0.5
 [2.0.4]: https://github.com/CruxExperts/BestBackup/compare/v2.0.3...v2.0.4
 [2.0.3]: https://github.com/CruxExperts/BestBackup/compare/v2.0.2...v2.0.3

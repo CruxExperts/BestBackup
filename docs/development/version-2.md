@@ -1,16 +1,17 @@
 # Version 2 development
 
-> Stable v2.0.5 production qualification retains the tested core scope recorded
-> below. Experimental additions remain unqualified. The dated records retain
-> historical evidence and limits without expanding that scope. The v2.0.6
-> release-candidate source now includes the maintenance batches below; its
-> downloads are pending publication. Until publication, v2.0.5 remains the
-> latest available release, and no new provider or Linux recovery qualification
-> is claimed.
+> Version 2.0.6 retains the v2.0.5 production-qualified core scope recorded
+> below and includes the maintenance batches in this record. Experimental
+> additions remain unqualified. The dated evidence remains historical and no
+> B2/AWS, ARM64, Linux recovery, off-host, or complete-machine qualification is
+> added. Check the [GitHub Releases page](https://github.com/CruxExperts/BestBackup/releases/latest)
+> for tag and download availability.
 
-## Unreleased layout and dependency maintenance
+<a id="unreleased-layout-and-dependency-maintenance"></a>
 
-The source checkout includes compact-terminal layout repairs for the production
+## v2.0.6 layout and dependency maintenance
+
+Version 2.0.6 includes compact-terminal layout repairs for the production
 dashboard, guided setup and retained Rich dashboard. Forms scroll within the
 available viewport, setup navigation stays reachable, and compact status gives
 failures and cancel hints priority. Resource summaries retain each resource
@@ -31,11 +32,11 @@ The retry regression covers both 429 and 503 responses, including the fallback
 when that header is absent. Inspection deadlines and cancellation still bound
 the SDK subprocess; this offline check adds no live provider qualification.
 
-These changes are included in the v2.0.6 candidate source. The candidate is not
-a published artifact and does not expand Docker, cloud-provider, off-host
-recovery or complete-machine support.
+This maintenance release scope is unchanged from v2.0.5 and does not expand
+Docker, cloud-provider, off-host recovery or complete-machine support.
 
-On 2026-10-23, the final local maintenance candidate passed 1,295 tests with
+On 2026-10-23, the prior maintenance candidate, before the v2.0.6 version
+bump, passed 1,295 tests with
 one skipped test in 114.24 seconds using three workers. This includes the
 47 dashboard and TUI cases and the 45 B2 cases covering the upgraded SDK.
 Headless captures confirmed the populated/error-state Rich layout at 60x20
@@ -46,11 +47,22 @@ The skipped legacy Docker volume roundtrip still does not qualify that path.
 Ruff, Python compilation, version synchronization, generated CLI/schema checks,
 Markdown, artwork provenance, publishing readiness and whitespace checks passed.
 The wheel and source archive built and passed isolated installed-artifact smoke
-checks. These checks validate the source candidate without publishing a release.
+checks. These timings, captures and artifact checks belong to that earlier
+candidate and are reused as evidence for unchanged production runtime code.
 
-## Unreleased maintenance (issue #30)
+The v2.0.6 preparation separately passed 37 focused release-preparation,
+source/provenance and Markdown tests, version and generated-file alignment,
+lint, compilation, documentation and publishing checks. Its versioned wheel
+and source archive built and passed installed-artifact smoke checks. The
+release's `release-provenance.json` asset binds the exact tagged source, trusted
+CI and build runs. These checks do not add host, provider or recovery
+qualification.
 
-The v2.0.6 candidate source implements the reviewed portions of
+<a id="unreleased-maintenance-issue-30"></a>
+
+## v2.0.6 maintenance (issue #30)
+
+Version 2.0.6 implements the reviewed portions of
 [#30](https://github.com/CruxExperts/BestBackup/issues/30): bounded repository
 lock inspection and explicitly approved stale unlock, optional `local_last`
 and `local_weekly` counts, strict parsing of valid Restic keep-all output,
@@ -65,7 +77,8 @@ before applying exact snapshot IDs. See the
 [maintenance quick start](../../QUICKSTART.md#review-local-retention-and-stale-locks-unreleased)
 for configuration and commands.
 
-On 2026-10-23, the local Python 3.12 suite passed with 1,287 tests and one
+On 2026-10-23, before the v2.0.6 version bump, the issue #30 candidate's local
+Python 3.12 suite passed with 1,287 tests and one
 skipped test, including integration tests with Restic 0.19.1 and an available
 Docker daemon. The disposable lock drill preserved an existing snapshot,
 planned keep-all retention with 12 last/14 daily/8 weekly counts, refused a live
@@ -73,8 +86,8 @@ lock, and removed its reviewed stale lock after the owned process was killed.
 Ruff, compilation, version and generated-command checks, Markdown, artwork
 provenance, publishing readiness and whitespace checks passed. The wheel and
 source archive built and passed installed-artifact smoke checks. Independent
-review found no remaining blocking correctness findings. These are development
-results, not new published-artifact or production qualification.
+review found no remaining blocking correctness findings. These are source and
+artifact validation results, not new production qualification.
 
 The existing legacy Docker volume restore roundtrip skipped after its backup
 step returned failure. A focused rerun confirmed that skip; this validation
@@ -86,10 +99,9 @@ during bounded startup; the production inspector still rejects changing lock
 sets, and uncertain unlocks are never retried. This covers slower hosted lock
 acquisition without weakening the maintenance safety checks.
 
-These changes are included in the v2.0.6 release-candidate source, not
-acceptance of private candidate builds or permission to modify deployed
-installations. Published downloads remain at v2.0.5 until release publication.
-No B2/AWS protection, off-host custody, thirty-day recovery window or
+These v2.0.6 changes do not certify private builds or authorize modifications
+to deployed installations. No B2/AWS protection, off-host
+custody, thirty-day recovery window or
 complete-machine recovery qualification is added; the canceled scopes of #23-#26
 remain canceled and unqualified.
 
@@ -1799,7 +1811,7 @@ recovery limits rather than treating discoverability as additional qualification
 ## Dependency evidence
 
 The entries below record earlier candidates and released 2.0.x inputs. They
-remain historical evidence. For the current v2.0.6 candidate dependency graph, use
+remain historical evidence. For the v2.0.6 dependency graph, use
 the [source maintenance record](#unreleased-layout-and-dependency-maintenance)
 and [exact lockfile review](release-dependencies.json).
 

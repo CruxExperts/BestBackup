@@ -1,6 +1,6 @@
 # Your first backup and verified restore
 
-This guide covers the published v2.0.5 setup and its schema-3 policy. The current v2.0.6 release-candidate source also includes the issue #30 and compact-terminal changes below, but those candidate downloads are not published yet. For an older v2.0.2 installation, use its [versioned quick start](https://github.com/CruxExperts/BestBackup/blob/v2.0.2/QUICKSTART.md) until you migrate. Keep an independently retrievable copy of each repository password.
+This guide covers v2.0.6 and its schema-3 policy, including the issue #30 maintenance and compact-terminal changes below. Version 2.0.6 retains the v2.0.5 tested support scope; check the [GitHub Releases page](https://github.com/CruxExperts/BestBackup/releases/latest) for tag and download availability. For an older v2.0.2 installation, use its [versioned quick start](https://github.com/CruxExperts/BestBackup/blob/v2.0.2/QUICKSTART.md) until you migrate. Keep an independently retrievable copy of each repository password.
 
 ## Start with the guided dashboard
 
@@ -128,15 +128,16 @@ qualify complete-machine disaster recovery.
 
 Persistent timers can catch up after an idle interruption. An interrupted mutation remains uncertain and blocks automatic replay until explicit reconciliation. Retention remains a separate reviewed action; scheduling does not silently prune data.
 
-## Review local retention and stale locks (unreleased)
+<a id="review-local-retention-and-stale-locks-unreleased"></a>
 
-The current v2.0.6 candidate source includes the following maintenance features
-for issue [#30](https://github.com/CruxExperts/BestBackup/issues/30). The
-candidate is not yet a published download, so these commands require this source
-checkout rather than the published v2.0.5 artifacts. Use an explicitly enrolled
-policy and bindings; the examples below use the default configuration paths.
+## Review local retention and stale locks in v2.0.6
 
-The candidate dashboard layout keeps forms and setup navigation reachable in
+Version 2.0.6 includes the following maintenance features for issue
+[#30](https://github.com/CruxExperts/BestBackup/issues/30), while retaining the
+v2.0.5 tested support scope. Use an explicitly enrolled policy and bindings;
+the examples below use the default configuration paths.
+
+The v2.0.6 dashboard layout keeps forms and setup navigation reachable in
 compact terminals. Use `Tab` and `Shift+Tab` to move between controls; the
 focused control scrolls into view. Use `F1` for field help. The legacy live
 dashboard summarizes resource categories and keeps failures and cancel hints

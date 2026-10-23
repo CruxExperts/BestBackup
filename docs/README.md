@@ -2,10 +2,10 @@
 
 bbackup is for Linux administrators, homelab and self-hosted operators, and small infrastructure teams who need encrypted local backups, verified file restores, and visible scheduled jobs. Choose a guide by the work you are doing.
 
-These guides describe published v2.0.5 and the v2.0.6 release-candidate source.
-Candidate downloads are not published yet. Check the
-[qualification record](development/version-2.md) for the exact supported scope
-before selecting a workflow.
+These guides describe v2.0.6 and its release scope, which remains unchanged
+from v2.0.5. Check the [GitHub Releases page](https://github.com/CruxExperts/BestBackup/releases/latest)
+for tag and download availability, and consult the
+[qualification record](development/version-2.md) before selecting a workflow.
 
 ## Choose a starting point
 
@@ -25,26 +25,22 @@ before selecting a workflow.
 
 ## Version and support boundaries
 
-Published v2.0.5 retains the v2.0.4 tested core scope. The v2.0.6 candidate
-contains the maintenance updates below but adds no B2/AWS, ARM64, or Linux
-recovery qualification. Experimental cloud and Linux workflows remain
-unqualified; issues #23–#26 were canceled and closed as not planned. An
-implemented path or a closed issue does not establish support. The
-[qualification record](development/version-2.md) retains the dated evidence.
+Version 2.0.6 retains the v2.0.5 tested core scope and includes the maintenance
+updates below. It adds no B2/AWS, ARM64, or Linux recovery qualification.
+Experimental cloud and Linux workflows remain unqualified; issues #23–#26 were
+canceled and closed as not planned. An implemented path or a closed issue does
+not establish support. The [qualification record](development/version-2.md)
+retains the dated evidence.
 
-The v2.0.6 candidate source includes [issue #30 maintenance](development/version-2.md#unreleased-maintenance-issue-30)
+Version 2.0.6 includes [issue #30 maintenance](development/version-2.md#unreleased-maintenance-issue-30)
 for reviewed stale locks, local retention counts, strict Restic parsing, B2
-lifecycle-read compatibility and nested cache policy. The original section
-anchor is retained. Follow the
+lifecycle-read compatibility and nested cache policy. Follow the
 [maintenance quick start](../QUICKSTART.md#review-local-retention-and-stale-locks-unreleased)
-before using those commands from the candidate source; they are not in the
-published v2.0.5 downloads yet.
+for setup and reviewed use.
 
 The [layout and dependency batch](development/version-2.md#unreleased-layout-and-dependency-maintenance)
-is also included in the v2.0.6 candidate, with its existing section anchor
-retained. It covers compact terminal forms, documentation navigation, and
-reviewed Python and GitHub Actions maintenance; candidate downloads are pending
-publication.
+is included in v2.0.6. It covers compact terminal forms, documentation
+navigation, and reviewed Python and GitHub Actions maintenance.
 
 Operators still using v2.0.2 can follow its
 [versioned documentation](https://github.com/CruxExperts/BestBackup/tree/v2.0.2/docs)
@@ -54,7 +50,7 @@ until they migrate.
 
 - [Versioning](VERSIONING.md): Release Please drafts, canonical package version, signed release tags and validation.
 - [Publishing checklist](PUBLISHING_CHECKLIST.md): community files and release readiness.
-- [Qualification record](development/version-2.md): candidate results and deferred assurance.
+- [Qualification record](development/version-2.md): validation results and deferred assurance.
 - [Release dependency evidence](development/release-dependencies.json): reviewed versions, source timestamps, lock hash and audit limits.
 - [Documentation assets](assets/README.md): asset inventory and visual standards.
 

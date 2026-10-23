@@ -35,7 +35,7 @@ class OperationPanel(VerticalScroll):
     """Keep execution, cancellation, and approvals identical across native forms."""
 
     DEFAULT_CSS = """
-    OperationPanel { height: auto; min-height: 20; border-top: solid $panel; margin-top: 1; }
+    OperationPanel { height: 1fr; min-height: 8; border-top: solid $panel; margin-top: 1; }
     OperationPanel TextArea { height: 9; margin-bottom: 1; }
     OperationPanel Static { height: auto; }
     OperationPanel .operation-status { margin-top: 1; }

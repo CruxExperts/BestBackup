@@ -290,6 +290,45 @@ class TestBackupTUI:
 
         assert f"v{bbackup.__version__}" in output.getvalue()
 
+    def test_live_dashboard_adapts_resource_panels_to_terminal_size(self):
+        from rich.console import Console
+
+        cases = ((120, 40), (80, 24), (60, 20))
+        for width, height in cases:
+            tui = BackupTUI(Config(config_path=None))
+            tui.console = Console(file=StringIO(), width=width, height=height, force_terminal=False)
+            for number in range(12):
+                tui.status.set_item_status(
+                    "containers", f"api-{number}", {"status": "success", "size": "1.2 GiB"}
+                )
+            tui.status.set_item_status("volumes", "db", {"status": "failed", "speed": "retrying"})
+            tui.status.set_item_status("filesystems", "/srv/data", {"status": "success", "size": "2.0 GiB"})
+            tui.status.update(action="Verifying restore", item="daily-job", completed=2, total=4)
+            tui.status.add_error("Restic check failed")
+            tui.status.add_warning("Repository capacity is low")
+            tui.status.set_encryption_status("failed")
+
+            tui.console.print(tui.create_live_dashboard())
+            rendered = tui.console.file.getvalue()
+
+            assert all(value in rendered for value in ("api-0", "db", "/srv/data"))
+            if width >= 120:
+                assert "Container" in rendered
+                assert "Progress" in rendered
+                assert "Progre…" not in rendered
+            else:
+                assert "Backup resources" in rendered
+                assert "Containers (12)" in rendered
+                assert "Volumes (1)" in rendered
+                assert "Filesystems (1)" in rendered
+                assert "Verifying restore" in rendered
+                assert "daily-job" in rendered
+                assert "Errors: 1" in rendered
+                assert "Encryption failed" in rendered
+                assert "Warnings: 1" in rendered
+                assert "Restic check failed" in rendered
+                assert "Q quit/cancel" in rendered
+
     def test_live_dashboard_single_key_cancel_restores_terminal(self, monkeypatch):
         """A raw Q cancels the operation and restores the PTY settings."""
         from rich.console import Console

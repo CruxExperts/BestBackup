@@ -347,7 +347,8 @@ def test_real_child_missing_credentials_and_precancel(monkeypatch):
 
 
 @pytest.mark.parametrize("status", [429, 503])
-def test_vendor_http_retry_uses_polite_backoff(monkeypatch, status):
+@pytest.mark.parametrize("retry_after", ["3", None])
+def test_vendor_http_retry_uses_polite_backoff(monkeypatch, status, retry_after):
     from b2sdk._internal.b2http import B2Http
     from b2sdk.v3 import B2HttpApiConfig
     import requests
@@ -364,7 +365,8 @@ def test_vendor_http_retry_uses_polite_backoff(monkeypatch, status):
                 if len(attempts) == 1
                 else {"ok": True}
             ).encode()
-            response.headers["Retry-After"] = "3"
+            if retry_after is not None:
+                response.headers["Retry-After"] = retry_after
             return response
 
     monkeypatch.setattr("b2sdk._internal.b2http.time.sleep", delays.append)
@@ -379,4 +381,4 @@ def test_vendor_http_retry_uses_polite_backoff(monkeypatch, status):
         "https://test.invalid", {}, {}, try_count=3
     ) == {"ok": True}
     assert len(attempts) == 2
-    assert delays == ([3] if status == 429 else [1.0])
+    assert delays == ([3] if retry_after is not None else [1.0])

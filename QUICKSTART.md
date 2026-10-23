@@ -135,6 +135,12 @@ The current source includes the following maintenance features for issue
 the published v2.0.5 artifacts. Use an explicitly enrolled policy and bindings;
 the examples below use the default configuration paths.
 
+The unreleased dashboard layout keeps forms and setup navigation reachable in
+compact terminals. Use `Tab` and `Shift+Tab` to move between controls; the focused
+control scrolls into view. Use `F1` for field help. The legacy live dashboard
+summarizes resource categories and keeps failures and cancel hints visible when
+there is not enough room for its full layout.
+
 For a job's `retention` object, optional `local_last` and `local_weekly` counts
 default to zero (disabled). For example:
 

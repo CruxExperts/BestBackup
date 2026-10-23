@@ -28,7 +28,9 @@ class BackupDashboard(App[None]):
     SUB_TITLE = "Encrypted backups • verified file restores"
     CSS = """
     Screen { background: $surface; }
-    TabPane { padding: 1 2; overflow-y: auto; }
+    TabbedContent { height: 1fr; min-height: 5; }
+    TabPane { height: 1fr; min-height: 3; padding: 1 2 3 2; overflow-y: auto; }
+    #restore > VerticalScroll { height: 1fr; min-height: 1; }
     .intro { height: auto; margin-bottom: 1; }
     .toolbar { height: 3; margin-bottom: 1; }
     .toolbar Button { margin-right: 1; }
@@ -52,6 +54,18 @@ class BackupDashboard(App[None]):
         self._restore_cancel = Event()
         self._restore_worker = None
         self._restoring = False
+
+    def _fit_toolbars(self, width: int) -> None:
+        if not self.is_mounted:
+            return
+        layout = "vertical" if width < 72 else "horizontal"
+        height = "auto" if width < 72 else 3
+        for toolbar in self.query(".toolbar"):
+            toolbar.styles.layout = layout
+            toolbar.styles.height = height
+
+    def on_resize(self, event):
+        self._fit_toolbars(event.size.width)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -142,6 +156,7 @@ class BackupDashboard(App[None]):
         yield Footer()
 
     def on_mount(self):
+        self._fit_toolbars(self.size.width)
         columns = {"job-table": ("Job", "Local repository", "Replicas", "Schedule"),
                    "repository-table": ("Repository", "Role"),
                    "snapshot-table": ("Repository", "Snapshot ID", "Job"),
@@ -357,8 +372,37 @@ class BackupDashboard(App[None]):
             "Tab moves between controls; Enter selects a row or activates a button. Select a job, repository or snapshot to prepare its next action. Restore always uses a new folder."))
 
     def on_descendant_focus(self, event):
-        if event.widget.tooltip and self.is_mounted:
+        if not self.is_mounted:
+            return
+        self.call_after_refresh(self._reveal_focused_control, event.widget)
+        if event.widget.tooltip:
             self.query_one("#notice", Static).update(str(event.widget.tooltip))
+
+    def _reveal_focused_control(self, widget):
+        if not widget.is_mounted or not widget.region.height or not widget.region.width:
+            return
+        operation_panel = next(
+            (ancestor for ancestor in widget.ancestors if isinstance(ancestor, OperationPanel)),
+            None,
+        )
+        if operation_panel is not None:
+            scroll_region = operation_panel.scrollable_content_region
+            target_scroll = operation_panel.scroll_y
+            if widget.region.bottom > scroll_region.bottom:
+                target_scroll += widget.region.bottom - scroll_region.bottom
+            elif widget.region.y < scroll_region.y:
+                target_scroll -= scroll_region.y - widget.region.y
+            if target_scroll != operation_panel.scroll_y:
+                operation_panel.scroll_to(
+                    y=target_scroll, animate=False, immediate=True, force=True
+                )
+            pane = next((ancestor for ancestor in operation_panel.ancestors
+                         if isinstance(ancestor, TabPane)), None)
+            if pane is not None:
+                pane.scroll_to_widget(operation_panel, top=True, animate=False, immediate=True)
+        visible = widget.region.intersection(self.screen.region)
+        if (visible.height != widget.region.height or visible.width != widget.region.width):
+            self.screen.scroll_to_widget(widget, top=True, animate=False, immediate=True)
 
     def _report_restore_progress(self, data):
         self.post_message(EngineProgress(data))

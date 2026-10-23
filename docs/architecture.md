@@ -52,15 +52,18 @@ The remaining module and configuration sections below describe the retained 1.x 
 
 ## Technology stack
 
+These minimums describe the current source checkout. Published v2.0.5 retains
+its [versioned requirements](https://github.com/CruxExperts/BestBackup/blob/v2.0.5/pyproject.toml).
+
 | Component | Library / tool | Version |
 |---|---|---|
 | Language | Python | 3.12+ |
-| CLI framework | Click | 8.1.7+ |
+| CLI framework | Click | 8.5.0+ |
 | Terminal UI | Rich | 13.7.0+ |
-| Docker integration | docker-py SDK | 7.0.0+ |
+| Docker integration | docker-py SDK | 7.2.0+ |
 | Config format | PyYAML | 6.0.1+ |
-| SFTP | paramiko | 3.4.0+ |
-| Encryption | cryptography | 50.0.0+ |
+| SFTP | paramiko | 5.1.0+ |
+| Encryption | cryptography | 50.0.2+ |
 | HTTP (key fetching) | requests | 2.31.0+ |
 | Volume backup | rsync | system |
 | Metadata/archive handling | tar | system |

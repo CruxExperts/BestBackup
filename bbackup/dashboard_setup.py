@@ -26,8 +26,8 @@ class BackupSetup(App[BackupService | None]):
     CSS = """
     Screen { padding: 0 2; }
     #setup-progress, #setup-status { height: auto; margin: 1 0; }
-    ContentSwitcher { height: 1fr; }
-    VerticalScroll { padding: 0 1; }
+    ContentSwitcher { height: 1fr; min-height: 1; }
+    ContentSwitcher VerticalScroll { height: 1fr; min-height: 1; padding: 0 1; }
     Label { margin-top: 1; }
     .setup-help { height: auto; color: $text-muted; margin-bottom: 1; }
     #setup-review { height: auto; }

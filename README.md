@@ -22,40 +22,12 @@ Use bbackup when you want to know what a job captured, whether each repository c
 
 ![Real bbackup dashboard with disposable example data and illustrative capacity](docs/assets/bbackup-dashboard-preview.svg)
 
-## v2.0.5 tested scope
-
-The qualified scope is unchanged from v2.0.4: local file capture and restore; live capture and restore for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB 11.8.9; headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04 packages. A separate real-guest user-timer reboot drill covers only the components and conditions recorded in the [qualification evidence](docs/development/version-2.md#development-candidate-rebootable-systemd-qualification).
-
-B2/AWS, native Docker, ARM64 backup/restore, cross-application-version upgrades and rollback, root-owned systemd package templates, and cloud or off-host protection remain unqualified. ARM64 packages may be built, but build or package-install smoke checks alone do not qualify backup/restore. Keep an independently retrievable copy of repository passwords; a second repository on the same host does not protect against host loss. See [installation](INSTALL.md) for prerequisites and release install instructions.
-
-Recent live B2 evidence covers a small interrupted maintenance run
-whose prune outcome remained uncertain, and a separate lifecycle-overlap guard
-that made central retention refuse the configured bucket. Neither test proves
-prune completion, elapsed lifecycle expiry, physical reclamation, or provider
-protection. These workflows ship in v2.0.5 as experimental and remain
-unqualified. See the [maintenance interruption record](docs/development/version-2.md#live-b2-central-maintenance-interruption-trial)
-and [lifecycle guard evidence](docs/cloud-storage.md#b2-lifecycle-overlap-guard-experimental).
-Issues #23–#26 were canceled and closed as not planned. Cancellation does not
-qualify the experimental B2 workflow. This release adds no new live provider
-qualification; the existing workstation results remain historical.
-The qualified core scope is unchanged from v2.0.4.
-
-Current source changes for [issue #30](https://github.com/CruxExperts/BestBackup/issues/30)
-add reviewed stale-lock maintenance, optional local last/weekly retention,
-strict keep-all parsing and B2 lifecycle-read compatibility. They are
-[unreleased](docs/development/version-2.md#unreleased-maintenance-issue-30),
-separate from the v2.0.5 downloads. See the
-[maintenance quick start](QUICKSTART.md#review-local-retention-and-stale-locks-unreleased).
-
 ## Start with the guided workflow
 
-Experimental restricted cloud credentials, central recovery and retention,
-bounded remote-primary capture, and reviewed Linux coverage ship in v2.0.5 and
-are [documented with their limits](docs/development/version-2.md#experimental-cloud-and-machine-recovery-features).
-The reviewed Linux coverage work includes an experimental manual PostgreSQL
-path. These features do not expand the tested stable scope.
-
 For packaged releases, start with the [latest release downloads](https://github.com/CruxExperts/BestBackup/releases/latest) and [installation guide](INSTALL.md).
+
+Check the [tested scope](#v205-tested-scope) before choosing a workflow. Cloud
+protection and complete-machine recovery remain unqualified.
 
 From a development checkout with Python 3.12+, uv, and restic installed:
 
@@ -67,6 +39,43 @@ uv run bbackup production tui
 ```
 
 Choose a source folder, encrypted storage, and a schedule. Review and enroll once. The dashboard then guides you through initializing storage, running the first backup, and restoring into a new folder. Advanced settings and the command line remain available. The [quick start](QUICKSTART.md) covers migration, password custody, replica setup, and deliberate schedule activation.
+
+## v2.0.5 tested scope
+
+The qualified scope is unchanged from v2.0.4: local file capture and restore;
+live capture and restore for PostgreSQL 17.11, MySQL 8.4.12, and MariaDB 11.8.9;
+headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04 packages. User-timer
+reboot qualification covers only the components and conditions in the
+[recorded guest drill](docs/development/version-2.md#development-candidate-rebootable-systemd-qualification).
+
+B2/AWS protection, native Docker, ARM64 backup/restore, cross-application-version
+upgrades and rollback, root-owned systemd package templates, and off-host recovery
+remain unqualified. Package-build or install checks alone do not qualify those
+paths. Keep an independently retrievable copy of repository passwords; a second
+repository on the same host does not protect against host loss.
+
+Experimental cloud credentials, central recovery and retention, remote-primary
+capture, and reviewed Linux coverage ship with
+[documented limits](docs/development/version-2.md#experimental-cloud-and-machine-recovery-features).
+Issues #23–#26 were canceled and closed as not planned. Historical B2
+[maintenance interruption](docs/development/version-2.md#live-b2-central-maintenance-interruption-trial)
+and [lifecycle guard](docs/cloud-storage.md#b2-lifecycle-overlap-guard-experimental)
+trials do not prove prune completion, elapsed expiry, physical reclamation or
+provider protection. The [qualification record](docs/development/version-2.md)
+owns the complete evidence and support limits.
+
+### Current source changes
+
+The source checkout also includes [unreleased issue #30 maintenance](docs/development/version-2.md#unreleased-maintenance-issue-30):
+reviewed stale-lock handling, optional local last/weekly retention, strict
+keep-all parsing, B2 lifecycle-read compatibility and nested cache handling.
+These changes are separate from the v2.0.5 downloads. Follow the
+[maintenance quick start](QUICKSTART.md#review-local-retention-and-stale-locks-unreleased)
+for the new commands.
+
+The [current maintenance batch](docs/development/version-2.md#unreleased-layout-and-dependency-maintenance)
+also repairs compact-terminal layouts and refreshes reviewed Python and CI
+dependencies. Those changes are likewise unreleased.
 
 ## Choose a guide
 

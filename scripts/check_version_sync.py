@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import re
 import sys
 import tomllib
@@ -51,6 +52,16 @@ def main(argv: list[str]) -> int:
 
     errors: list[str] = []
     version = read_version()
+
+    manifest = json.loads((REPO_ROOT / ".release-please-manifest.json").read_text(encoding="utf-8"))
+    if manifest.get(".") != version:
+        errors.append(f"Release Please manifest version is {manifest.get('.')!r}, expected {version!r}")
+
+    lock = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    root_packages = [package for package in lock.get("package", [])
+                     if package.get("name") == "bbackup" and package.get("source") == {"editable": "."}]
+    if len(root_packages) != 1 or root_packages[0].get("version") != version:
+        errors.append("uv.lock root bbackup package version does not match VERSION")
 
     package_version = read_python_assignment(REPO_ROOT / "bbackup" / "__init__.py", "__version__")
     if package_version != version:

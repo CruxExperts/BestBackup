@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "version-file": "VERSION",
+      "versioning": "always-bump-patch",
+      "include-component-in-tag": false,
+      "skip-github-release": true,
+      "skip-changelog": true,
+      "draft-pull-request": true
+    }
+  }
+}

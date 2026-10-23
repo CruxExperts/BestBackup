@@ -41,7 +41,7 @@ The production CLI and dashboard share an operations service. Do not add an alte
 
 ## Commits and pull requests
 
-Use conventional commit subjects such as `fix: reject unsafe restore targets` or `docs: clarify replica setup`. Normal batches use a patch increment unless the commit body includes a deliberate `Release-Type: major|minor|patch|none` trailer. See [release versioning](../docs/VERSIONING.md).
+Use conventional commit subjects such as `fix: reject unsafe restore targets` or `docs: clarify replica setup`. Release Please prepares draft release PRs with a patch increment, including for `feat:` commits. Use a supported `Release-As: X.Y.Z` body trailer for an exact different version; historical `Release-Type` trailers are review notes and are not parsed by the bot. Prepare and sign the release branch before marking it ready. See [release versioning](../docs/VERSIONING.md#prepare-the-release-pull-request).
 
 Open pull requests against `main`, complete the [pull-request template](pull_request_template.md), and describe the exact checks and platforms exercised. Do not describe fixture or Garage testing as B2/AWS or Ubuntu package qualification. A successful file restore verifies file data; it does not demonstrate application recovery.
 

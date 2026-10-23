@@ -12,6 +12,10 @@ current uv-based install, development, and release instructions.
 
 ### Added
 
+- Release Please draft PRs using the official CLI with a reviewed, integrity-
+  pinned dependency graph and patched Node runtime, plus a local preparation
+  command. Signed tags and verified artifact publication retain their existing
+  deliberate workflow.
 - Reviewed repository lock inspection and stale-lock removal through the native
   production dispatcher. Unlock requires an exact review token, explicit
   approval, a confirmed quiet window, and only own-host, same-user locks whose

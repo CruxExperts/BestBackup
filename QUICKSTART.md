@@ -1,6 +1,6 @@
 # Your first backup and verified restore
 
-This guide covers v2.0.5 and its schema-3 policy. For an older v2.0.2 installation, use its [versioned quick start](https://github.com/CruxExperts/BestBackup/blob/v2.0.2/QUICKSTART.md) until you migrate. Keep an independently retrievable copy of each repository password.
+This guide covers the published v2.0.5 setup and its schema-3 policy. The current v2.0.6 release-candidate source also includes the issue #30 and compact-terminal changes below, but those candidate downloads are not published yet. For an older v2.0.2 installation, use its [versioned quick start](https://github.com/CruxExperts/BestBackup/blob/v2.0.2/QUICKSTART.md) until you migrate. Keep an independently retrievable copy of each repository password.
 
 ## Start with the guided dashboard
 
@@ -130,16 +130,17 @@ Persistent timers can catch up after an idle interruption. An interrupted mutati
 
 ## Review local retention and stale locks (unreleased)
 
-The current source includes the following maintenance features for issue
-[#30](https://github.com/CruxExperts/BestBackup/issues/30). They are not part of
-the published v2.0.5 artifacts. Use an explicitly enrolled policy and bindings;
-the examples below use the default configuration paths.
+The current v2.0.6 candidate source includes the following maintenance features
+for issue [#30](https://github.com/CruxExperts/BestBackup/issues/30). The
+candidate is not yet a published download, so these commands require this source
+checkout rather than the published v2.0.5 artifacts. Use an explicitly enrolled
+policy and bindings; the examples below use the default configuration paths.
 
-The unreleased dashboard layout keeps forms and setup navigation reachable in
-compact terminals. Use `Tab` and `Shift+Tab` to move between controls; the focused
-control scrolls into view. Use `F1` for field help. The legacy live dashboard
-summarizes resource categories and keeps failures and cancel hints visible when
-there is not enough room for its full layout.
+The candidate dashboard layout keeps forms and setup navigation reachable in
+compact terminals. Use `Tab` and `Shift+Tab` to move between controls; the
+focused control scrolls into view. Use `F1` for field help. The legacy live
+dashboard summarizes resource categories and keeps failures and cancel hints
+visible when there is not enough room for its full layout.
 
 For a job's `retention` object, optional `local_last` and `local_weekly` counts
 default to zero (disabled). For example:

@@ -1,0 +1,12 @@
+{
+  "name": "bbackup-release-tooling",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Locked official Release Please CLI for release PR preparation",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "release-please": "17.11.2"
+  }
+}

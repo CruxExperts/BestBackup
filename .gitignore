@@ -77,6 +77,7 @@ doc_update_brief.json
 .doc_update_complete
 MagicMock/
 bbackup.egg-info/
+.github/release-please/node_modules/
 
 # Secrets and keys (never commit these)
 .env

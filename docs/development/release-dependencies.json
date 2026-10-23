@@ -467,5 +467,76 @@
     ],
     "freshness_and_verification": "Use the timestamped exact-version advisory, registry hash, lockfile and immutable action-reference evidence in this report; no latest-version or risk-free claim is made.",
     "rollback": "Revert the scoped maintenance commit with an OpenPGP-signed commit and rerun uv sync --locked. Preserve published branch history."
+  },
+  "release_automation": {
+    "owner": [
+      ".github/release-please/package.json",
+      ".github/release-please/package-lock.json",
+      ".github/workflows/release-please.yml"
+    ],
+    "consumer": "Release Please draft PR preparation only; signed tag and checksum publication remain separate",
+    "cli": {
+      "package": "release-please",
+      "version": "17.11.2",
+      "first_published_utc": "2026-08-24T21:48:19.403Z",
+      "source": "https://github.com/googleapis/release-please/releases/tag/v17.11.2"
+    },
+    "runtime": {
+      "version": "22.23.4",
+      "first_published_utc": "2026-10-21T10:38:20Z",
+      "url": "https://nodejs.org/dist/v22.23.4/node-v22.23.4-linux-x64.tar.xz",
+      "sha256": "1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce",
+      "security_source": "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases"
+    },
+    "audit": {
+      "checked_at_utc": "2026-10-23T20:49:28.780101+00:00",
+      "lockfile": ".github/release-please/package-lock.json",
+      "lockfile_sha256": "5133b7774d18b013bc81c70570f874ea4983557080be41b9dd9c9084de8428a6",
+      "resolved_packages": 162,
+      "osv_findings": 0,
+      "github_reviewed_and_malware_findings": 0,
+      "npm_registry_findings": 0,
+      "registry_integrities_verified": true,
+      "source_classes": [
+        "A: OSV",
+        "B: GitHub Advisory Database",
+        "E: npm registry/deps.dev"
+      ],
+      "runtime_verification": "Official Node security release notice identifies 22.23.4 as the patched 22.x release; the official archive SHA256 is verified before extraction and execution. The release timestamp is from https://github.com/nodejs/node/releases/tag/v22.23.4.",
+      "npm_node_wrapper_cross_checks": {
+        "package": "node",
+        "version": "22.23.4",
+        "osv_github_deps_dev_findings": 0,
+        "limits": "These supplemental npm-wrapper metadata checks do not independently qualify the official Node runtime binary; use its official security notice and archive verification."
+      },
+      "cisa_kev": {
+        "catalogVersion": "2026.10.23",
+        "aliases": [
+          "CVE-2026-105481",
+          "CVE-2026-105482",
+          "CVE-2026-105483",
+          "CVE-2026-106069",
+          "CVE-2026-106070",
+          "CVE-2026-106071",
+          "CVE-2026-106072",
+          "CVE-2026-106073",
+          "CVE-2026-106074",
+          "CVE-2026-106445",
+          "CVE-2026-111497",
+          "CVE-2026-19481",
+          "CVE-2026-33937"
+        ],
+        "matches": []
+      },
+      "sources": [
+        "https://api.osv.dev/v1/querybatch",
+        "https://api.github.com/advisories",
+        "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk",
+        "https://api.deps.dev/v3/systems/npm/packages/node/versions/22.23.4"
+      ],
+      "limits": "Exact-version, timestamped known-advisory and registry-integrity checks; not a risk-free claim or future-version approval."
+    },
+    "selection_policy": "Pin the official CLI and all npm artifacts to a reviewed fresh lock; bootstrap the exact patched LTS Node archive by SHA256. Re-audit before any dependency/runtime update.",
+    "rollback": "Revert the signed automation change and disable its workflow before reverting repository Actions settings; preserve published releases and tags."
   }
 }

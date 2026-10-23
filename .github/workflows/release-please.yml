@@ -1,0 +1,119 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out the current repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Node.js
+        env:
+          NODE_VERSION: 22.23.4
+          NODE_SHA256: 1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/node-v${NODE_VERSION}-linux-x64.tar.xz"
+          install_dir="$RUNNER_TEMP/node-v${NODE_VERSION}-linux-x64"
+          curl --fail --location --silent --show-error \
+            "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+            --output "$archive"
+          printf '%s  %s\n' "$NODE_SHA256" "$archive" | sha256sum --check --strict
+          mkdir -p "$install_dir"
+          tar -xJf "$archive" --strip-components=1 --directory "$install_dir"
+          "$install_dir/bin/node" --version | grep --fixed-strings --line-regexp "v${NODE_VERSION}"
+          printf '%s\n' "$install_dir/bin" >> "$GITHUB_PATH"
+
+      - name: Install the frozen Release Please CLI
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix .github/release-please
+
+      - name: Wait for the proposed version to be published
+        id: published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          version = Path("VERSION").read_text(encoding="utf-8").strip()
+          repository = os.environ["GITHUB_REPOSITORY"]
+          if not re.fullmatch(r"\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?", version):
+              raise RuntimeError(f"Invalid VERSION value: {version!r}")
+          if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+              raise RuntimeError("Invalid GITHUB_REPOSITORY value")
+
+          url = f"https://api.github.com/repos/{repository}/releases/tags/v{version}"
+          request = urllib.request.Request(
+              url,
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  release = json.load(response)
+          except urllib.error.HTTPError as error:
+              if error.code != 404:
+                  raise
+              release = None
+
+          if release is None:
+              print(f"::notice title=Release draft deferred::Published release v{version} is not available yet.")
+              ready = "false"
+          else:
+              if not isinstance(release, dict) or release.get("tag_name") != f"v{version}":
+                  raise RuntimeError("GitHub returned a release record for an unexpected tag")
+              draft = release.get("draft")
+              published_at = release.get("published_at")
+              if not isinstance(draft, bool):
+                  raise RuntimeError("GitHub release record is missing its draft status")
+              if draft or not isinstance(published_at, str) or not published_at:
+                  print(f"::notice title=Release draft deferred::Release v{version} is not published yet.")
+                  ready = "false"
+              else:
+                  ready = "true"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"ready={ready}\n")
+          PY
+
+      - name: Create or update the draft release pull request
+        if: steps.published.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | node .github/release-please/node_modules/release-please/build/src/bin/release-please.js release-pr \
+            --repo-url "https://github.com/${GITHUB_REPOSITORY}" \
+            --target-branch main \
+            --config-file release-please-config.json \
+            --manifest-file .release-please-manifest.json \
+            --token /dev/stdin

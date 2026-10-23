@@ -62,6 +62,8 @@ Use this checklist before changing public project metadata or publishing a relea
 
 ## Version and release state
 
+- [ ] The Release Please draft has been prepared with `uv run python scripts/prepare_release.py`, its curated notes reviewed, and its final commit signed and validated before it is marked ready.
+- [ ] Release Please remains PR-only; signed tags and checksum publication use the existing release workflow. A bot-created draft is not evidence of a published release.
 - [ ] `VERSION` contains the intended semantic version.
 - [ ] Stable or prerelease version and tag match package metadata, release workflow, README badge, and dated changelog section.
 - [ ] `bbackup/__init__.py`, `pyproject.toml`, README badge, `CHANGELOG.md`, and generated CLI skills docs match `VERSION`.

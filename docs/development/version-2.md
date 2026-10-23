@@ -36,6 +36,12 @@ The existing legacy Docker volume restore roundtrip skipped after its backup
 step returned failure. A focused rerun confirmed that skip; this validation
 does not qualify that restore path.
 
+The live-lock integration fixture waits for a stable inventory containing its
+owned Restic process. It tolerates only the explicit inventory-change refusal
+during bounded startup; the production inspector still rejects changing lock
+sets, and uncertain unlocks are never retried. This covers slower hosted lock
+acquisition without weakening the maintenance safety checks.
+
 This is unreleased source work, not acceptance of private candidate builds or
 permission to modify deployed installations. The package version remains
 2.0.5 until a separate release. No B2/AWS protection, off-host custody,

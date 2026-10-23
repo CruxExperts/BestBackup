@@ -311,15 +311,22 @@ def test_disposable_local_restic_unlocks_only_a_reviewed_dead_lock(service):
         env=environment,
     )
     try:
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + 60
         live_review = None
         while time.monotonic() < deadline and process.poll() is None:
-            live_review = service.repository_locks("local")
-            if live_review["lock_count"]:
-                break
+            try:
+                candidate = service.repository_locks("local")
+            except ServiceError as exc:
+                if str(exc) != "Repository lock inventory changed during inspection":
+                    raise
+            else:
+                if any(lock["pid"] == process.pid for lock in candidate["locks"]):
+                    live_review = candidate
+                    break
             time.sleep(0.05)
         assert process.poll() is None
-        assert live_review is not None and live_review["lock_count"] > 0
+        assert live_review is not None, "did not observe a stable lock for the held backup"
+        assert live_review["lock_count"] > 0
         assert live_review["unlock_eligible"] is False
         with pytest.raises(ServiceError):
             service.repository_unlock_stale(

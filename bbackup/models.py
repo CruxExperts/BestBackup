@@ -39,6 +39,12 @@ def _positive(value: Any) -> int:
     return value
 
 
+def _nonnegative(value: Any) -> int:
+    if type(value) is not int or value < 0:
+        raise ConfigurationError("Expected a nonnegative integer")
+    return value
+
+
 def _strings(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list) or any(
         not isinstance(v, str) or not v or "\0" in v for v in value
@@ -188,6 +194,8 @@ class Source:
 @dataclass(frozen=True)
 class Retention:
     local_daily: int = 7
+    local_last: int = 0
+    local_weekly: int = 0
     cloud_daily: int = 30
     cloud_weekly: int = 8
     cloud_monthly: int = 12
@@ -197,7 +205,11 @@ class Retention:
     def parse(cls, raw):
         fields = set(cls.__dataclass_fields__)
         raw = _object(raw, fields, set())
-        values = {key: _positive(value) for key, value in raw.items()}
+        values = {
+            key: (_nonnegative(value) if key in {"local_last", "local_weekly"}
+                  else _positive(value))
+            for key, value in raw.items()
+        }
         if values.get("protection_days", 30) < 30:
             raise ConfigurationError(
                 "Cloud recovery protection must be at least thirty days"

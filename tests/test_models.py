@@ -27,9 +27,22 @@ def config():
 def test_defaults(config):
     parsed = Configuration.parse(config)
     assert parsed.jobs[0].retention.local_daily == 7
+    assert parsed.jobs[0].retention.local_last == 0
+    assert parsed.jobs[0].retention.local_weekly == 0
     assert parsed.jobs[0].retention.cloud_monthly == 12
     assert parsed.jobs[0].overdue_hours == 26
     assert parsed.jobs[0].schedule == "daily"
+
+
+@pytest.mark.parametrize("field", ["local_last", "local_weekly"])
+def test_local_retention_last_and_weekly_are_nonnegative_integers(config, field):
+    config["jobs"][0]["retention"] = {field: 3}
+    parsed = Configuration.parse(config)
+    assert getattr(parsed.jobs[0].retention, field) == 3
+    for invalid in (-1, True, 1.5, "2"):
+        config["jobs"][0]["retention"] = {field: invalid}
+        with pytest.raises(ConfigurationError):
+            Configuration.parse(config)
 
 
 def test_coverage_opt_in_requires_portable_scope_and_exact_private_job_mapping(config, tmp_path):

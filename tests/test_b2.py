@@ -225,6 +225,57 @@ def test_administrative_and_unrecognized_capabilities_disqualify_observed_profil
     assert profile["negative_test_proof"]["administrative_denial_demonstrated"] is False
 
 
+def test_lifecycle_read_capability_is_compatible_with_scoped_source_metadata():
+    capabilities = ["listBuckets", "listFiles", "readFiles", "writeFiles",
+                    "readBucketLifecycleRules"]
+    result = inspect_sdk("backup-bucket", prefix="restic/", api=api(capabilities))
+    assert result["unsafe_capabilities"] == []
+    assert result["credential_administration_denied"] is True
+    assert result["restricted_source_profile"]["status"] == "eligible_from_observed_metadata"
+    assert result["protection_qualified"] is False
+
+
+def test_lifecycle_read_does_not_qualify_a_permanent_delete_checkpoint_key():
+    result = inspect_sdk("backup-bucket", prefix="restic/", api=api([
+        "listBuckets", "readBuckets", "listFiles", "readFiles", "writeFiles",
+        "deleteFiles", "readBucketLifecycleRules",
+    ]))
+    assert result["unsafe_capabilities"] == ["deleteFiles"]
+    profile = result["restricted_source_profile"]
+    assert profile["status"] == "unqualified"
+    assert profile["reasons"] == ["permanent_deletion_capability_present"]
+    assert result["protection_qualified"] is False
+
+
+@pytest.mark.parametrize("capability", [
+    "writeBucketLifecycleRules", "writeBuckets", "futureWritePermission",
+])
+def test_lifecycle_read_does_not_allow_administrative_or_unknown_capabilities(capability):
+    result = inspect_sdk("backup-bucket", prefix="restic/", api=api([
+        "listBuckets", "listFiles", "readFiles", "writeFiles",
+        "readBucketLifecycleRules", capability,
+    ]))
+    assert result["unsafe_capabilities"]
+    assert result["credential_administration_denied"] is False
+    assert result["restricted_source_profile"]["status"] == "unqualified"
+
+
+def test_native_lock_reader_accepts_lifecycle_read_with_exact_scoped_authority():
+    from datetime import datetime, timezone
+
+    reader = B2VersionLockReader(
+        "backup-bucket", "bucket-id-1", "restic/", "https://s3.us-west-004.backblazeb2.com",
+        api=_native_lock_api(allowed={"capabilities": [
+            "listBuckets", "readFiles", "readFileRetentions", "readFileLegalHolds",
+            "readBucketLifecycleRules",
+        ]}), access_key_id="key", secret_access_key="secret",
+    )
+    evidence, protected = reader.read("restic/data", "file-v1", now=datetime.now(timezone.utc))
+    assert evidence["provider"] == "b2-native"
+    assert evidence["file_id"] == "file-v1"
+    assert protected is False
+
+
 @pytest.mark.parametrize(
     "auth",
     [

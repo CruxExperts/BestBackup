@@ -4,6 +4,44 @@
 > below. Experimental additions remain unqualified. The dated records retain
 > historical evidence and limits without expanding that scope.
 
+## Unreleased maintenance (issue #30)
+
+The source checkout implements the reviewed portions of
+[#30](https://github.com/CruxExperts/BestBackup/issues/30): bounded repository
+lock inspection and explicitly approved stale unlock, optional `local_last`
+and `local_weekly` counts, strict parsing of valid Restic keep-all output,
+read-only B2 lifecycle capability compatibility, and consistent cache policy
+for nested Restic commands in minimal environments.
+
+These changes use the existing enrolled production dispatcher, leases and
+reconciliation barriers. Unlock is limited to the reviewed own-host, same-user
+dead-process lock set and requires an externally coordinated quiet window.
+Local retention preserves recorded required-replica obligations and replans
+before applying exact snapshot IDs. See the
+[maintenance quick start](../../QUICKSTART.md#review-local-retention-and-stale-locks-unreleased)
+for configuration and commands.
+
+On 2026-10-23, the local Python 3.12 suite passed with 1,287 tests and one
+skipped test, including integration tests with Restic 0.19.1 and an available
+Docker daemon. The disposable lock drill preserved an existing snapshot,
+planned keep-all retention with 12 last/14 daily/8 weekly counts, refused a live
+lock, and removed its reviewed stale lock after the owned process was killed.
+Ruff, compilation, version and generated-command checks, Markdown, artwork
+provenance, publishing readiness and whitespace checks passed. The wheel and
+source archive built and passed installed-artifact smoke checks. Independent
+review found no remaining blocking correctness findings. These are development
+results, not new published-artifact or production qualification.
+
+The existing legacy Docker volume restore roundtrip skipped after its backup
+step returned failure. A focused rerun confirmed that skip; this validation
+does not qualify that restore path.
+
+This is unreleased source work, not acceptance of private candidate builds or
+permission to modify deployed installations. The package version remains
+2.0.5 until a separate release. No B2/AWS protection, off-host custody,
+thirty-day recovery window or complete-machine recovery qualification is added;
+the canceled scopes of #23-#26 remain canceled and unqualified.
+
 ## v2.0.5 release scope and known limits
 
 The v2.0.5 stable qualified scope is unchanged from v2.0.4: local file capture

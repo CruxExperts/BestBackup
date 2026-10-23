@@ -171,6 +171,14 @@ def _service_operation(service, command, values, config_path, bindings_path, can
         return service.initialize(values["name"], source=values.get("source"), cancel=cancel)
     if command == "repositories check":
         return service.check(values["name"], cancel=cancel)
+    if command == "repositories locks":
+        return service.repository_locks(values["name"], cancel=cancel)
+    if command == "repositories unlock-stale":
+        return service.repository_unlock_stale(
+            values["name"], values["plan_token"], values["approved"],
+            quiescent_window_confirmed=values["quiescent_window_confirmed"],
+            cancel=cancel,
+        )
     if command == "snapshots list":
         return service.snapshots(**values)
     if command == "retention plan":

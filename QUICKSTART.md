@@ -128,6 +128,60 @@ qualify complete-machine disaster recovery.
 
 Persistent timers can catch up after an idle interruption. An interrupted mutation remains uncertain and blocks automatic replay until explicit reconciliation. Retention remains a separate reviewed action; scheduling does not silently prune data.
 
+## Review local retention and stale locks (unreleased)
+
+The current source includes the following maintenance features for issue
+[#30](https://github.com/CruxExperts/BestBackup/issues/30). They are not part of
+the published v2.0.5 artifacts. Use an explicitly enrolled policy and bindings;
+the examples below use the default configuration paths.
+
+For a job's `retention` object, optional `local_last` and `local_weekly` counts
+default to zero (disabled). For example:
+
+```json
+{"local_last": 12, "local_daily": 14, "local_weekly": 8}
+```
+
+The optional counts must be nonnegative integers; booleans and null are rejected.
+`local_daily` retains its positive-integer requirement. Restic
+keeps a snapshot when any enabled rule matches, within the existing host/job
+group. Review the resulting exact snapshot selection before applying it:
+
+```bash
+uv run bbackup production retention plan --job daily
+uv run bbackup production retention apply --input-json \
+  '{"job":"daily","plan_token":"EXACT_PLAN_TOKEN","approved":true}'
+```
+
+The plan token includes the counts, snapshot inventory and replica evidence.
+Changing them requires a new plan. Required replica obligations recorded at
+capture still apply after editing a job. This operation forgets selected local
+snapshots; it does not prune repository data or apply cloud retention.
+
+For a suspected interrupted Restic lock, inspect first:
+
+```bash
+uv run bbackup production repositories locks --name local
+```
+
+Review the returned lock inventory and eligibility. Stop every external
+repository writer and keep them stopped throughout inspection and unlock.
+Only an exact, bounded set of this host's same-user locks with demonstrably
+absent processes can qualify. Then explicitly approve the current token:
+
+```bash
+uv run bbackup production repositories unlock-stale --input-json \
+  '{"name":"local","plan_token":"EXACT_REVIEW_TOKEN","approved":true,"quiescent_window_confirmed":true}'
+```
+
+The service reinspects under its mutation lease, uses ordinary repository-wide
+Restic unlock (which cannot target individual lock IDs), and verifies no locks
+remain. It cannot prevent an external writer from
+starting, so the quiet window is essential. Live, foreign, changed, malformed
+or incomplete locks block removal. Never repeat an uncertain unlock; use the
+[administrator reconciliation workflow](docs/AGENT_INTEGRATION.md#reconcile-uncertain-mutations).
+This is a deliberate maintenance action, not automatic lock cleanup.
+
 ## Existing Docker and YAML users
 
 The retained 1.x commands use their own configuration. Legacy Docker restores require unused container/volume names; bind-mounted container restoration is refused. SFTP requires a previously trusted host key. See [legacy management](docs/management.md) and [encryption compatibility](docs/encryption.md).

@@ -6,6 +6,12 @@ These guides describe v2.0.5. The [qualification record](development/version-2.m
 
 The [release dependency evidence](development/release-dependencies.json) records the reviewed versions, source timestamps, lock hash, and audit limits.
 
+The current source also includes [unreleased maintenance changes](development/version-2.md#unreleased-maintenance-issue-30)
+for reviewed stale locks, local retention counts, Restic keep-all parsing, and
+B2 lifecycle-read compatibility. They are separate from published v2.0.5.
+See the [maintenance quick start](../QUICKSTART.md#review-local-retention-and-stale-locks-unreleased)
+before using the new commands.
+
 ## Choose a starting point
 
 | If you need to... | Start here |

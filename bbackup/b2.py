@@ -37,7 +37,7 @@ _SAFE_CAPABILITIES = {
     "listBuckets", "listAllBucketNames", "listFiles", "readFiles", "writeFiles",
     "readBuckets", "readBucketEncryption", "readBucketRetentions",
     "readFileRetentions", "readFileLegalHolds", "readBucketReplications",
-    "readBucketNotifications",
+    "readBucketNotifications", "readBucketLifecycleRules",
 }
 _INSPECTION_CAPABILITIES = {"listBuckets", "listFiles", "readFiles"}
 _PROFILE_CAPABILITIES = _INSPECTION_CAPABILITIES | {"writeFiles"}

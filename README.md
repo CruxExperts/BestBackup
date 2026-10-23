@@ -40,6 +40,13 @@ qualify the experimental B2 workflow. This release adds no new live provider
 qualification; the existing workstation results remain historical.
 The qualified core scope is unchanged from v2.0.4.
 
+Current source changes for [issue #30](https://github.com/CruxExperts/BestBackup/issues/30)
+add reviewed stale-lock maintenance, optional local last/weekly retention,
+strict keep-all parsing and B2 lifecycle-read compatibility. They are
+[unreleased](docs/development/version-2.md#unreleased-maintenance-issue-30),
+separate from the v2.0.5 downloads. See the
+[maintenance quick start](QUICKSTART.md#review-local-retention-and-stale-locks-unreleased).
+
 ## Start with the guided workflow
 
 Experimental restricted cloud credentials, central recovery and retention,

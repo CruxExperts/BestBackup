@@ -931,6 +931,47 @@
     "required": [],
     "type": "object"
   },
+  "repositories locks": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "repositories unlock-stale": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "approved": {
+        "default": false,
+        "type": "boolean"
+      },
+      "name": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "plan_token": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "quiescent_window_confirmed": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "name",
+      "plan_token"
+    ],
+    "type": "object"
+  },
   "restore": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,

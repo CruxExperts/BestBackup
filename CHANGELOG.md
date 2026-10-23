@@ -10,6 +10,28 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+### Added
+
+- Reviewed repository lock inspection and stale-lock removal through the native
+  production dispatcher. Unlock requires an exact review token, explicit
+  approval, a confirmed quiet window, and only own-host, same-user locks whose
+  processes are absent. Changed or uncertain lock inventories block removal.
+- Optional `local_last` and `local_weekly` retention counts, disabled by default,
+  alongside daily retention. Counts are part of the reviewed retention policy.
+
+### Fixed
+
+- Accept Restic's explicit `remove: null` keep-all selection only when its keep
+  group contains valid full snapshot IDs; malformed selections remain errors.
+- Recognize B2's read-only `readBucketLifecycleRules` capability without allowing
+  administrative or unknown permissions or qualifying a permanent-delete key as
+  a restricted source writer.
+- Preserve the resolved Restic cache policy in nested repository queries,
+  including execution without `HOME` or `XDG_CACHE_HOME`.
+
+These source changes address issue [#30](https://github.com/CruxExperts/BestBackup/issues/30).
+They do not publish a new release or expand cloud or machine-recovery qualification.
+
 ## [2.0.5] - 2026-10-22
 
 ### Fixed

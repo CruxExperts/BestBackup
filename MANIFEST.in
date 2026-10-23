@@ -1,5 +1,7 @@
 # Portable source and maintenance inputs; runtime state never belongs in an sdist.
 include VERSION uv.lock .python-version config.yaml.example
+include release-please-config.json .release-please-manifest.json
+include .github/release-please/package.json .github/release-please/package-lock.json
 include bbackup.py bbman.py AGENTS.md CHANGELOG.md INSTALL.md QUICKSTART.md SECURITY.md SUPPORT.md
 include Dockerfile.test .dockerignore
 recursive-include scripts *.py *.sh *.md
@@ -12,6 +14,7 @@ prune .agent
 prune .agents
 prune .codex
 prune .venv
+prune .github/release-please/node_modules
 prune build
 prune dist
 global-exclude __pycache__ *.py[cod] .env *.pem *.key *.log

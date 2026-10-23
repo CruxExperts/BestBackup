@@ -2,7 +2,11 @@
 
 > Stable v2.0.5 production qualification retains the tested core scope recorded
 > below. Experimental additions remain unqualified. The dated records retain
-> historical evidence and limits without expanding that scope.
+> historical evidence and limits without expanding that scope. The v2.0.6
+> release-candidate source now includes the maintenance batches below; its
+> downloads are pending publication. Until publication, v2.0.5 remains the
+> latest available release, and no new provider or Linux recovery qualification
+> is claimed.
 
 ## Unreleased layout and dependency maintenance
 
@@ -27,8 +31,9 @@ The retry regression covers both 429 and 503 responses, including the fallback
 when that header is absent. Inspection deadlines and cancellation still bound
 the SDK subprocess; this offline check adds no live provider qualification.
 
-These are unreleased source changes. They do not publish new artifacts or
-expand Docker, cloud-provider, off-host recovery or complete-machine support.
+These changes are included in the v2.0.6 candidate source. The candidate is not
+a published artifact and does not expand Docker, cloud-provider, off-host
+recovery or complete-machine support.
 
 On 2026-10-23, the final local maintenance candidate passed 1,295 tests with
 one skipped test in 114.24 seconds using three workers. This includes the
@@ -45,7 +50,7 @@ checks. These checks validate the source candidate without publishing a release.
 
 ## Unreleased maintenance (issue #30)
 
-The source checkout implements the reviewed portions of
+The v2.0.6 candidate source implements the reviewed portions of
 [#30](https://github.com/CruxExperts/BestBackup/issues/30): bounded repository
 lock inspection and explicitly approved stale unlock, optional `local_last`
 and `local_weekly` counts, strict parsing of valid Restic keep-all output,
@@ -81,11 +86,12 @@ during bounded startup; the production inspector still rejects changing lock
 sets, and uncertain unlocks are never retried. This covers slower hosted lock
 acquisition without weakening the maintenance safety checks.
 
-This is unreleased source work, not acceptance of private candidate builds or
-permission to modify deployed installations. The package version remains
-2.0.5 until a separate release. No B2/AWS protection, off-host custody,
-thirty-day recovery window or complete-machine recovery qualification is added;
-the canceled scopes of #23-#26 remain canceled and unqualified.
+These changes are included in the v2.0.6 release-candidate source, not
+acceptance of private candidate builds or permission to modify deployed
+installations. Published downloads remain at v2.0.5 until release publication.
+No B2/AWS protection, off-host custody, thirty-day recovery window or
+complete-machine recovery qualification is added; the canceled scopes of #23-#26
+remain canceled and unqualified.
 
 ## v2.0.5 release scope and known limits
 
@@ -1793,7 +1799,7 @@ recovery limits rather than treating discoverability as additional qualification
 ## Dependency evidence
 
 The entries below record earlier candidates and released 2.0.x inputs. They
-remain historical evidence. For the current unreleased dependency graph, use
+remain historical evidence. For the current v2.0.6 candidate dependency graph, use
 the [source maintenance record](#unreleased-layout-and-dependency-maintenance)
 and [exact lockfile review](release-dependencies.json).
 

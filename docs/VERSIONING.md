@@ -64,26 +64,24 @@ before push.
 
 ### Prepare the release pull request
 
-**Activation is blocked as of 2026-10-23.** The SHA-pinned
-`.github/workflows/release-please.yml` has an explicit false job guard. Its
-triggers are defined for `main` pushes and manual dispatch, but the Action is
-not executed. The audited v5.0.0 lock includes `handlebars@4.7.8`, affected by
-[critical CVE-2026-33937](https://github.com/handlebars-lang/handlebars.js/security/advisories/GHSA-2w6w-674q-4c4q)
-and [critical CVE-2026-106445](https://github.com/advisories/GHSA-p8wg-vrv2-v86f).
-The latter requires at least 4.7.10. Other transitive advisories are also
-present. Exact-lock OSV and npm registry checks confirm the findings; the
-upstream `main` lock remains affected. This is a dependency finding, not a
-claim that this repository was exploited.
+`.github/workflows/release-please.yml` uses the official Release Please CLI
+`17.11.2` with the reviewed npm lockfile in `.github/release-please/`, rather
+than the older prebuilt Action bundle. All 162 resolved package versions were
+checked against OSV, GitHub advisories and npm's advisory feed on 2026-10-23;
+no known advisories were returned. Registry artifact integrity values were
+also verified. See the [dependency evidence](development/release-dependencies.json)
+for the exact lock hash, sources and review limits. This is a dated check,
+not a guarantee against future vulnerabilities.
 
-Before activation, review a patched immutable upstream release, its lockfile
-**and rebuilt bundled Action**, rerun advisory checks, replace the SHA, and
-restore the job condition to permit only `refs/heads/main`. Then allow Actions
-to create PRs in repository settings and verify the first draft. No repository
-permission setting was changed during this blocked setup. To roll back the
-setup, revert its task commit; no tag or published artifact needs removal.
+The workflow installs dependencies with `npm ci --ignore-scripts` on Node
+`22.23.4`, downloaded from Node's official distribution with a pinned SHA256.
+That patched runtime was published on 2026-10-21 at 10:38:20 UTC and was older
+than 48 hours when selected. The workflow runs only on `main` pushes or a manual
+dispatch on `main`. It defers version proposals while the current `VERSION`
+has no published release, so an unfinished release does not create a second
+candidate. Repository settings must allow Actions to create PRs.
 
-The configuration below describes the intended behavior after activation.
-Its root manifest starts at `2.0.5`; it proposes
+The root manifest records the candidate version; Release Please proposes
 the next version in `VERSION` and `.release-please-manifest.json` through a
 **draft PR**. It does not create tags, GitHub releases, or merge PRs. The
 existing signed-tag and signed-checksum publication flow remains authoritative.

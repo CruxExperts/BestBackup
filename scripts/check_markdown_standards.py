@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -116,7 +117,13 @@ def public_documents() -> list[Path]:
     for directory in PUBLIC_DIRECTORIES:
         root = REPO_ROOT / directory
         if root.exists():
-            paths.extend(sorted(root.rglob("*.md")))
+            for current, subdirectories, filenames in os.walk(root):
+                subdirectories[:] = [name for name in subdirectories if name != "node_modules"]
+                paths.extend(
+                    Path(current) / filename
+                    for filename in filenames
+                    if filename.endswith(".md")
+                )
     paths.extend(REPO_ROOT / relative for relative in GENERATED_DOCUMENTS)
     unique = {path.resolve(): path for path in paths if path.exists()}
     return [unique[key] for key in sorted(unique)]

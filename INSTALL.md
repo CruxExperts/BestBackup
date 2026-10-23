@@ -1,6 +1,6 @@
 # Install bbackup
 
-This guide covers stable v2.0.5 for its tested file, database, dashboard, and AMD64 package scope. New cloud and Linux recovery workflows are experimental and unqualified; B2/AWS, native Docker, ARM64 package functionality, and broader recovery guarantees remain outside the qualified scope. The retained 1.x tag remains available as v1.8.6.
+The latest published stable release is v2.0.5, with its tested file, database, dashboard, and AMD64 package scope. The current v2.0.6 source candidate includes reviewed issue #30 maintenance and compact-terminal fixes, but its release downloads are not published yet; the install commands and package examples below therefore remain pinned to v2.0.5. The candidate adds no B2/AWS, ARM64, or Linux recovery qualification. The retained 1.x tag remains available as v1.8.6.
 
 ## Version 2 stable release
 
@@ -26,7 +26,7 @@ Version 2.0.5 supports explicit user-level installation through `service install
 
 ### Cloud repositories
 
-Restic repositories can use local storage, Backblaze B2 through the S3 API, or Amazon S3. Cloud providers are configurable but not production-qualified in v2.0.5. Configure credentials in the supervised process environment. Do not place credentials in portable JSON policy or a repository URL. See [cloud storage](docs/cloud-storage.md) for experimental provider setup and limits.
+Restic repositories can use local storage, Backblaze B2 through the S3 API, or Amazon S3. Cloud providers are configurable but not production-qualified; the v2.0.6 source candidate does not change that status. Configure credentials in the supervised process environment. Do not place credentials in portable JSON policy or a repository URL. See [cloud storage](docs/cloud-storage.md) for experimental provider setup and limits.
 
 ## Existing 1.x release
 
@@ -52,7 +52,7 @@ See [docs/management.md](docs/management.md) for legacy setup, health, remote, a
 
 ## Development checkout
 
-The checkout includes guided setup, schema-3 enrollment, and safety improvements. Follow its quick start and deliberately migrate existing schema-2 policy; migration preserves the original files.
+The checkout contains the current v2.0.6 release-candidate source, including guided setup, schema-3 enrollment, issue #30 maintenance, and compact-terminal fixes. The candidate is not yet available as a published download. Follow its quick start and deliberately migrate existing schema-2 policy; migration preserves the original files.
 
 ```bash
 git clone https://github.com/CruxExperts/BestBackup.git

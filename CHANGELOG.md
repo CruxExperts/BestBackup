@@ -12,6 +12,9 @@ current uv-based install, development, and release instructions.
 
 ### Added
 
+- A Release Please draft-PR configuration and local preparation command.
+  Activation is blocked pending a patched upstream Action; signed tags and
+  verified artifact publication retain their existing deliberate workflow.
 - Reviewed repository lock inspection and stale-lock removal through the native
   production dispatcher. Unlock requires an exact review token, explicit
   approval, a confirmed quiet window, and only own-host, same-user locks whose

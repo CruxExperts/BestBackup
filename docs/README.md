@@ -45,7 +45,7 @@ until they migrate.
 
 ## Maintainer references
 
-- [Versioning](VERSIONING.md): canonical package version, release tags and validation.
+- [Versioning](VERSIONING.md): Release Please drafts, canonical package version, signed release tags and validation.
 - [Publishing checklist](PUBLISHING_CHECKLIST.md): community files and release readiness.
 - [Qualification record](development/version-2.md): candidate results and deferred assurance.
 - [Release dependency evidence](development/release-dependencies.json): reviewed versions, source timestamps, lock hash and audit limits.

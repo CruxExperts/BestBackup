@@ -10,6 +10,12 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+### Fixed
+
+- Correct stale contribution guidance by linking the GitHub Releases page and
+  the authoritative Version 2 development record, and make publishing scope
+  checks refer to the release candidate while preserving qualification limits.
+
 ## [2.0.6] - 2026-10-23
 
 ### Added

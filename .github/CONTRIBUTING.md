@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve bbackup. Keep changes focused and make behavior claims match the checked-in implementation and its evidence. The latest published version is v2.0.2; this checkout also contains unreleased guided setup and safety improvements. The legacy YAML workflow is retained.
+Thanks for helping improve bbackup. Keep changes focused and make behavior claims match the checked-in implementation and its evidence. Check the [GitHub Releases page](https://github.com/CruxExperts/BestBackup/releases) for published versions and the maintained [Version 2 development record](../docs/development/version-2.md) for current tested scope, unreleased work, and qualification limits. The legacy YAML workflow is retained.
 
 ## Development setup
 

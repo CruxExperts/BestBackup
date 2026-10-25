@@ -118,10 +118,10 @@
     }
   },
   "lockfile": {
-    "local_project_version": "2.0.6",
+    "local_project_version": "2.0.7",
     "locked_pypi_packages": 51,
     "path": "uv.lock",
-    "sha256": "d55dea5727136d838fc42d93d94fd7ef967caf602b935d0651dc3c767214b5fa"
+    "sha256": "0dd1cca536ec4074d4341f47d884d024b9266b2887e4ef32cddc2643f6573772"
   },
   "package_versions": [
     {
@@ -330,8 +330,8 @@
     }
   ],
   "release": {
-    "release_date_utc": "2026-10-23",
-    "version": "2.0.6"
+    "release_date_utc": "2026-10-25",
+    "version": "2.0.7"
   },
   "schema_version": 1,
   "external_build_tools": {
@@ -386,13 +386,13 @@
       "tag": "v2.0.5",
       "sha256": "3e3b833f1882a21365c286ddac2961cc11cb279e6c8a3eb1362be6f415a55739",
       "url": "https://github.com/CruxExperts/BestBackup/blob/v2.0.5/docs/development/release-dependencies.json",
-      "note": "Historical evidence for the previous v2.0.5 release. This report binds v2.0.6 source; its release-provenance asset records the exact source, CI and build bindings."
+      "note": "Historical evidence for v2.0.5. This report binds the current candidate source; its release-provenance asset records the exact source, CI and build bindings."
     },
     "qualification": "Maintenance release; historical provider, machine-recovery and platform qualification limits are unchanged.",
-    "version": "2.0.6"
+    "version": "2.0.7"
   },
   "github_actions_maintenance": {
-    "status": "unreleased",
+    "status": "released-in-v2.0.6",
     "retrieved_at_utc": "2026-10-23T18:53:25.163180+00:00",
     "refs": [
       {
@@ -461,7 +461,7 @@
       "https://pypi.org/simple",
       "https://github.com/actions"
     ],
-    "version_selection": "Adopt the exact reviewed PR20 and PR28 targets; retain all other package versions and SHA-pin action tags. This is source maintenance, not a release or deployment.",
+    "version_selection": "Historical v2.0.6 maintenance adopted the exact reviewed PR20 and PR28 targets and SHA-pinned action tags. The current candidate retains those runtime and development versions; its additional isolated build requirement remediation is recorded in release_candidate_audit.",
     "consumers": [
       "bbackup CLI and dashboard",
       "legacy backup/restore and optional Google Drive authentication",
@@ -541,5 +541,97 @@
     },
     "selection_policy": "Pin the official CLI and all npm artifacts to a reviewed fresh lock; bootstrap the exact patched LTS Node archive by SHA256. Re-audit before any dependency/runtime update.",
     "rollback": "Revert the signed automation change and disable its workflow before reverting repository Actions settings; preserve published releases and tags."
+  },
+  "release_candidate_audit": {
+    "version": "2.0.7",
+    "checked_at_utc": "2026-10-25T04:34:33.308720+00:00",
+    "scope": "All 51 locked PyPI versions, isolated setuptools/wheel build requirements and the pinned uv bootstrap; all 162 Release Please npm versions. Runtime and dev package versions are unchanged from v2.0.6.",
+    "python_build_requirements": [
+      "setuptools==84.1.0",
+      "wheel==0.48.0"
+    ],
+    "sources": [
+      {
+        "name": "OSV",
+        "independence_class": "A",
+        "endpoint": "https://api.osv.dev/v1/querybatch",
+        "package_version_queries": 216,
+        "advisory_hits": 0
+      },
+      {
+        "name": "GitHub Advisory Database",
+        "independence_class": "B",
+        "ecosystem": "pip",
+        "type": "reviewed",
+        "endpoint": "https://api.github.com/advisories",
+        "package_version_queries": 54,
+        "requests": 2,
+        "advisory_hits": 0,
+        "pagination_exhausted": true
+      },
+      {
+        "name": "GitHub Advisory Database",
+        "independence_class": "B",
+        "ecosystem": "pip",
+        "type": "malware",
+        "endpoint": "https://api.github.com/advisories",
+        "package_version_queries": 54,
+        "requests": 2,
+        "advisory_hits": 0,
+        "pagination_exhausted": true
+      },
+      {
+        "name": "GitHub Advisory Database",
+        "independence_class": "B",
+        "ecosystem": "npm",
+        "type": "reviewed",
+        "endpoint": "https://api.github.com/advisories",
+        "package_version_queries": 162,
+        "requests": 5,
+        "advisory_hits": 0,
+        "pagination_exhausted": true
+      },
+      {
+        "name": "GitHub Advisory Database",
+        "independence_class": "B",
+        "ecosystem": "npm",
+        "type": "malware",
+        "endpoint": "https://api.github.com/advisories",
+        "package_version_queries": 162,
+        "requests": 5,
+        "advisory_hits": 0,
+        "pagination_exhausted": true
+      },
+      {
+        "name": "PyPI",
+        "independence_class": "E",
+        "endpoint": "https://pypi.org/pypi/PACKAGE/VERSION/json",
+        "package_version_queries": 54,
+        "advisory_hits": 0,
+        "locked_artifact_hashes_verified": 477
+      },
+      {
+        "name": "npm registry",
+        "independence_class": "E",
+        "endpoint": "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk",
+        "package_version_queries": 162,
+        "advisory_hits": 0
+      }
+    ],
+    "raw_evidence_sha256": "0388e9ee556fb144fb9bad30a22ed0e7b0524a67c64d127ca665ecb472d9fff9",
+    "npm_lockfile_sha256": "5133b7774d18b013bc81c70570f874ea4983557080be41b9dd9c9084de8428a6",
+    "remediation": {
+      "advisory": "GHSA-xmj3-9gf7-h52w",
+      "source": "https://github.com/advisories/GHSA-xmj3-9gf7-h52w",
+      "package": "setuptools",
+      "previous_version": "84.0.0",
+      "resolved_version": "84.1.0",
+      "affected_range": ">= 38.2.2, < 84.1.0",
+      "severity": "low",
+      "cvss_v4_score": 1.0,
+      "cve_aliases": [],
+      "exposure": "Build requirement only; the advisory concerns legacy wheel installation. bbackup uses the PEP 517 build backend. The pin is updated to the minimum patched version without changing runtime dependencies."
+    },
+    "limits": "Timestamped exact-version known-advisory metadata, not a risk-free or future-version claim. Earlier audit, action selection, Node runtime and Restic caveat records retain their original dates and scope; they are not newly qualified by this refresh. No new affected CVE alias was returned by these candidate lookups, so no new NVD/KEV disposition is asserted."
   }
 }

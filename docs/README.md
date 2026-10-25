@@ -2,8 +2,10 @@
 
 bbackup is for Linux administrators, homelab and self-hosted operators, and small infrastructure teams who need encrypted local backups, verified file restores, and visible scheduled jobs. Choose a guide by the work you are doing.
 
-These guides describe v2.0.6 and its release scope, which remains unchanged
-from v2.0.5. Check the [GitHub Releases page](https://github.com/CruxExperts/BestBackup/releases/latest)
+These guides describe the v2.0.7 documentation and release-readiness updates,
+including targeted build-tool security maintenance. Production runtime
+behavior and qualification remain unchanged from v2.0.6. Check the
+[GitHub Releases page](https://github.com/CruxExperts/BestBackup/releases/latest)
 for tag and download availability, and consult the
 [qualification record](development/version-2.md) before selecting a workflow.
 
@@ -25,22 +27,24 @@ for tag and download availability, and consult the
 
 ## Version and support boundaries
 
-Version 2.0.6 retains the v2.0.5 tested core scope and includes the maintenance
-updates below. It adds no B2/AWS, ARM64, or Linux recovery qualification.
+Version 2.0.7 includes documentation and release-readiness updates plus
+targeted build-tool security maintenance. It does not change production
+runtime behavior or qualification. The production-qualified scope remains the
+v2.0.6 tested core scope; no B2/AWS, ARM64, or Linux recovery qualification is added.
 Experimental cloud and Linux workflows remain unqualified; issues #23–#26 were
 canceled and closed as not planned. An implemented path or a closed issue does
 not establish support. The [qualification record](development/version-2.md)
-retains the dated evidence.
+retains the dated evidence and limits.
 
-Version 2.0.6 includes [issue #30 maintenance](development/version-2.md#unreleased-maintenance-issue-30)
+The v2.0.6 release includes [issue #30 maintenance](development/version-2.md#unreleased-maintenance-issue-30)
 for reviewed stale locks, local retention counts, strict Restic parsing, B2
 lifecycle-read compatibility and nested cache policy. Follow the
 [maintenance quick start](../QUICKSTART.md#review-local-retention-and-stale-locks-unreleased)
 for setup and reviewed use.
 
-The [layout and dependency batch](development/version-2.md#unreleased-layout-and-dependency-maintenance)
-is included in v2.0.6. It covers compact terminal forms, documentation
-navigation, and reviewed Python and GitHub Actions maintenance.
+The [v2.0.6 layout and dependency batch](development/version-2.md#unreleased-layout-and-dependency-maintenance)
+covers compact terminal forms, documentation navigation, and reviewed Python
+and GitHub Actions maintenance.
 
 Operators still using v2.0.2 can follow its
 [versioned documentation](https://github.com/CruxExperts/BestBackup/tree/v2.0.2/docs)

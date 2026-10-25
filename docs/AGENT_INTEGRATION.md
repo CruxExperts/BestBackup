@@ -1,6 +1,6 @@
 # Agent integration
 
-The version 2 command line is designed for agents and other noninteractive clients. It accepts strict JSON input, publishes a schema for each operation, and emits sanitized versioned results. Stable v2.0.4 qualification retains the tested local/file, selected live database, headless dashboard, and AMD64 Ubuntu scope listed below. New cloud and Linux workflows ship as experimental and remain unqualified; B2/AWS and native Docker are not production-qualified. Follow the same read-before-write and no-replay rules you would use for an operator.
+The version 2 command line is designed for agents and other noninteractive clients. It accepts strict JSON input, publishes a schema for each operation, and emits sanitized versioned results. Production qualification is limited to the tested scope and dated evidence in the [qualification record](development/version-2.md). Cloud and Linux workflows remain experimental and unqualified; B2/AWS and native Docker are not production-qualified. Version 2.0.7 includes documentation and release-readiness updates plus targeted build-tool security maintenance, with no production runtime or qualification change. Follow the same read-before-write and no-replay rules you would use for an operator.
 
 ## Discover commands and schemas
 
@@ -48,9 +48,9 @@ bbackup production \
 
 Restore requires a new target directory and verifies file data. It does not validate application startup or database behavior. Database restores accept trusted PostgreSQL, MySQL, and MariaDB archives with database-specific destination safeguards: PostgreSQL creates a new database using snapshot-time locale metadata; MySQL/MariaDB require the original database name on a separate empty recovery server with only built-in schemas. Set the explicit `trusted_archive` acknowledgement. Never restore untrusted archives: database restores execute archived SQL. See [the v2 database restore limits](development/version-2.md#native-database-capture-and-restore).
 
-Reviewed Linux coverage also has an experimental manual PostgreSQL path in
-v2.0.4; it does not change ordinary PostgreSQL adapters or stable
-qualification. `jobs run`, `coverage discover`, `coverage review`,
+Reviewed Linux coverage also has an experimental manual PostgreSQL path,
+introduced in v2.0.4; it does not change ordinary PostgreSQL adapters or
+production qualification. `jobs run`, `coverage discover`, `coverage review`,
 `coverage check`, and `coverage recovery-evidence` accept the boolean
 `--quiet-administrative-window-confirmed`, which defaults to false. Set it only
 while an externally coordinated window prevents administrator, schema, role,
@@ -103,8 +103,8 @@ bbackup production \
 
 Allowed outcomes are `succeeded`, `failed`, and `abandoned`. Review the destination before recording one. Use one shared state directory for all bbackup processes that coordinate a repository; local locking cannot coordinate another host or an external restic writer.
 
-The unreleased `repositories locks` command returns a bounded inspection and an
-exact review token. `repositories unlock-stale` requires that token,
+The `repositories locks` command returns a bounded inspection and an exact
+review token. `repositories unlock-stale` requires that token,
 `approved: true`, and `quiescent_window_confirmed: true`. It reinspects under the mutation
 lease and refuses foreign/live processes, changed inventories and incomplete
 reads. An uncertain unlock uses the same reconciliation barrier above; agents

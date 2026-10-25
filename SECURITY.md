@@ -4,7 +4,14 @@ This policy covers security issues in bbackup's source code and the packaged com
 
 ## Version status
 
-Version 2.0.5 includes the reviewed safety and schema-3 enrollment changes and the configurable central-retention grace fix. Supported scope and historical release boundaries are recorded in [release evidence](docs/development/version-2.md); reports for released and development code are welcome.
+Version 2.0.7 includes documentation and release-readiness updates plus
+targeted build-tool security maintenance. It changes no production runtime
+behavior or qualification. Historically, v2.0.5 included the reviewed
+safety and schema-3 enrollment changes and the configurable central-retention
+grace fix. Check the [GitHub Releases page](https://github.com/CruxExperts/BestBackup/releases)
+for published versions; supported scope and historical qualification
+boundaries are in the [qualification record](docs/development/version-2.md).
+Reports for released and development code are welcome.
 
 Security fixes are prepared for the latest published release. The project does not promise backports to older versions.
 

@@ -1,6 +1,6 @@
 # Architecture
 
-This page describes the stable v2.0.5 tested scope, current source changes, and the retained 1.x implementation. The v2 command is `bbackup production`; legacy 1.x Docker/YAML commands remain available.
+This page describes the current v2 architecture and retained 1.x implementation. Version 2.0.7 includes documentation and release-readiness updates plus targeted build-tool security maintenance; it changes no production runtime behavior or qualification. See the [qualification record](development/version-2.md) for the tested scope and limits. The v2 command is `bbackup production`; legacy 1.x Docker/YAML commands remain available.
 
 ## Version 2 architecture
 
@@ -16,7 +16,7 @@ Restic encrypts repository content using the password file bound to that reposit
 
 CLI and dashboard requests pass through a shared service, bounded subprocess runner, SQLite operation ledger, and cross-process repository lock. The ledger stores sanitized lifecycle events, not command lines, environment values, raw output, or secrets. Interrupted mutations stay uncertain and require administrator reconciliation; bbackup never automatically replays them.
 
-Unreleased repository maintenance uses that same dispatcher and ledger. Lock
+Repository maintenance uses that same dispatcher and ledger. Lock
 inspection bounds the encrypted inventory and binds review to repository,
 host/user identity, payloads and process observations. Stale unlock requires
 explicit review and a quiet window across every repository user, repeats the
@@ -35,7 +35,7 @@ Cloud recovery kits inventory exact object versions, bind the provider endpoint 
 
 ### Interfaces and scope
 
-The `bbackup production` CLI is strict and schema-discoverable; the Textual dashboard provides mouse and keyboard job operation. Headless dashboard happy paths are tested. The stable v2.0.5 release scope is local/file capture and restore, the listed live database drills, dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages. User-timer reboot evidence is limited to the recorded guest drills. B2/AWS, native Docker, ARM64 backup/restore, root system units and off-host recovery remain unqualified or deferred. See [version 2 development](development/version-2.md) for release boundaries, [agent integration](AGENT_INTEGRATION.md) for the JSON contract, and [cloud storage](cloud-storage.md) for B2/S3 limits.
+The `bbackup production` CLI is strict and schema-discoverable; the Textual dashboard provides mouse and keyboard job operation. Headless dashboard happy paths are tested. The production-qualified scope remains local/file capture and restore, the listed live database drills, dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages, as recorded in [version 2 development](development/version-2.md). User-timer reboot evidence is limited to the recorded guest drills. B2/AWS, native Docker, ARM64 backup/restore, root system units and off-host recovery remain unqualified or deferred. See [agent integration](AGENT_INTEGRATION.md) for the JSON contract and [cloud storage](cloud-storage.md) for B2/S3 limits.
 
 The v2.0.4 and v2.0.5 experimental implementations include restricted B2 source-key assessment, independent central
 acceptance of signed historical checkpoints, centrally authorized noncurrent
@@ -52,8 +52,8 @@ The remaining module and configuration sections below describe the retained 1.x 
 
 ## Technology stack
 
-These minimums describe the current source checkout. Published v2.0.5 retains
-its [versioned requirements](https://github.com/CruxExperts/BestBackup/blob/v2.0.5/pyproject.toml).
+These minimums describe the current source checkout. The v2.0.5 release retains
+its historical [versioned requirements](https://github.com/CruxExperts/BestBackup/blob/v2.0.5/pyproject.toml).
 
 | Component | Library / tool | Version |
 |---|---|---|
@@ -394,15 +394,17 @@ best-backup/
 
 Back to [README.md](../README.md).
 
-## Unreleased policy and interaction changes
+<a id="unreleased-policy-and-interaction-changes"></a>
 
-The development checkout adds schema-3 portable source identities and private source selectors. Host enrollment records bind a canonical policy digest, private-binding digest, machine identity digest, and effective user. This prevents accidental cross-host execution; it does not defend against a hostile process with the same user authority or a cloned machine identity.
+## v2.0.3 policy and interaction changes
+
+The v2.0.3 release added schema-3 portable source identities and private source selectors. Host enrollment records bind a canonical policy digest, private-binding digest, machine identity digest, and effective user. This prevents accidental cross-host execution; it does not defend against a hostile process with the same user authority or a cloned machine identity.
 
 CLI and dashboard share the validated operation boundary. It verifies the same bounded bytes that are parsed for dispatch, constructs a fresh service, and holds a shared policy lease throughout the operation. Configuration save uses an exclusive lease and exact candidate bytes. An interrupted two-file policy/enrollment update fails closed rather than authorizing arbitrary changed files.
 
-The Textual setup uses guided forms, persistent labels, field help, inline validation, and an optional expert JSON editor. The dashboard offers clear storage, first-backup, and restore actions. Form adapters call the common validators and operation owner; they do not implement a second backup workflow.
+The v2.0.3 Textual setup uses guided forms, persistent labels, field help, inline validation, and an optional expert JSON editor. The dashboard offers clear storage, first-backup, and restore actions. Form adapters call the common validators and operation owner; they do not implement a second backup workflow.
 
-Local timer installation remains explicit. Shared rendering supplies both disabled previews and user-level installation. Captures and replicas retain repository locking, interruption reconciliation, and separately reviewed retention.
+The v2.0.3 release made local timer installation explicit. Shared rendering supplies both disabled previews and user-level installation. Captures and replicas retain repository locking, interruption reconciliation, and separately reviewed retention.
 
 <!-- project-footer:start -->
 

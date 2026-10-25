@@ -10,6 +10,21 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+## [2.0.7] - 2026-10-25
+
+### Fixed
+
+- Correct stale contribution guidance by linking the GitHub Releases page and
+  the authoritative Version 2 development record, and make publishing scope
+  checks refer to the release candidate while preserving qualification limits.
+
+### Security
+
+- Update the isolated setuptools build requirement to 84.1.0 for
+  [GHSA-xmj3-9gf7-h52w](https://github.com/advisories/GHSA-xmj3-9gf7-h52w),
+  a low-severity path escape in legacy wheel installation. Runtime dependency
+  versions and the qualified backup and restore scope are unchanged.
+
 ## [2.0.6] - 2026-10-23
 
 ### Added
@@ -712,7 +727,8 @@ are still under development. See [implementation status](docs/development/versio
 
 The `Unreleased` comparison is a live `HEAD` link for navigation, not an immutable historical citation.
 
-[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.6...HEAD
+[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.7...HEAD
+[2.0.7]: https://github.com/CruxExperts/BestBackup/compare/v2.0.6...v2.0.7
 [2.0.6]: https://github.com/CruxExperts/BestBackup/compare/v2.0.5...v2.0.6
 [2.0.5]: https://github.com/CruxExperts/BestBackup/compare/v2.0.4...v2.0.5
 [2.0.4]: https://github.com/CruxExperts/BestBackup/compare/v2.0.3...v2.0.4

@@ -22,11 +22,11 @@ Use this checklist before changing public project metadata or publishing a relea
 - [ ] The homepage links to a maintained standalone site; leave it unset when the README is the canonical landing page.
 - [ ] Each enabled community surface has a maintained purpose: keep Issues for support, enable Discussions only when it will be answered, and disable a blank Wiki rather than duplicate repository docs.
 
-## Version 2 tested-scope claims
+## Version 2 qualification claims for the release candidate
 
-- [ ] Describe v2.0.5 as qualified only for local file capture/restore, live PostgreSQL 17.11 / MySQL 8.4.12 / MariaDB 11.8.9 capture/restore, headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages; this scope is unchanged from v2.0.4.
-- [ ] Describe new v2.0.5 cloud and Linux workflows as experimental and unqualified; issues #23–#26 were canceled and closed as not planned. This release adds no new live provider qualification. Do not claim a guaranteed thirty-day window, off-host custody, final remote-server qualification, or complete-machine recovery.
-- [ ] Keep B2/AWS, native Docker, ARM64 backup/restore, cross-application-version upgrades/rollback, root-owned systemd package templates, and cloud/off-host protection explicitly unqualified; describe the separate user-timer guest drills with their exact limits.
+- [ ] Describe only the established stable scope in the [Version 2 development record](development/version-2.md): local file capture and restore; live capture and restore for PostgreSQL 17.11 / MySQL 8.4.12 / MariaDB 11.8.9; headless dashboard happy paths; and AMD64 Ubuntu 24.04/26.04 packages. State that the release candidate adds no qualification beyond this scope.
+- [ ] Describe the candidate's cloud and Linux workflows as experimental and unqualified. Issues #23–#26 were canceled and closed as not planned; cancellation is not qualification. The candidate adds no new live provider qualification. Do not claim a guaranteed thirty-day window, off-host custody, final remote-server qualification, or complete-machine recovery.
+- [ ] Keep B2/AWS protection, native Docker, ARM64 backup/restore, cross-application-version upgrades/rollback, root-owned systemd package templates, and cloud/off-host protection explicitly unqualified. Describe the separate user-timer guest drills with their exact limits recorded in the Version 2 development record.
 - [ ] State that ARM64 packages may be built by the release matrix but are not functionally qualified by package-install smoke alone.
 - [ ] Keep native B2 capability inspection distinct from backup transfer; inspection is read-only and always reports `protection_qualified: false`.
 - [ ] Describe the local Garage round trip as S3-compatible test evidence, not B2 or Amazon S3 qualification.

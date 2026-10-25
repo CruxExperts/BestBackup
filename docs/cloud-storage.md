@@ -1,21 +1,23 @@
 # Cloud storage: Backblaze B2 and Amazon S3
 
-Keep your first recovery point on local storage. The v2.0.5 tested stable-release
-scope retains local/file capture and restore, selected live database drills,
-headless dashboard happy paths, and AMD64 Ubuntu packages.
+Keep your first recovery point on local storage. The production-qualified core
+scope remains local/file capture and restore, selected live database drills,
+headless dashboard happy paths, and AMD64 Ubuntu 24.04/26.04 packages, as
+recorded in the [qualification record](development/version-2.md).
 
 **Backblaze B2 and Amazon S3 are implemented but not production-qualified.** A
 small live B2 source-path drill passed on 2026-10-20; it does not qualify B2
 protection or production recovery. No live AWS capture/check/restore result is
 recorded. The local Garage S3 test also passed capture, copy, full-data checking,
-and restore, but does not qualify B2 or Amazon S3. The provider workflows ship
-as experimental in v2.0.5; keep B2/AWS outside production recovery until the
+and restore, but does not qualify B2 or Amazon S3. The provider workflows remain
+experimental; keep B2/AWS outside production recovery until the
 remaining provider and independent-recovery evidence is complete. A separate live B2
 lifecycle-overlap guard confirmed only the configuration check and central
 retention refusal; it did not test elapsed expiry or physical deletion. See the
 [guard evidence](#b2-lifecycle-overlap-guard-experimental).
-This release adds no new live provider qualification; existing workstation
-trials remain historical and unqualified.
+The v2.0.5 release added no live provider qualification; those workstation
+trials remain historical and unqualified. Version 2.0.7 adds no provider
+qualification.
 
 ## Choose a connection
 
@@ -74,8 +76,8 @@ identity; the source key does not need it. Do not add
 `writeBucketLifecycleRules` for a read-only inspection. See
 [Backblaze's S3-compatible app-key capabilities](https://www.backblaze.com/docs/cloud-storage-s3-compatible-app-keys).
 
-The unreleased source recognizes `readBucketLifecycleRules` as a safe read-only
-capability during native inspection. This compatibility change does not grant
+Since v2.0.6, native inspection recognizes `readBucketLifecycleRules` as a
+safe read-only capability. This compatibility change does not grant
 the permission, bypass bucket/prefix checks, or establish provider protection.
 A checkpoint or maintenance key with `deleteFiles` still fails the restricted
 source-writer profile; keep that authority separate from source credentials.

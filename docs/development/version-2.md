@@ -1,11 +1,32 @@
 # Version 2 development
 
-> Version 2.0.6 retains the v2.0.5 production-qualified core scope recorded
-> below and includes the maintenance batches in this record. Experimental
-> additions remain unqualified. The dated evidence remains historical and no
-> B2/AWS, ARM64, Linux recovery, off-host, or complete-machine qualification is
-> added. Check the [GitHub Releases page](https://github.com/CruxExperts/BestBackup/releases/latest)
+> Version 2.0.7 includes documentation and release-readiness updates plus
+> targeted build-tool security maintenance. It makes no production runtime
+> changes and adds no qualification; the production-qualified scope remains
+> the v2.0.6 scope recorded below. Experimental additions remain unqualified.
+> Check the [GitHub Releases page](https://github.com/CruxExperts/BestBackup/releases/latest)
 > for tag and download availability.
+
+## v2.0.7 documentation, build-tool security, and release-readiness maintenance
+
+Version 2.0.7 updates current-version summaries and release guidance and
+includes targeted security maintenance for build tooling. It retains the
+existing production qualification boundary and changes no production runtime
+behavior. No provider, operating-system, package, application, or recovery
+qualification is added. Historical test runs, guest drills, and provider
+observations below retain their original dates and limits. Validation and
+publication records are maintained separately from this scope summary.
+
+On 2026-10-25, the Python 3.12 prepublication candidate passed 1,304 tests with
+one skipped test in 114.68 seconds using three workers. The skipped legacy
+Docker roundtrip does not qualify that path. Version and generated CLI checks,
+Markdown, artwork provenance, publishing readiness, Ruff, compilation, and
+whitespace checks passed. The wheel and source archive built with the patched
+setuptools requirement and passed installed-artifact smoke checks. The
+[dependency evidence](release-dependencies.json) records the exact-version
+advisory refresh and build-tool remediation; runtime dependency versions and
+qualification limits remain unchanged. Published tag and artifact availability
+must still be checked on the Releases page.
 
 <a id="unreleased-layout-and-dependency-maintenance"></a>
 

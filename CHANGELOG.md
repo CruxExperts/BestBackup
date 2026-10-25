@@ -10,6 +10,8 @@ current uv-based install, development, and release instructions.
 
 ## [Unreleased]
 
+## [2.0.7] - 2026-10-25
+
 ### Fixed
 
 - Correct stale contribution guidance by linking the GitHub Releases page and
@@ -725,7 +727,8 @@ are still under development. See [implementation status](docs/development/versio
 
 The `Unreleased` comparison is a live `HEAD` link for navigation, not an immutable historical citation.
 
-[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.6...HEAD
+[Unreleased]: https://github.com/CruxExperts/BestBackup/compare/v2.0.7...HEAD
+[2.0.7]: https://github.com/CruxExperts/BestBackup/compare/v2.0.6...v2.0.7
 [2.0.6]: https://github.com/CruxExperts/BestBackup/compare/v2.0.5...v2.0.6
 [2.0.5]: https://github.com/CruxExperts/BestBackup/compare/v2.0.4...v2.0.5
 [2.0.4]: https://github.com/CruxExperts/BestBackup/compare/v2.0.3...v2.0.4

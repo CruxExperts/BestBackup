@@ -1,6 +1,6 @@
 # Your first backup and verified restore
 
-This guide covers v2.0.6 and its schema-3 policy, including the issue #30 maintenance and compact-terminal changes below. Version 2.0.6 retains the v2.0.5 tested support scope; check the [GitHub Releases page](https://github.com/CruxExperts/BestBackup/releases/latest) for tag and download availability. For an older v2.0.2 installation, use its [versioned quick start](https://github.com/CruxExperts/BestBackup/blob/v2.0.2/QUICKSTART.md) until you migrate. Keep an independently retrievable copy of each repository password.
+This guide covers v2.0.7, retaining v2.0.6's schema-3 policy, issue #30 maintenance, and compact-terminal changes. Its production support scope is unchanged from v2.0.6; check the [GitHub Releases page](https://github.com/CruxExperts/BestBackup/releases) for tag and download availability. For an older v2.0.2 installation, use its [versioned quick start](https://github.com/CruxExperts/BestBackup/blob/v2.0.2/QUICKSTART.md) until you migrate. Keep an independently retrievable copy of each repository password.
 
 ## Start with the guided dashboard
 

@@ -1,6 +1,6 @@
 # Versioning
 
-`VERSION` is the canonical release version. The current version is `2.0.6`.
+`VERSION` is the canonical release version. The current version is `2.0.7`.
 The earlier `v2.0.0` and `v2.0.1` tags did not produce release artifacts; the
 retained legacy line is `1.8.6`. Stable support is limited to the tested scope
 in [`docs/development/version-2.md`](development/version-2.md).

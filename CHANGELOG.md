@@ -16,6 +16,13 @@ current uv-based install, development, and release instructions.
   the authoritative Version 2 development record, and make publishing scope
   checks refer to the release candidate while preserving qualification limits.
 
+### Security
+
+- Update the isolated setuptools build requirement to 84.1.0 for
+  [GHSA-xmj3-9gf7-h52w](https://github.com/advisories/GHSA-xmj3-9gf7-h52w),
+  a low-severity path escape in legacy wheel installation. Runtime dependency
+  versions and the qualified backup and restore scope are unchanged.
+
 ## [2.0.6] - 2026-10-23
 
 ### Added

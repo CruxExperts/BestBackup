@@ -541,5 +541,97 @@
     },
     "selection_policy": "Pin the official CLI and all npm artifacts to a reviewed fresh lock; bootstrap the exact patched LTS Node archive by SHA256. Re-audit before any dependency/runtime update.",
     "rollback": "Revert the signed automation change and disable its workflow before reverting repository Actions settings; preserve published releases and tags."
+  },
+  "release_candidate_audit": {
+    "version": "2.0.6",
+    "checked_at_utc": "2026-10-25T04:34:33.308720+00:00",
+    "scope": "All 51 locked PyPI versions, isolated setuptools/wheel build requirements and the pinned uv bootstrap; all 162 Release Please npm versions. Runtime and dev package versions are unchanged from v2.0.6.",
+    "python_build_requirements": [
+      "setuptools==84.1.0",
+      "wheel==0.48.0"
+    ],
+    "sources": [
+      {
+        "name": "OSV",
+        "independence_class": "A",
+        "endpoint": "https://api.osv.dev/v1/querybatch",
+        "package_version_queries": 216,
+        "advisory_hits": 0
+      },
+      {
+        "name": "GitHub Advisory Database",
+        "independence_class": "B",
+        "ecosystem": "pip",
+        "type": "reviewed",
+        "endpoint": "https://api.github.com/advisories",
+        "package_version_queries": 54,
+        "requests": 2,
+        "advisory_hits": 0,
+        "pagination_exhausted": true
+      },
+      {
+        "name": "GitHub Advisory Database",
+        "independence_class": "B",
+        "ecosystem": "pip",
+        "type": "malware",
+        "endpoint": "https://api.github.com/advisories",
+        "package_version_queries": 54,
+        "requests": 2,
+        "advisory_hits": 0,
+        "pagination_exhausted": true
+      },
+      {
+        "name": "GitHub Advisory Database",
+        "independence_class": "B",
+        "ecosystem": "npm",
+        "type": "reviewed",
+        "endpoint": "https://api.github.com/advisories",
+        "package_version_queries": 162,
+        "requests": 5,
+        "advisory_hits": 0,
+        "pagination_exhausted": true
+      },
+      {
+        "name": "GitHub Advisory Database",
+        "independence_class": "B",
+        "ecosystem": "npm",
+        "type": "malware",
+        "endpoint": "https://api.github.com/advisories",
+        "package_version_queries": 162,
+        "requests": 5,
+        "advisory_hits": 0,
+        "pagination_exhausted": true
+      },
+      {
+        "name": "PyPI",
+        "independence_class": "E",
+        "endpoint": "https://pypi.org/pypi/PACKAGE/VERSION/json",
+        "package_version_queries": 54,
+        "advisory_hits": 0,
+        "locked_artifact_hashes_verified": 477
+      },
+      {
+        "name": "npm registry",
+        "independence_class": "E",
+        "endpoint": "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk",
+        "package_version_queries": 162,
+        "advisory_hits": 0
+      }
+    ],
+    "raw_evidence_sha256": "0388e9ee556fb144fb9bad30a22ed0e7b0524a67c64d127ca665ecb472d9fff9",
+    "npm_lockfile_sha256": "5133b7774d18b013bc81c70570f874ea4983557080be41b9dd9c9084de8428a6",
+    "remediation": {
+      "advisory": "GHSA-xmj3-9gf7-h52w",
+      "source": "https://github.com/advisories/GHSA-xmj3-9gf7-h52w",
+      "package": "setuptools",
+      "previous_version": "84.0.0",
+      "resolved_version": "84.1.0",
+      "affected_range": ">= 38.2.2, < 84.1.0",
+      "severity": "low",
+      "cvss_v4_score": 1.0,
+      "cve_aliases": [],
+      "exposure": "Build requirement only; the advisory concerns legacy wheel installation. bbackup uses the PEP 517 build backend. The pin is updated to the minimum patched version without changing runtime dependencies."
+    },
+    "limits": "Timestamped exact-version known-advisory metadata, not a risk-free or future-version claim. Earlier audit, action selection, Node runtime and Restic caveat records retain their original dates and scope; they are not newly qualified by this refresh. No new affected CVE alias was returned by these candidate lookups, so no new NVD/KEV disposition is asserted."
   }
 }

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools==84.1.0", "wheel==0.48.0"]
+requires = ["setuptools==84.2.1", "wheel==0.48.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -40,9 +40,9 @@ dependencies = [
   "cryptography>=50.0.2",
   "requests>=2.31.0",
   "textual==8.2.8",
-  "boto3==1.43.114",
+  "boto3==1.43.122",
   "urllib3>=2.8.0",
-  "b2sdk==2.13.1",
+  "b2sdk==2.13.2",
 ]
 
 [project.optional-dependencies]
@@ -63,11 +63,11 @@ bbman = "bbackup.bbman_entry:cli"
 
 [dependency-groups]
 dev = [
-  "pytest>=9.1.1",
+  "pytest>=9.2.0",
   "pytest-cov>=5.0",
   "pytest-mock>=3.17.0",
   "pytest-xdist>=3.8,<4",
-  "ruff>=0.17.1",
+  "ruff>=0.17.3",
 ]
 
 [tool.setuptools.packages.find]
